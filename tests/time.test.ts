@@ -5,6 +5,7 @@ import {
   formatTimeOnly,
   eachDate,
   isoWeekday,
+  zonedDateTimeToUtc,
 } from "@/lib/time";
 
 describe("formatDate", () => {
@@ -49,6 +50,33 @@ describe("eachDate", () => {
   });
   it("returns a single day when start equals end", () => {
     expect(eachDate("2025-06-09", "2025-06-09")).toEqual(["2025-06-09"]);
+  });
+});
+
+describe("zonedDateTimeToUtc", () => {
+  it("converts Sydney winter wall time (AEST, UTC+10) to UTC", () => {
+    // 9 June 2025 is AEST (no DST): 17:00 Sydney = 07:00 UTC.
+    expect(zonedDateTimeToUtc("2025-06-09", "17:00").toISOString()).toBe(
+      "2025-06-09T07:00:00.000Z",
+    );
+  });
+
+  it("converts Sydney summer wall time (AEDT, UTC+11) to UTC", () => {
+    // 9 Jan 2025 is AEDT (DST): 17:00 Sydney = 06:00 UTC.
+    expect(zonedDateTimeToUtc("2025-01-09", "17:00").toISOString()).toBe(
+      "2025-01-09T06:00:00.000Z",
+    );
+  });
+
+  it("honours a non-default timezone", () => {
+    // Perth has no DST, UTC+8: 12:00 Perth = 04:00 UTC.
+    expect(
+      zonedDateTimeToUtc(
+        "2025-06-09",
+        "12:00",
+        "Australia/Perth",
+      ).toISOString(),
+    ).toBe("2025-06-09T04:00:00.000Z");
   });
 });
 

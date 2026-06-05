@@ -123,7 +123,7 @@ Postgres service), typecheck, lint, format check, test. Keep it green.
 - [x] M2 — DB schema, migrations, tenant layer, seed
 - [x] M3 — Owner auth + business creation
 - [x] M4 — Staff + shift templates + roster periods
-- [ ] M5 — Availability requests + staff magic-link flow
+- [x] M5 — Availability requests + staff magic-link flow
 - [ ] M6 — Availability summary + roster builder
 - [ ] M7 — Publish + reminders (jobs)
 - [ ] M8 — Accessibility + polish

@@ -96,6 +96,53 @@ export function eachDate(start: DateOnly, end: DateOnly): DateOnly[] {
   return result;
 }
 
+/**
+ * Offset in milliseconds (local - UTC) for a given instant in a timezone.
+ * Positive for zones ahead of UTC (e.g. Australia/Sydney).
+ */
+export function tzOffsetMs(instant: Date, timeZone: string): number {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const parts = dtf.formatToParts(instant);
+  const get = (type: string) =>
+    Number(parts.find((p) => p.type === type)?.value);
+  const asUtc = Date.UTC(
+    get("year"),
+    get("month") - 1,
+    get("day"),
+    get("hour"),
+    get("minute"),
+    get("second"),
+  );
+  return asUtc - instant.getTime();
+}
+
+/**
+ * Convert a wall-clock date+time in a business's timezone to the corresponding
+ * UTC instant. e.g. ("2025-06-09", "17:00", "Australia/Sydney") -> 07:00Z.
+ * Stores deadlines correctly regardless of where the server runs.
+ */
+export function zonedDateTimeToUtc(
+  date: DateOnly,
+  time: TimeOnly,
+  timeZone: string = DEFAULT_TIMEZONE,
+): Date {
+  const [h = 0, m = 0] = time.split(":").map(Number);
+  const naiveUtc = new Date(
+    `${date}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00Z`,
+  );
+  const offset = tzOffsetMs(naiveUtc, timeZone);
+  return new Date(naiveUtc.getTime() - offset);
+}
+
 /** ISO weekday for a "YYYY-MM-DD" date: 1 = Monday ... 7 = Sunday. */
 export function isoWeekday(date: DateOnly): number {
   const [y, m, d] = date.split("-").map(Number);

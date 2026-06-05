@@ -318,6 +318,21 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         );
     },
 
+    responsesForRequest(requestId: string) {
+      return database
+        .select({
+          shiftId: availabilityResponses.shiftId,
+          available: availabilityResponses.available,
+        })
+        .from(availabilityResponses)
+        .where(
+          and(
+            eq(availabilityResponses.requestId, requestId),
+            eq(availabilityResponses.businessId, businessId),
+          ),
+        );
+    },
+
     /**
      * Replace a staff member's availability for a request. Idempotent: the same
      * submission applied twice yields the same rows. We upsert per shift so a
