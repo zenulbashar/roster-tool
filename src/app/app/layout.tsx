@@ -38,6 +38,20 @@ export default async function OwnerLayout({
             </button>
           </form>
         </div>
+        <nav
+          aria-label="Main"
+          className="mx-auto flex max-w-3xl gap-4 overflow-x-auto px-5 pb-3 text-sm font-medium"
+        >
+          <Link href="/app/periods" className="whitespace-nowrap">
+            Rosters
+          </Link>
+          <Link href="/app/staff" className="whitespace-nowrap">
+            Staff
+          </Link>
+          <Link href="/app/templates" className="whitespace-nowrap">
+            Shift types
+          </Link>
+        </nav>
       </header>
       <main id="main" className="mx-auto max-w-3xl px-5 py-8">
         {children}
