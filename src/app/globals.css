@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens for the roster tool.
+ * High-contrast, mobile-first, WCAG AA. Kept deliberately small and obvious.
+ */
+@theme {
+  --color-ink: #111827; /* primary text — ~16:1 on white */
+  --color-muted: #4b5563; /* secondary text — ~7:1 on white */
+  --color-surface: #ffffff;
+  --color-canvas: #f9fafb;
+  --color-line: #d1d5db;
+  --color-brand: #1d4ed8; /* blue-700, ~6.3:1 on white */
+  --color-brand-ink: #ffffff;
+  --color-ok: #047857; /* green-700 */
+  --color-warn: #b45309; /* amber-700 */
+  --color-danger: #b91c1c; /* red-700 */
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  line-height: 1.5;
+}
+
+/* Visible focus for keyboard users everywhere. */
+:focus-visible {
+  outline: 3px solid var(--color-brand);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

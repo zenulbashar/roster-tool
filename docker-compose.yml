@@ -1,0 +1,31 @@
+# Local development services: Postgres + Mailpit (email catcher).
+# Start with: docker compose up -d
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: roster
+      POSTGRES_PASSWORD: roster
+      POSTGRES_DB: roster
+    ports:
+      - "5432:5432"
+    volumes:
+      - roster_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U roster"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Mailpit catches all outgoing email so you can click magic links locally.
+  # Web UI: http://localhost:8025   SMTP: localhost:1025
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # web UI
+
+volumes:
+  roster_pgdata:
