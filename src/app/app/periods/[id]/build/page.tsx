@@ -1,11 +1,13 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireOwner } from "@/lib/auth/context";
 import { createTenantRepo } from "@/lib/tenant/repository";
+import { generateSlug } from "@/lib/tokens";
+import { enqueuePublishedRoster } from "@/lib/jobs/boss";
 import { formatDateOnly, formatTimeOnly } from "@/lib/time";
 import { periodStatusLabel } from "@/lib/labels";
-import { Card, PageHeader } from "@/components/ui";
+import { Banner, Button, Card, PageHeader } from "@/components/ui";
 
 type Availability = "yes" | "no" | "unknown";
 
@@ -21,13 +23,15 @@ export default async function BuildRosterPage({
   const period = await repo.getPeriod(id);
   if (!period) notFound();
 
-  const [shifts, staff, responses, assignments, requests] = await Promise.all([
-    repo.listShifts(id),
-    repo.listStaff({ activeOnly: true }),
-    repo.listResponses(id),
-    repo.listAssignments(id),
-    repo.listRequests(id),
-  ]);
+  const [shifts, staff, responses, assignments, requests, published] =
+    await Promise.all([
+      repo.listShifts(id),
+      repo.listStaff({ activeOnly: true }),
+      repo.listResponses(id),
+      repo.listAssignments(id),
+      repo.listRequests(id),
+      repo.getPublished(id),
+    ]);
 
   // Move the period into "building" the first time the owner opens the builder.
   if (period.status === "collecting") {
@@ -77,6 +81,30 @@ export default async function BuildRosterPage({
     else await repo.assign(shiftId, staffId);
 
     revalidatePath(`/app/periods/${id}/build`);
+  }
+
+  async function publish() {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const period = await repo.getPeriod(id);
+    if (!period) notFound();
+
+    // Reuse the existing slug on re-publish so shared links keep working.
+    const existing = await repo.getPublished(id);
+    await repo.publish(id, existing?.publicSlug ?? generateSlug());
+    await repo.updatePeriod(id, { status: "published" });
+
+    // Email everyone who was asked (or all active staff if none were asked).
+    const reqs = await repo.listRequests(id);
+    const targets = reqs.length
+      ? reqs.map((r) => r.staffMemberId)
+      : (await repo.listStaff({ activeOnly: true })).map((s) => s.id);
+    for (const staffMemberId of new Set(targets)) {
+      await enqueuePublishedRoster({ rosterPeriodId: id, staffMemberId });
+    }
+
+    redirect(`/app/periods/${id}?published=1`);
   }
 
   const byDay = new Map<string, typeof shifts>();
@@ -169,6 +197,34 @@ export default async function BuildRosterPage({
           </Card>
         ))}
       </div>
+
+      <Card className="mt-6">
+        <h2 className="text-lg font-semibold">Publish &amp; send</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          We&rsquo;ll email everyone their shifts and create a shareable roster
+          link.
+        </p>
+        {published ? (
+          <div className="mt-3">
+            <Banner tone="success">
+              Published. Shareable link:{" "}
+              <a
+                className="underline"
+                href={`/r/${published.publicSlug}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                /r/{published.publicSlug}
+              </a>
+            </Banner>
+          </div>
+        ) : null}
+        <form action={publish} className="mt-3">
+          <Button type="submit">
+            {published ? "Re-publish & resend" : "Publish roster"}
+          </Button>
+        </form>
+      </Card>
 
       <div className="mt-6">
         <Link

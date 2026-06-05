@@ -6,7 +6,10 @@ import { db } from "@/lib/db";
 import { businesses } from "@/lib/db/schema";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { generateToken } from "@/lib/tokens";
-import { enqueueAvailabilityRequest } from "@/lib/jobs/boss";
+import {
+  enqueueAvailabilityRequest,
+  scheduleAvailabilityReminder,
+} from "@/lib/jobs/boss";
 import { formatDateOnly, formatTimeOnly, zonedDateTimeToUtc } from "@/lib/time";
 import { periodStatusLabel } from "@/lib/labels";
 import {
@@ -26,20 +29,21 @@ export default async function PeriodDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ sent?: string }>;
+  searchParams: Promise<{ sent?: string; published?: string }>;
 }) {
   const { id } = await params;
-  const { sent } = await searchParams;
+  const { sent, published: justPublished } = await searchParams;
   const { businessId } = await requireOwner();
   const repo = createTenantRepo(businessId);
 
   const period = await repo.getPeriod(id);
   if (!period) notFound();
 
-  const [shifts, staff, requests] = await Promise.all([
+  const [shifts, staff, requests, published] = await Promise.all([
     repo.listShifts(id),
     repo.listStaff({ activeOnly: true }),
     repo.listRequests(id),
+    repo.getPublished(id),
   ]);
 
   const respondedCount = requests.filter((r) => r.respondedAt).length;
@@ -73,6 +77,11 @@ export default async function PeriodDetailPage({
     });
 
     const expiresAt = new Date(Date.now() + TOKEN_TTL_DAYS * 86_400_000);
+    // One reminder ~24h before the deadline (or shortly from now if sooner).
+    const reminderAt = deadline
+      ? new Date(Math.max(deadline.getTime() - 86_400_000, Date.now() + 60_000))
+      : null;
+
     for (const member of activeStaff) {
       if (already.has(member.id)) continue;
       const { token, tokenHash } = generateToken();
@@ -83,6 +92,12 @@ export default async function PeriodDetailPage({
         expiresAt,
       });
       await enqueueAvailabilityRequest({ requestId: req.id, token });
+      if (reminderAt) {
+        await scheduleAvailabilityReminder(
+          { requestId: req.id, token },
+          reminderAt,
+        );
+      }
     }
 
     revalidatePath(`/app/periods/${id}`);
@@ -115,6 +130,30 @@ export default async function PeriodDetailPage({
         <div className="mb-4">
           <Banner tone="success">
             Availability requests are on their way to your team.
+          </Banner>
+        </div>
+      ) : null}
+
+      {justPublished ? (
+        <div className="mb-4">
+          <Banner tone="success">
+            Roster published! Everyone&rsquo;s been emailed their shifts.
+          </Banner>
+        </div>
+      ) : null}
+
+      {published ? (
+        <div className="mb-4">
+          <Banner tone="info">
+            Shareable roster link:{" "}
+            <a
+              className="underline"
+              href={`/r/${published.publicSlug}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              /r/{published.publicSlug}
+            </a>
           </Banner>
         </div>
       ) : null}

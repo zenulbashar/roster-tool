@@ -5,7 +5,11 @@ import { businesses } from "@/lib/db/schema";
 import { createTenantRepo, type TenantRepo } from "@/lib/tenant/repository";
 import { findRequestByToken } from "@/lib/tenant/public-access";
 import { generateToken } from "@/lib/tokens";
-import { handleAvailabilityRequest } from "@/lib/jobs/handlers";
+import {
+  handleAvailabilityRequest,
+  handleAvailabilityReminder,
+  handlePublishedRoster,
+} from "@/lib/jobs/handlers";
 
 /**
  * End-to-end-ish coverage of the magic-link availability flow against the real
@@ -161,5 +165,70 @@ describe("availability flow", () => {
     await repo.unassign(shiftIds[0]!, staffId);
     rows = await repo.listAssignments(periodId);
     expect(rows.some((a) => a.shiftId === shiftIds[0])).toBe(false);
+  });
+
+  it("reminds a non-responder once and is idempotent", async () => {
+    const { token, tokenHash } = generateToken();
+    const m = await repo.addStaff({ name: "Rey", email: "rey@flow.test" });
+    const req = await repo.createRequest({
+      rosterPeriodId: periodId,
+      staffMemberId: m.id,
+      tokenHash,
+      expiresAt: new Date(Date.now() + 86_400_000),
+    });
+    await repo.markRequestSent(req.id);
+
+    const send = vi.fn().mockResolvedValue(undefined);
+    await handleAvailabilityReminder({ requestId: req.id, token }, { send });
+    expect(send).toHaveBeenCalledOnce();
+    expect(send.mock.calls[0]![0].to).toBe("rey@flow.test");
+
+    // Re-running must not remind again.
+    await handleAvailabilityReminder({ requestId: req.id, token }, { send });
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("does not remind someone who already responded", async () => {
+    const { token, tokenHash } = generateToken();
+    const m = await repo.addStaff({ name: "Mia", email: "mia@flow.test" });
+    const req = await repo.createRequest({
+      rosterPeriodId: periodId,
+      staffMemberId: m.id,
+      tokenHash,
+      expiresAt: new Date(Date.now() + 86_400_000),
+    });
+    await repo.markRequestSent(req.id);
+    await repo.markRequestResponded(req.id);
+
+    const send = vi.fn().mockResolvedValue(undefined);
+    await handleAvailabilityReminder({ requestId: req.id, token }, { send });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("emails a staff member their published shifts", async () => {
+    await repo.publish(periodId, "public-slug-abc");
+    const m = await repo.addStaff({ name: "Dee", email: "dee@flow.test" });
+    await repo.assign(shiftIds[0]!, m.id);
+
+    const send = vi.fn().mockResolvedValue(undefined);
+    await handlePublishedRoster(
+      { rosterPeriodId: periodId, staffMemberId: m.id },
+      { send },
+    );
+    expect(send).toHaveBeenCalledOnce();
+    const msg = send.mock.calls[0]![0];
+    expect(msg.to).toBe("dee@flow.test");
+    expect(msg.text).toContain("Morning");
+    expect(msg.html).toContain("public-slug-abc");
+  });
+
+  it("tells an unrostered staff member they have no shifts", async () => {
+    const m = await repo.addStaff({ name: "Eli", email: "eli@flow.test" });
+    const send = vi.fn().mockResolvedValue(undefined);
+    await handlePublishedRoster(
+      { rosterPeriodId: periodId, staffMemberId: m.id },
+      { send },
+    );
+    expect(send.mock.calls[0]![0].text).toContain("not rostered");
   });
 });

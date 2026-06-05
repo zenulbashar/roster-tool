@@ -13,9 +13,13 @@ export type AvailabilityRequestJob = {
   token: string;
 };
 
-/** Sweeps a period and reminds anyone who hasn't responded yet. */
+/**
+ * Reminds one staff member who hasn't responded yet. Scheduled for shortly
+ * before the deadline and carries the same token as the original request.
+ */
 export type AvailabilityReminderJob = {
-  rosterPeriodId: string;
+  requestId: string;
+  token: string;
 };
 
 /** Emails one staff member their published shifts for a period. */

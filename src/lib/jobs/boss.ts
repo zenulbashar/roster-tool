@@ -1,8 +1,17 @@
 import { PgBoss, type Job } from "pg-boss";
 import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
-import { QUEUES, type AvailabilityRequestJob } from "./queues";
-import { handleAvailabilityRequest } from "./handlers";
+import {
+  QUEUES,
+  type AvailabilityRequestJob,
+  type AvailabilityReminderJob,
+  type PublishedRosterJob,
+} from "./queues";
+import {
+  handleAvailabilityRequest,
+  handleAvailabilityReminder,
+  handlePublishedRoster,
+} from "./handlers";
 
 /**
  * pg-boss singleton. One instance per process (Next dev hot-reload safe via
@@ -38,6 +47,33 @@ export async function enqueueAvailabilityRequest(
 }
 
 /**
+ * Schedule a reminder for a single request to run at `runAt` (just before the
+ * deadline). singletonKey makes re-triggering safe.
+ */
+export async function scheduleAvailabilityReminder(
+  payload: AvailabilityReminderJob,
+  runAt: Date,
+): Promise<void> {
+  const boss = await getBoss();
+  await boss.sendAfter(
+    QUEUES.availabilityReminder,
+    payload,
+    { ...RETRY, singletonKey: payload.requestId },
+    runAt,
+  );
+}
+
+export async function enqueuePublishedRoster(
+  payload: PublishedRosterJob,
+): Promise<void> {
+  const boss = await getBoss();
+  await boss.send(QUEUES.publishedRoster, payload, {
+    ...RETRY,
+    singletonKey: `${payload.rosterPeriodId}:${payload.staffMemberId}`,
+  });
+}
+
+/**
  * Register all job handlers. Called by the worker process. The handler receives
  * a batch of jobs from pg-boss; we process each.
  */
@@ -49,6 +85,24 @@ export async function registerWorkers(): Promise<void> {
     async (jobs: Job<AvailabilityRequestJob>[]) => {
       for (const job of jobs) {
         await handleAvailabilityRequest(job.data);
+      }
+    },
+  );
+
+  await boss.work<AvailabilityReminderJob>(
+    QUEUES.availabilityReminder,
+    async (jobs: Job<AvailabilityReminderJob>[]) => {
+      for (const job of jobs) {
+        await handleAvailabilityReminder(job.data);
+      }
+    },
+  );
+
+  await boss.work<PublishedRosterJob>(
+    QUEUES.publishedRoster,
+    async (jobs: Job<PublishedRosterJob>[]) => {
+      for (const job of jobs) {
+        await handlePublishedRoster(job.data);
       }
     },
   );

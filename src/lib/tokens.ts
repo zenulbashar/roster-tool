@@ -20,6 +20,14 @@ export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+/**
+ * Unguessable slug for the public read-only roster URL. Not a secret in the
+ * token sense, but long enough that the link can't be guessed.
+ */
+export function generateSlug(): string {
+  return randomBytes(12).toString("base64url");
+}
+
 /** Constant-time comparison of two hex hashes of equal length. */
 export function safeHashEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a, "hex");

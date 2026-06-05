@@ -125,5 +125,5 @@ Postgres service), typecheck, lint, format check, test. Keep it green.
 - [x] M4 — Staff + shift templates + roster periods
 - [x] M5 — Availability requests + staff magic-link flow
 - [x] M6 — Availability summary + roster builder
-- [ ] M7 — Publish + reminders (jobs)
+- [x] M7 — Publish + reminders (jobs)
 - [ ] M8 — Accessibility + polish

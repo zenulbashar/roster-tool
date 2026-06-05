@@ -393,6 +393,37 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         );
     },
 
+    /**
+     * Every shift in a period with its assigned staff (if any). One row per
+     * shift-assignment; unassigned shifts appear once with null staff. Powers
+     * the public roster view and per-staff published emails.
+     */
+    rosterRows(rosterPeriodId: string) {
+      return database
+        .select({
+          shiftId: shifts.id,
+          date: shifts.date,
+          label: shifts.label,
+          startTime: shifts.startTime,
+          endTime: shifts.endTime,
+          staffMemberId: rosterAssignments.staffMemberId,
+          staffName: staffMembers.name,
+        })
+        .from(shifts)
+        .leftJoin(rosterAssignments, eq(rosterAssignments.shiftId, shifts.id))
+        .leftJoin(
+          staffMembers,
+          eq(staffMembers.id, rosterAssignments.staffMemberId),
+        )
+        .where(
+          and(
+            eq(shifts.rosterPeriodId, rosterPeriodId),
+            eq(shifts.businessId, businessId),
+          ),
+        )
+        .orderBy(asc(shifts.date), asc(shifts.startTime));
+    },
+
     async assign(shiftId: string, staffMemberId: string) {
       const [row] = await database
         .insert(rosterAssignments)
@@ -417,6 +448,20 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     },
 
     /* ----- Published rosters ----- */
+    getPublished(rosterPeriodId: string) {
+      return first(
+        database
+          .select()
+          .from(publishedRosters)
+          .where(
+            and(
+              eq(publishedRosters.rosterPeriodId, rosterPeriodId),
+              eq(publishedRosters.businessId, businessId),
+            ),
+          ),
+      );
+    },
+
     async publish(rosterPeriodId: string, publicSlug: string) {
       const [row] = await database
         .insert(publishedRosters)

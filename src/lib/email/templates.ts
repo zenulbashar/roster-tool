@@ -70,6 +70,53 @@ export function availabilityRequestEmail(input: {
   };
 }
 
+export function publishedRosterEmail(input: {
+  businessName: string;
+  staffName: string;
+  periodLabel: string;
+  shifts: Array<{ dayText: string; label: string; timeText: string }>;
+  publicUrl: string;
+}): OutgoingEmail {
+  const { businessName, staffName, periodLabel, shifts, publicUrl } = input;
+  const hasShifts = shifts.length > 0;
+
+  const listHtml = hasShifts
+    ? `<ul style="padding-left:18px;margin:12px 0;">${shifts
+        .map(
+          (s) =>
+            `<li style="margin:4px 0;"><strong>${s.dayText}</strong> — ${s.label}, ${s.timeText}</li>`,
+        )
+        .join("")}</ul>`
+    : `<p>You&rsquo;re not rostered on this time. Enjoy your time off!</p>`;
+
+  const listText = hasShifts
+    ? shifts
+        .map((s) => `  • ${s.dayText} — ${s.label}, ${s.timeText}`)
+        .join("\n")
+    : "You're not rostered on this time. Enjoy your time off!";
+
+  return {
+    to: "",
+    subject: `Your shifts for "${periodLabel}" — ${businessName}`,
+    html: layout({
+      heading: `Hi ${staffName}, here are your shifts`,
+      bodyHtml: `<p>${businessName} has published the roster for <strong>${periodLabel}</strong>. Here&rsquo;s when you&rsquo;re working:</p>${listHtml}`,
+      ctaLabel: "See the full roster",
+      ctaUrl: publicUrl,
+      footer: "Questions about your shifts? Reply to your manager directly.",
+    }),
+    text: [
+      `Hi ${staffName},`,
+      "",
+      `${businessName} has published the roster for "${periodLabel}". Your shifts:`,
+      "",
+      listText,
+      "",
+      `See the full roster: ${publicUrl}`,
+    ].join("\n"),
+  };
+}
+
 export function reminderEmail(input: {
   businessName: string;
   staffName: string;
