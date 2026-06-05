@@ -87,7 +87,7 @@ tests/            unit + integration tests
 
 - [x] M1 — Scaffold, tooling, CI
 - [x] M2 — DB schema, migrations, tenant layer, seed
-- [ ] M3 — Owner auth + business creation
+- [x] M3 — Owner auth + business creation
 - [ ] M4 — Staff + shift templates + roster periods
 - [ ] M5 — Availability requests + staff magic-link flow
 - [ ] M6 — Availability summary + roster builder
