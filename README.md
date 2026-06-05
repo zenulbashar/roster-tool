@@ -86,7 +86,7 @@ tests/            unit + integration tests
 ## Milestones
 
 - [x] M1 — Scaffold, tooling, CI
-- [ ] M2 — DB schema, migrations, tenant layer, seed
+- [x] M2 — DB schema, migrations, tenant layer, seed
 - [ ] M3 — Owner auth + business creation
 - [ ] M4 — Staff + shift templates + roster periods
 - [ ] M5 — Availability requests + staff magic-link flow

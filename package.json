@@ -17,9 +17,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx scripts/migrate.ts",
-    "db:seed": "tsx scripts/seed.ts",
-    "worker": "tsx scripts/worker.ts",
+    "db:migrate": "tsx --env-file-if-exists=.env scripts/migrate.ts",
+    "db:seed": "tsx --env-file-if-exists=.env scripts/seed.ts",
+    "worker": "tsx --env-file-if-exists=.env scripts/worker.ts",
     "dev:setup": "docker compose up -d && wait-on tcp:5432 && npm run db:migrate && npm run db:seed"
   },
   "dependencies": {
