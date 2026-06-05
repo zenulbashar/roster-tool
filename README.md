@@ -92,4 +92,4 @@ tests/            unit + integration tests
 - [x] M5 — Availability requests + staff magic-link flow
 - [x] M6 — Availability summary + roster builder
 - [x] M7 — Publish + reminders (jobs)
-- [ ] M8 — Accessibility + polish
+- [x] M8 — Accessibility + polish

@@ -139,7 +139,7 @@ export default async function AvailabilityPage({
                       role="group"
                       aria-label={`${s.label} ${formatDateOnly(date)}`}
                     >
-                      <label className="cursor-pointer px-3 py-2 text-sm font-medium has-[:checked]:bg-[var(--color-ok)] has-[:checked]:text-white">
+                      <label className="cursor-pointer px-3 py-2 text-sm font-medium has-[:checked]:bg-[var(--color-ok)] has-[:checked]:text-white has-[:focus-visible]:outline has-[:focus-visible]:outline-[3px] has-[:focus-visible]:-outline-offset-2 has-[:focus-visible]:outline-[var(--color-brand)]">
                         <input
                           type="radio"
                           name={`shift_${s.id}`}
@@ -149,7 +149,7 @@ export default async function AvailabilityPage({
                         />
                         I can work
                       </label>
-                      <label className="cursor-pointer border-l border-[var(--color-line)] px-3 py-2 text-sm font-medium has-[:checked]:bg-[var(--color-danger)] has-[:checked]:text-white">
+                      <label className="cursor-pointer border-l border-[var(--color-line)] px-3 py-2 text-sm font-medium has-[:checked]:bg-[var(--color-danger)] has-[:checked]:text-white has-[:focus-visible]:outline has-[:focus-visible]:outline-[3px] has-[:focus-visible]:-outline-offset-2 has-[:focus-visible]:outline-[var(--color-brand)]">
                         <input
                           type="radio"
                           name={`shift_${s.id}`}
