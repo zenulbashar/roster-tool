@@ -1,0 +1,60 @@
+{
+  "name": "roster-tool",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:seed": "tsx scripts/seed.ts",
+    "worker": "tsx scripts/worker.ts",
+    "dev:setup": "docker compose up -d && wait-on tcp:5432 && npm run db:migrate && npm run db:seed"
+  },
+  "dependencies": {
+    "@auth/drizzle-adapter": "^1.11.2",
+    "drizzle-orm": "^0.45.2",
+    "next": "^16.2.7",
+    "next-auth": "^5.0.0-beta.31",
+    "nodemailer": "^7.0.13",
+    "pg": "^8.21.0",
+    "pg-boss": "^12.18.2",
+    "pino": "^10.3.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "resend": "^6.12.4",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "@next/eslint-plugin-next": "^16.2.7",
+    "@tailwindcss/postcss": "^4.3.0",
+    "@types/node": "^22.10.0",
+    "@types/nodemailer": "^7.0.11",
+    "@types/pg": "^8.11.10",
+    "@types/react": "^19.2.16",
+    "@types/react-dom": "^19.2.3",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9.18.0",
+    "eslint-config-prettier": "^10.1.5",
+    "pino-pretty": "^13.0.0",
+    "prettier": "^3.4.2",
+    "tailwindcss": "^4.3.0",
+    "tsx": "^4.19.2",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.20.0",
+    "vitest": "^4.1.8",
+    "wait-on": "^8.0.1"
+  }
+}
