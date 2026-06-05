@@ -124,6 +124,6 @@ Postgres service), typecheck, lint, format check, test. Keep it green.
 - [x] M3 — Owner auth + business creation
 - [x] M4 — Staff + shift templates + roster periods
 - [x] M5 — Availability requests + staff magic-link flow
-- [ ] M6 — Availability summary + roster builder
+- [x] M6 — Availability summary + roster builder
 - [ ] M7 — Publish + reminders (jobs)
 - [ ] M8 — Accessibility + polish

@@ -147,4 +147,19 @@ describe("availability flow", () => {
     expect(saved).toHaveLength(2);
     expect(saved.find((r) => r.shiftId === shiftIds[1])?.available).toBe(true);
   });
+
+  it("assigns and unassigns staff idempotently", async () => {
+    await repo.assign(shiftIds[0]!, staffId);
+    // Assigning again must not create a duplicate.
+    await repo.assign(shiftIds[0]!, staffId);
+
+    let rows = await repo.listAssignments(periodId);
+    const forShift = rows.filter((a) => a.shiftId === shiftIds[0]);
+    expect(forShift).toHaveLength(1);
+    expect(forShift[0]?.staffMemberId).toBe(staffId);
+
+    await repo.unassign(shiftIds[0]!, staffId);
+    rows = await repo.listAssignments(periodId);
+    expect(rows.some((a) => a.shiftId === shiftIds[0])).toBe(false);
+  });
 });

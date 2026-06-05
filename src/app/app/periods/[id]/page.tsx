@@ -12,6 +12,7 @@ import { periodStatusLabel } from "@/lib/labels";
 import {
   Banner,
   Button,
+  ButtonLink,
   Card,
   Field,
   PageHeader,
@@ -179,6 +180,11 @@ export default async function PeriodDetailPage({
               );
             })}
           </ul>
+          <div className="mt-4">
+            <ButtonLink href={`/app/periods/${id}/build`}>
+              Build the roster
+            </ButtonLink>
+          </div>
         </Card>
       )}
 

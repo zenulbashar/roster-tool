@@ -201,6 +201,15 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .orderBy(asc(shifts.date), asc(shifts.startTime));
     },
 
+    getShift(id: string) {
+      return first(
+        database
+          .select()
+          .from(shifts)
+          .where(and(eq(shifts.id, id), eq(shifts.businessId, businessId))),
+      );
+    },
+
     async createShifts(
       rows: Array<{
         rosterPeriodId: string;
@@ -302,6 +311,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       return database
         .select({
           requestId: availabilityResponses.requestId,
+          staffMemberId: availabilityRequests.staffMemberId,
           shiftId: availabilityResponses.shiftId,
           available: availabilityResponses.available,
         })
