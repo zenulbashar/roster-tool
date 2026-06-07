@@ -105,6 +105,15 @@ npm run typecheck && npm run lint && npm test
 `.github/workflows/ci.yml` runs on every push/PR: `npm ci`, migrate (against a
 Postgres service), typecheck, lint, format check, test. Keep it green.
 
+## Deployment
+
+Production runs on Vercel (web app) + Railway (worker, via `Dockerfile`) +
+Neon Postgres + Resend. Per-platform env templates: `.env.vercel.example` and
+`.env.railway.example`. Step-by-step instructions are in README →
+"Production deployment". Key gotchas: the worker needs `APP_URL` and
+`AUTH_SECRET` set (env validation is global); Vercel uses Neon's pooled
+connection, the worker uses the direct connection (pg-boss needs session mode).
+
 ## Working method
 
 - Small, reviewable commits — one logical change each.
