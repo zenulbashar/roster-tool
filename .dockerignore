@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+coverage
+*.log
+# Never bake real secrets into the image (templates *.example are fine to keep).
+.env
+.env.local
+.env.*.local

@@ -65,6 +65,114 @@ npm run worker
 | `npm run lint`        | ESLint                                            |
 | `npm test`            | Run the test suite                                |
 
+## Production deployment
+
+The app runs on **Vercel**, the background worker on **Railway**, and both share
+one **Neon** Postgres database. Email goes through **Resend**. You can follow
+these steps without being a developer — just copy/paste carefully.
+
+You'll need accounts for: Neon (database), Vercel (web app), Railway (worker),
+Resend (email), and Cloudflare (DNS for `zaleit.com.au`).
+
+Two ready-made env templates list exactly what each platform needs:
+
+- `.env.vercel.example` — the web app
+- `.env.railway.example` — the worker
+
+Both use the **same** Neon database, with one difference: Vercel uses Neon's
+**pooled** connection string (host contains `-pooler`) and the worker uses the
+**direct** one (no `-pooler`), because the job system (pg-boss) needs a direct
+connection.
+
+### 1. Create the database tables (run once)
+
+In the Neon dashboard, create a project in the **Sydney (ap-southeast-2)**
+region and copy its connection string.
+
+On your computer, in the project folder, create a temporary file called `.env`
+with two lines (the migration tool reads both):
+
+```
+DATABASE_URL=postgresql://USER:PASSWORD@ep-xxxx.ap-southeast-2.aws.neon.tech/roster?sslmode=require
+AUTH_SECRET=anything-non-empty-for-this-one-off-step
+```
+
+Use the **direct** connection string here, and make sure it ends with
+`?sslmode=require`. Then run:
+
+```bash
+npm install
+npm run db:migrate
+```
+
+You should see "Migrations applied." Delete that temporary `.env` afterwards.
+(The worker creates its own job tables automatically the first time it starts —
+nothing extra to do.)
+
+### 2. Generate a sign-in secret
+
+Run this once and keep the output — you'll paste the **same** value into both
+Vercel and Railway:
+
+```bash
+npx auth secret
+```
+
+### 3. Deploy the web app to Vercel
+
+1. Go to Vercel → **Add New… → Project** and import the `zenulbashar/roster-tool`
+   repo from GitHub.
+2. Framework is auto-detected (Next.js). Leave the build settings as-is —
+   `vercel.json` already configures them.
+3. Open **Settings → Environment Variables** and add every variable from
+   `.env.vercel.example` (Production scope), using:
+   - your Neon **pooled** `DATABASE_URL` (host has `-pooler`, ends with
+     `?sslmode=require`),
+   - the `AUTH_SECRET` from step 2,
+   - `AUTH_URL` and `APP_URL` both set to `https://roster.zaleit.com.au`,
+   - `EMAIL_TRANSPORT=resend`, `EMAIL_FROM=Roster <roster@zaleit.com.au>`, and
+     your `RESEND_API_KEY`.
+4. Click **Deploy**. (Set the env vars _before_ deploying — the build checks
+   them.)
+
+### 4. Deploy the worker to Railway
+
+1. Go to Railway → **New Project → Deploy from GitHub repo** and pick
+   `zenulbashar/roster-tool`.
+2. Railway will detect the `Dockerfile` and build the worker image. It needs no
+   public port — it's a background process, not a website.
+3. Open the service's **Variables** tab and add every variable from
+   `.env.railway.example`, using:
+   - your Neon **direct** `DATABASE_URL` (host has **no** `-pooler`, ends with
+     `?sslmode=require`),
+   - the **same** `AUTH_SECRET` as Vercel,
+   - `APP_URL=https://roster.zaleit.com.au`,
+   - `EMAIL_TRANSPORT=resend`, `EMAIL_FROM=Roster <roster@zaleit.com.au>`, and
+     your `RESEND_API_KEY`.
+4. Deploy. The logs should show "Workers registered" and "Worker started.
+   Waiting for jobs…".
+
+### 5. Point roster.zaleit.com.au at Vercel (Cloudflare DNS)
+
+1. In Vercel → the project → **Settings → Domains**, add
+   `roster.zaleit.com.au`. Vercel will show a CNAME target (usually
+   `cname.vercel-dns.com`).
+2. In Cloudflare → `zaleit.com.au` → **DNS → Records → Add record**:
+   - Type: **CNAME**
+   - Name: **roster**
+   - Target: the value Vercel gave you (e.g. `cname.vercel-dns.com`)
+   - Proxy status: **DNS only** (grey cloud) while Vercel issues the SSL
+     certificate; you can switch it to Proxied later if you like.
+3. Wait a few minutes for Vercel to verify the domain and issue HTTPS. Then open
+   `https://roster.zaleit.com.au` and sign in.
+
+### Quick check it's all working
+
+Sign in as the owner, add yourself as a staff member, create a roster, and send
+an availability request. You should receive a real email from
+`roster@zaleit.com.au` within a minute (sent by the Railway worker). If emails
+don't arrive, check the Railway worker logs and the Resend dashboard.
+
 ## Project layout
 
 ```

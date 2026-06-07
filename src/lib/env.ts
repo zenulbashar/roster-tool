@@ -5,7 +5,7 @@ import { z } from "zod";
  * reading `process.env` directly so a missing/invalid variable fails fast and
  * loudly at startup instead of surfacing as a confusing runtime error later.
  */
-const envSchema = z.object({
+const baseEnvSchema = z.object({
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
@@ -31,6 +31,18 @@ const envSchema = z.object({
 
   // Resend — only required when EMAIL_TRANSPORT=resend.
   RESEND_API_KEY: z.string().optional(),
+});
+
+const envSchema = baseEnvSchema.superRefine((val, ctx) => {
+  // In production we send via Resend, so the API key must be present. Fail at
+  // boot rather than silently at first send.
+  if (val.EMAIL_TRANSPORT === "resend" && !val.RESEND_API_KEY) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["RESEND_API_KEY"],
+      message: "RESEND_API_KEY is required when EMAIL_TRANSPORT=resend",
+    });
+  }
 });
 
 export type Env = z.infer<typeof envSchema>;
