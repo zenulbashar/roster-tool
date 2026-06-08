@@ -65,6 +65,16 @@ export default async function StaffPage({
     revalidatePath(PATH);
   }
 
+  async function toggleNotify(formData: FormData) {
+    "use server";
+    const repo = await ownerRepo();
+    const id = String(formData.get("id"));
+    // The hidden field carries the new value (the checkbox onChange submits).
+    const notifyByDefault = formData.get("notifyByDefault") === "true";
+    await repo.updateStaff(id, { notifyByDefault });
+    revalidatePath(PATH);
+  }
+
   return (
     <>
       <PageHeader
@@ -118,6 +128,35 @@ export default async function StaffPage({
                     <p className="text-sm text-[var(--color-muted)]">
                       {s.email}
                     </p>
+                    <form action={toggleNotify} className="mt-2">
+                      <input type="hidden" name="id" value={s.id} />
+                      <input
+                        type="hidden"
+                        name="notifyByDefault"
+                        value={String(!s.notifyByDefault)}
+                      />
+                      <button
+                        type="submit"
+                        role="switch"
+                        aria-checked={s.notifyByDefault}
+                        className="inline-flex items-center gap-2 text-sm font-medium text-[var(--color-ink)]"
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={`inline-flex h-5 w-9 items-center rounded-full border px-0.5 transition-colors ${
+                            s.notifyByDefault
+                              ? "justify-end border-[var(--color-ok)] bg-[var(--color-ok)]"
+                              : "justify-start border-[var(--color-line)] bg-[var(--color-canvas)]"
+                          }`}
+                        >
+                          <span className="h-4 w-4 rounded-full bg-white" />
+                        </span>
+                        Ask for availability by email
+                        <span className="text-[var(--color-muted)]">
+                          {s.notifyByDefault ? "On" : "Off"}
+                        </span>
+                      </button>
+                    </form>
                   </div>
                   <form action={toggleActive}>
                     <input type="hidden" name="id" value={s.id} />
