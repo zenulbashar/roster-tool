@@ -1,0 +1,1 @@
+ALTER TABLE "business" ADD COLUMN "photo_retention_days" integer DEFAULT 7 NOT NULL;
