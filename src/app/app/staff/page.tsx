@@ -1,7 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ownerRepo } from "@/lib/auth/context";
-import { staffSchema, pinSchema } from "@/lib/validation";
+import { staffSchema, pinSchema, payRateSchema } from "@/lib/validation";
 import { hashPin } from "@/lib/pin";
 import {
   Banner,
@@ -26,7 +26,12 @@ function isUniqueViolation(err: unknown): boolean {
 export default async function StaffPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; added?: string; pin?: string }>;
+  searchParams: Promise<{
+    error?: string;
+    added?: string;
+    pin?: string;
+    rate?: string;
+  }>;
 }) {
   const sp = await searchParams;
   const repo = await ownerRepo();
@@ -93,6 +98,34 @@ export default async function StaffPage({
     redirect(`${PATH}?pin=1`);
   }
 
+  async function setRate(formData: FormData) {
+    "use server";
+    const repo = await ownerRepo();
+    const id = String(formData.get("id"));
+    const parsed = payRateSchema.safeParse({
+      rateType: formData.get("rateType"),
+      rateDollars: formData.get("rateDollars") ?? "",
+      rateLabel: formData.get("rateLabel") ?? "",
+    });
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Check the rate";
+      redirect(`${PATH}?error=${encodeURIComponent(msg)}`);
+    }
+    // A blank amount clears the rate. We store cents; rounding avoids float drift.
+    const { rateType, rateDollars, rateLabel } = parsed.data;
+    const payRateCents =
+      rateDollars === "" ? null : Math.round(Number(rateDollars) * 100);
+    const updated = await repo.updateStaff(id, {
+      payRateCents,
+      rateType,
+      rateLabel: rateLabel && rateLabel.length > 0 ? rateLabel : null,
+    });
+    if (!updated)
+      redirect(`${PATH}?error=${encodeURIComponent("Staff member not found")}`);
+    revalidatePath(PATH);
+    redirect(`${PATH}?rate=1`);
+  }
+
   return (
     <>
       <PageHeader
@@ -103,6 +136,7 @@ export default async function StaffPage({
       {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
       {sp.added ? <Banner tone="success">Staff member added.</Banner> : null}
       {sp.pin ? <Banner tone="success">PIN updated.</Banner> : null}
+      {sp.rate ? <Banner tone="success">Pay rate saved.</Banner> : null}
 
       <Card className="mt-4">
         <h2 className="text-lg font-semibold">Add someone</h2>
@@ -204,6 +238,64 @@ export default async function StaffPage({
                         {s.pinHash ? "Reset PIN" : "Set PIN"}
                       </Button>
                     </form>
+                    <form
+                      action={setRate}
+                      className="mt-3 flex flex-wrap items-end gap-2"
+                    >
+                      <input type="hidden" name="id" value={s.id} />
+                      <label className="block">
+                        <span className="mb-1 block text-sm font-semibold">
+                          Rate type
+                        </span>
+                        <select
+                          name="rateType"
+                          defaultValue={s.rateType}
+                          aria-label={`Rate type for ${s.name}`}
+                          className="rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 text-sm"
+                        >
+                          <option value="flat">Flat</option>
+                          <option value="award">Award</option>
+                        </select>
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-sm font-semibold">
+                          Hourly rate ($)
+                        </span>
+                        <TextInput
+                          name="rateDollars"
+                          inputMode="decimal"
+                          placeholder="e.g. 28.50"
+                          defaultValue={
+                            s.payRateCents != null
+                              ? (s.payRateCents / 100).toFixed(2)
+                              : ""
+                          }
+                          className="w-28"
+                          aria-label={`Hourly rate for ${s.name}`}
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-sm font-semibold">
+                          Label (optional)
+                        </span>
+                        <TextInput
+                          name="rateLabel"
+                          maxLength={80}
+                          placeholder="e.g. Level 2 cook"
+                          defaultValue={s.rateLabel ?? ""}
+                          className="w-44"
+                          aria-label={`Rate label for ${s.name}`}
+                        />
+                      </label>
+                      <Button type="submit" variant="secondary">
+                        Save rate
+                      </Button>
+                    </form>
+                    <p className="mt-1 text-xs text-[var(--color-muted)]">
+                      A stored rate for your records and the hours export. This
+                      app doesn&apos;t calculate pay — no penalty rates,
+                      overtime or super.
+                    </p>
                   </div>
                   <form action={toggleActive}>
                     <input type="hidden" name="id" value={s.id} />
