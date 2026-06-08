@@ -41,8 +41,7 @@ export default async function SettingsPage({
     ? `${env.APP_URL}/clock/${freshClockToken}`
     : null;
   const hasClockLink = Boolean(business.personalClockTokenHash);
-  const locationSet =
-    business.latitude !== null && business.longitude !== null;
+  const locationSet = business.latitude !== null && business.longitude !== null;
 
   async function togglePhoto(formData: FormData) {
     "use server";
@@ -249,11 +248,11 @@ export default async function SettingsPage({
       <Card className="mt-6">
         <h2 className="text-lg font-semibold">Phone clock-in (location)</h2>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
-          Let staff clock in from their own phones, checked against the shop&apos;s
-          location. Set where your shop is — stand in the shop and tap “Use my
-          current location”, or type the coordinates. Staff must be within the
-          chosen distance of this spot to clock in on their phone. (The shared
-          kiosk is never location-checked.)
+          Let staff clock in from their own phones, checked against the
+          shop&apos;s location. Set where your shop is — stand in the shop and
+          tap “Use my current location”, or type the coordinates. Staff must be
+          within the chosen distance of this spot to clock in on their phone.
+          (The shared kiosk is never location-checked.)
         </p>
 
         <form action={saveLocation} className="mt-4 space-y-4">
@@ -351,7 +350,10 @@ export default async function SettingsPage({
           )}
 
           <form action={generateClockLink} className="mt-4">
-            <Button type="submit" variant={hasClockLink ? "secondary" : "primary"}>
+            <Button
+              type="submit"
+              variant={hasClockLink ? "secondary" : "primary"}
+            >
               {hasClockLink
                 ? "Replace phone clock-in link"
                 : "Create phone clock-in link"}

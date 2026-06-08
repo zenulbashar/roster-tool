@@ -100,7 +100,9 @@ describe("pay rates + approved-hours export query", () => {
     expect(rows[0]!.clockInAt.toISOString()).toBe("2026-06-09T09:00:00.000Z");
 
     // B's export never sees A's data.
-    expect(await repoB.listApprovedEntriesForExport(start, end)).toHaveLength(1);
+    expect(await repoB.listApprovedEntriesForExport(start, end)).toHaveLength(
+      1,
+    );
 
     // End-to-end: feed the query straight into the CSV builder.
     const csv = buildApprovedHoursCsv(rows, {

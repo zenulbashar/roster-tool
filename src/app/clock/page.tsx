@@ -22,8 +22,8 @@ export default async function PersonalClockPage({
       <Card className="mt-8 text-center">
         <h1 className="text-xl font-bold">Clock-in link not active</h1>
         <p className="mt-2 text-[var(--color-muted)]">
-          This link is no longer active. Ask your manager for the current
-          phone clock-in link.
+          This link is no longer active. Ask your manager for the current phone
+          clock-in link.
         </p>
       </Card>
     );

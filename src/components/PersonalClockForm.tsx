@@ -2,10 +2,7 @@
 
 import Link from "next/link";
 import { useActionState, useRef, useState } from "react";
-import {
-  personalClockAction,
-  type ClockResult,
-} from "@/app/clock/actions";
+import { personalClockAction, type ClockResult } from "@/app/clock/actions";
 import { Banner, Button, Card } from "@/components/ui";
 
 const initial: ClockResult = { status: "idle" };
