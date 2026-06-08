@@ -1,5 +1,5 @@
 import type { AdapterAccountType } from "next-auth/adapters";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   pgTable,
   pgEnum,
@@ -12,6 +12,7 @@ import {
   integer,
   primaryKey,
   unique,
+  uniqueIndex,
   index,
 } from "drizzle-orm/pg-core";
 
@@ -100,6 +101,26 @@ export const rosterStatus = pgEnum("roster_status", [
   "published",
 ]);
 
+/**
+ * Where an availability response came from. `staff` = the person answered via
+ * their magic link. `manual` = the owner pre-filled it (no email sent, no
+ * request record), e.g. they already know the person is free.
+ */
+export const availabilitySource = pgEnum("availability_source", [
+  "staff",
+  "manual",
+]);
+
+/**
+ * `suggested` = a draft assignment proposed by "Draft from last week" that the
+ * owner hasn't confirmed yet. `confirmed` = a real assignment. Only confirmed
+ * assignments are published.
+ */
+export const assignmentStatus = pgEnum("assignment_status", [
+  "suggested",
+  "confirmed",
+]);
+
 export const staffMembers = pgTable(
   "staff_member",
   {
@@ -110,6 +131,9 @@ export const staffMembers = pgTable(
     name: text("name").notNull(),
     email: text("email").notNull(),
     active: boolean("active").notNull().default(true),
+    // Whether this person is pre-checked when the owner asks for availability.
+    // Owners can still override per-send; this is just the default.
+    notifyByDefault: boolean("notify_by_default").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -218,13 +242,19 @@ export const availabilityResponses = pgTable(
     businessId: uuid("business_id")
       .notNull()
       .references(() => businesses.id, { onDelete: "cascade" }),
-    requestId: uuid("request_id")
-      .notNull()
-      .references(() => availabilityRequests.id, { onDelete: "cascade" }),
+    // Null for owner-entered ("manual") responses, which have no request.
+    requestId: uuid("request_id").references(() => availabilityRequests.id, {
+      onDelete: "cascade",
+    }),
+    // Set directly for manual responses (staff responses derive it via request).
+    staffMemberId: uuid("staff_member_id").references(() => staffMembers.id, {
+      onDelete: "cascade",
+    }),
     shiftId: uuid("shift_id")
       .notNull()
       .references(() => shifts.id, { onDelete: "cascade" }),
     available: boolean("available").notNull(),
+    source: availabilitySource("source").notNull().default("staff"),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -234,6 +264,11 @@ export const availabilityResponses = pgTable(
       t.requestId,
       t.shiftId,
     ),
+    // Idempotent manual pre-fill: one manual response per staff member per
+    // shift. Only applies to request-less (manual) rows.
+    uniqueIndex("availability_response_manual_staff_shift_unique")
+      .on(t.staffMemberId, t.shiftId)
+      .where(sql`${t.requestId} is null`),
   ],
 );
 
@@ -250,6 +285,7 @@ export const rosterAssignments = pgTable(
     staffMemberId: uuid("staff_member_id")
       .notNull()
       .references(() => staffMembers.id, { onDelete: "cascade" }),
+    status: assignmentStatus("status").notNull().default("confirmed"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
