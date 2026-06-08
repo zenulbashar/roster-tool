@@ -11,6 +11,7 @@ import {
   time,
   boolean,
   integer,
+  doublePrecision,
   primaryKey,
   unique,
   uniqueIndex,
@@ -48,6 +49,17 @@ export const businesses = pgTable("business", {
   // SHA-256 hash of the kiosk capability token. Only the hash is stored; the
   // raw token lives in the kiosk link / cookie. Rotating it revokes old links.
   kioskTokenHash: text("kiosk_token_hash").unique(),
+  // The shop's location, set by the owner in Settings. Used ONLY to geofence
+  // personal-phone clock-in (not the shared kiosk). Null until the owner sets
+  // it; personal clock-in is unavailable until then.
+  latitude: doublePrecision("latitude"),
+  longitude: doublePrecision("longitude"),
+  // How close (metres) a personal phone must be to the shop to clock in.
+  geofenceRadiusM: integer("geofence_radius_m").notNull().default(200),
+  // SHA-256 hash of the SEPARATE personal-phone clock-in capability token.
+  // Distinct from the kiosk token so staff on their own phones only get the
+  // GPS-checked route (no no-location bypass). Rotating it revokes old links.
+  personalClockTokenHash: text("personal_clock_token_hash").unique(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -148,6 +160,13 @@ export const assignmentStatus = pgEnum("assignment_status", [
 /** Which side of a timesheet entry a clock photo belongs to. */
 export const clockPhotoKind = pgEnum("clock_photo_kind", ["in", "out"]);
 
+/**
+ * How a staff member's pay rate was set. Both are just a stored hourly number
+ * with a label — the app does NOT interpret awards, penalties or overtime.
+ * `award` only records that the owner sourced the number from an award.
+ */
+export const rateType = pgEnum("rate_type", ["flat", "award"]);
+
 export const staffMembers = pgTable(
   "staff_member",
   {
@@ -169,6 +188,12 @@ export const staffMembers = pgTable(
     // Durable (not in-memory) so the cooldown holds across server instances.
     failedPinAttempts: integer("failed_pin_attempts").notNull().default(0),
     pinLockedUntil: timestamp("pin_locked_until", { withTimezone: true }),
+    // Per-employee hourly pay rate the owner typed, in cents. Nullable until
+    // set. This is a stored number + label only: the app records it (and shows
+    // it on the CSV export), it never calculates wages, penalties or overtime.
+    payRateCents: integer("pay_rate_cents"),
+    rateType: rateType("rate_type").notNull().default("flat"),
+    rateLabel: text("rate_label"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -369,6 +394,12 @@ export const timesheetEntries = pgTable(
     }),
     clockInAt: timestamp("clock_in_at", { withTimezone: true }).notNull(),
     clockOutAt: timestamp("clock_out_at", { withTimezone: true }),
+    // Coordinates captured at clock-in from a personal phone, and whether they
+    // were inside the business geofence. Null for kiosk and owner-entered rows
+    // (location not checked). `within_geofence = true` means location-verified.
+    clockInLat: doublePrecision("clock_in_lat"),
+    clockInLng: doublePrecision("clock_in_lng"),
+    withinGeofence: boolean("within_geofence"),
     approved: boolean("approved").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

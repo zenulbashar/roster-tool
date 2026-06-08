@@ -5,13 +5,25 @@ import { ownerRepo } from "@/lib/auth/context";
 import { env } from "@/lib/env";
 import { generateToken } from "@/lib/tokens";
 import { PHOTO_RETENTION_DAYS, parsePhotoRetentionDays } from "@/lib/retention";
+import {
+  coordinatesSchema,
+  parseGeofenceRadius,
+  GEOFENCE_RADIUS_OPTIONS,
+} from "@/lib/validation";
 import { Banner, Button, Card, PageHeader } from "@/components/ui";
 import { ClearFlashCookie } from "@/components/ClearFlashCookie";
+import { UseMyLocationButton } from "@/components/UseMyLocationButton";
 
 const PATH = "/app/settings";
 const LINK_COOKIE = "kiosk_link_once";
+const CLOCK_LINK_COOKIE = "personal_clock_link_once";
 
-export default async function SettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string; locationSaved?: string }>;
+}) {
+  const sp = await searchParams;
   const repo = await ownerRepo();
   const business = await repo.getBusiness();
   if (!business) redirect("/onboarding");
@@ -22,6 +34,14 @@ export default async function SettingsPage() {
   const freshToken = cookieStore.get(LINK_COOKIE)?.value ?? null;
   const freshLink = freshToken ? `${env.APP_URL}/kiosk/${freshToken}` : null;
   const hasKioskLink = Boolean(business.kioskTokenHash);
+
+  // Same once-only flash pattern for the separate personal-phone clock-in link.
+  const freshClockToken = cookieStore.get(CLOCK_LINK_COOKIE)?.value ?? null;
+  const freshClockLink = freshClockToken
+    ? `${env.APP_URL}/clock/${freshClockToken}`
+    : null;
+  const hasClockLink = Boolean(business.personalClockTokenHash);
+  const locationSet = business.latitude !== null && business.longitude !== null;
 
   async function togglePhoto(formData: FormData) {
     "use server";
@@ -64,12 +84,56 @@ export default async function SettingsPage() {
     redirect(PATH);
   }
 
+  async function saveLocation(formData: FormData) {
+    "use server";
+    const coords = coordinatesSchema.safeParse({
+      lat: formData.get("latitude"),
+      lng: formData.get("longitude"),
+    });
+    const radius = parseGeofenceRadius(formData.get("geofenceRadiusM"));
+    if (!coords.success || radius === null) {
+      redirect(
+        `${PATH}?error=${encodeURIComponent("Enter a valid location and radius")}`,
+      );
+    }
+    const repo = await ownerRepo();
+    await repo.updateBusinessSettings({
+      latitude: coords.data.lat,
+      longitude: coords.data.lng,
+      geofenceRadiusM: radius,
+    });
+    revalidatePath(PATH);
+    redirect(`${PATH}?locationSaved=1`);
+  }
+
+  async function generateClockLink() {
+    "use server";
+    const repo = await ownerRepo();
+    const { token, tokenHash } = generateToken();
+    await repo.updateBusinessSettings({ personalClockTokenHash: tokenHash });
+    const cookieStore = await cookies();
+    cookieStore.set(CLOCK_LINK_COOKIE, token, {
+      path: PATH,
+      maxAge: 300,
+      httpOnly: false,
+      sameSite: "lax",
+      secure: env.NODE_ENV === "production",
+    });
+    revalidatePath(PATH);
+    redirect(PATH);
+  }
+
   return (
     <>
       <PageHeader
         title="Settings"
         subtitle="Clock-in kiosk and timesheet options."
       />
+
+      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.locationSaved ? (
+        <Banner tone="success">Shop location saved.</Banner>
+      ) : null}
 
       <Card className="mt-4">
         <h2 className="text-lg font-semibold">Clock-in kiosk</h2>
@@ -176,6 +240,123 @@ export default async function SettingsPage() {
             </select>
             <Button type="submit" variant="secondary">
               Save
+            </Button>
+          </form>
+        </div>
+      </Card>
+
+      <Card className="mt-6">
+        <h2 className="text-lg font-semibold">Phone clock-in (location)</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          Let staff clock in from their own phones, checked against the
+          shop&apos;s location. Set where your shop is — stand in the shop and
+          tap “Use my current location”, or type the coordinates. Staff must be
+          within the chosen distance of this spot to clock in on their phone.
+          (The shared kiosk is never location-checked.)
+        </p>
+
+        <form action={saveLocation} className="mt-4 space-y-4">
+          <div className="flex flex-wrap gap-3">
+            <label className="block">
+              <span className="mb-1 block text-sm font-semibold">Latitude</span>
+              <input
+                id="latitude"
+                name="latitude"
+                type="number"
+                step="any"
+                defaultValue={business.latitude ?? ""}
+                placeholder="-33.8688"
+                className="w-40 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-sm font-semibold">
+                Longitude
+              </span>
+              <input
+                id="longitude"
+                name="longitude"
+                type="number"
+                step="any"
+                defaultValue={business.longitude ?? ""}
+                placeholder="151.2093"
+                className="w-40 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 text-sm"
+              />
+            </label>
+          </div>
+
+          <UseMyLocationButton latId="latitude" lngId="longitude" />
+
+          <label className="block">
+            <span className="mb-1 block text-sm font-semibold">
+              Allowed distance from the shop
+            </span>
+            <select
+              name="geofenceRadiusM"
+              defaultValue={business.geofenceRadiusM}
+              className="rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 text-sm font-medium text-[var(--color-ink)]"
+            >
+              {GEOFENCE_RADIUS_OPTIONS.map((m) => (
+                <option key={m} value={m}>
+                  {m} m
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-sm text-[var(--color-muted)]">
+              A staff member&apos;s phone must be within this distance of the
+              shop to clock in.
+            </span>
+          </label>
+
+          <Button type="submit">Save location</Button>
+        </form>
+
+        <div className="mt-6 border-t border-[var(--color-line)] pt-4">
+          <h3 className="text-base font-semibold">Phone clock-in link</h3>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">
+            Share this separate link with staff for their own phones. It only
+            opens the location-checked clock-in — not the kiosk. Set your shop
+            location first. Replace it any time to disable the old one.
+          </p>
+
+          {!locationSet ? (
+            <p className="mt-3">
+              <Banner tone="info">
+                Set your shop location above before sharing the link.
+              </Banner>
+            </p>
+          ) : null}
+
+          {freshClockLink ? (
+            <div className="mt-4">
+              <ClearFlashCookie name={CLOCK_LINK_COOKIE} />
+              <Banner tone="success">
+                Here is your phone clock-in link. Copy it now — for security we
+                won&apos;t show it again.
+              </Banner>
+              <p className="mt-2 break-all rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 font-mono text-sm">
+                {freshClockLink}
+              </p>
+            </div>
+          ) : (
+            <p className="mt-3 text-sm">
+              Status:{" "}
+              <span className="font-semibold">
+                {hasClockLink
+                  ? "A phone clock-in link is active."
+                  : "No phone clock-in link yet."}
+              </span>
+            </p>
+          )}
+
+          <form action={generateClockLink} className="mt-4">
+            <Button
+              type="submit"
+              variant={hasClockLink ? "secondary" : "primary"}
+            >
+              {hasClockLink
+                ? "Replace phone clock-in link"
+                : "Create phone clock-in link"}
             </Button>
           </form>
         </div>

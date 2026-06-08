@@ -15,11 +15,16 @@ scheduling software.
 In scope: owner sign-up + business, add staff, shift templates, roster periods,
 availability requests via staff magic links, availability summary, roster
 builder, publish (personal emails + read-only shareable view), one automatic
-reminder before the deadline, and staff clock-in (a shared-device kiosk with
-per-staff PINs) feeding owner-facing timesheets.
+reminder before the deadline, staff clock-in (a shared-device kiosk with
+per-staff PINs **and** a personal-phone GPS-checked mode) feeding owner-facing
+timesheets, per-employee pay rates, and a CSV export of approved hours.
 
-**Out of scope (post-MVP):** SMS/WhatsApp, payroll, free-text reply parsing,
-billing, native apps, shift-swap workflows. If a request drifts here, flag it
+**Out of scope (post-MVP):** SMS/WhatsApp, **payroll / wage calculation**
+(award interpretation, penalty rates, overtime, loading, super, STP — the app
+only records hours and a rate the owner typed, and shows an `hours × rate`
+estimate), **payroll API integration** (Xero/MYOB — file export only),
+free-text reply parsing, billing, native apps, shift-swap workflows,
+continuous/background location tracking. If a request drifts here, flag it
 rather than silently building it.
 
 Note: clock-in/timesheets was added after the original MVP (time clocking used
@@ -64,6 +69,32 @@ owner approval, not payroll export.
   owners pick 7/30/90 in Settings) — only the photos are deleted, the timesheet
   entry/hours are always kept. Camera-denied/unavailable falls back to PIN-only;
   a missing photo never blocks clocking.
+- **Personal-phone GPS clock-in** (`/clock/<token>`): a SEPARATE flow from the
+  shared kiosk, for staff clocking in on their own phones. Reached via a
+  distinct capability token (`personal_clock_token_hash`) — NOT the kiosk token
+  — so a personal phone only ever gets the location-checked route (no no-GPS
+  bypass). Same PIN auth + per-staff lockout as the kiosk, scoped via
+  `resolvePersonalClockBusiness` → `createTenantRepo`. On the tap we read the
+  phone's coordinates **once** (no background/continuous tracking), compute the
+  Haversine distance (`src/lib/geo.ts`) to the business location, and require it
+  within `geofence_radius_m`. Outside the radius is **blocked** (clear message);
+  a denied/absent fix is **blocked** too (never silently allowed); if the shop
+  location isn't set, it's blocked. Captured `clock_in_lat/lng` + `within_geofence`
+  are stored so the owner sees it was location-verified. Privacy: a consent line
+  shows on the screen ("Your location is checked when you clock in to confirm
+  you're at work"); location is read only at the tap. The OWNER editing/adding
+  entries on the timesheets page is the release valve, so no one is ever stuck.
+  The shared kiosk is **never** location-checked (a fixed tablet's location
+  proves nothing). No photo on the personal route (PIN + GPS only).
+- **Pay rates & hours export**: each staff member can carry an hourly
+  `pay_rate_cents` + `rate_type` (`flat`/`award`) + `rate_label`. This is a
+  **stored number + label only** — the app does NOT interpret awards or
+  calculate wages. The owner can export a week's **approved** hours as CSV
+  (`src/lib/timesheet-export.ts`): staff, date, in/out, hours, rate, an
+  `hours × rate` **estimate**, and a location-verified flag, in the business
+  timezone. The CSV and the UI both state prominently that this is NOT a payroll
+  calculation; penalty rates, overtime, super and final pay are the
+  owner's/payroll system's job. No Xero/MYOB API — file export only.
 
 ## Non-negotiable conventions
 
@@ -163,12 +194,24 @@ Notable columns / conventions:
   toggles kiosk photo capture (off by default). `photo_retention_days` (NOT NULL
   default 7; allowed 7/30/90) is how long clock-in photos are kept before the
   daily retention job purges them — always on, owner picks the number in Settings.
+  `latitude`/`longitude` (nullable) + `geofence_radius_m` (NOT NULL default 200;
+  owner picks 100/200/500) are the shop location used ONLY to geofence
+  personal-phone clock-in (never the kiosk). `personal_clock_token_hash` is the
+  SHA-256 hash of the SEPARATE personal-phone clock-in capability token (distinct
+  from `kiosk_token_hash`); rotating it revokes old personal links.
+- `staff_member.pay_rate_cents` (nullable) + `rate_type` (`flat`/`award`, NOT
+  NULL default `flat`) + `rate_label` — a per-employee hourly rate the owner
+  typed, stored in cents, with an optional label. A stored number + label only;
+  the app never calculates wages. Surfaced on the Staff page and the CSV export.
 - `timesheet_entry` — one clock in/out. `clock_out_at` null = currently in; a
   **partial unique index** on `staff_member_id WHERE clock_out_at IS NULL` makes
   double clock-in impossible. `shift_id` links a rostered shift when one matches
   (published + confirmed) on the clock-in's business-local date, else null.
-  `approved` is the owner's payroll sign-off. Clock logic is pure in
-  `src/lib/clock.ts`.
+  `approved` is the owner's payroll sign-off (and the filter for the CSV hours
+  export). `clock_in_lat`/`clock_in_lng`/`within_geofence` are set only by
+  personal-phone GPS clock-in (null for kiosk and owner-entered rows);
+  `within_geofence = true` means location-verified. Clock logic is pure in
+  `src/lib/clock.ts`; geofence maths in `src/lib/geo.ts`.
 - `clock_photo` — optional clock in/out still, stored inline as `bytea`, cascaded
   with its entry. Served only to the owner via `/app/timesheets/photo/[id]`. A
   daily pg-boss cron (03:00 UTC, registered in the worker boot path) sweeps every

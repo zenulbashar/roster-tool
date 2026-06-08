@@ -41,6 +41,54 @@ export const pinSchema = z
   .string()
   .regex(/^\d{4}$/, "Enter a 4-digit PIN (numbers only)");
 
+/* ----- Location / geofence ----- */
+
+/** A latitude/longitude pair in decimal degrees (WGS84). */
+export const coordinatesSchema = z.object({
+  lat: z.coerce.number().min(-90).max(90),
+  lng: z.coerce.number().min(-180).max(180),
+});
+
+export type Coordinates = z.infer<typeof coordinatesSchema>;
+
+/** Allowed geofence radii (metres) the owner can pick; 200 is the default. */
+export const GEOFENCE_RADIUS_OPTIONS = [100, 200, 500] as const;
+export const DEFAULT_GEOFENCE_RADIUS_M = 200;
+
+export function parseGeofenceRadius(value: unknown): number | null {
+  const n = Number(value);
+  return (GEOFENCE_RADIUS_OPTIONS as readonly number[]).includes(n) ? n : null;
+}
+
+/** The owner-set shop location. Both coordinates and a chosen radius. */
+export const businessLocationSchema = coordinatesSchema.extend({
+  geofenceRadiusM: z
+    .number()
+    .refine((n) => parseGeofenceRadius(n) !== null, "Pick a valid radius"),
+});
+
+/* ----- Pay rates (stored number + label only; no wage calculation) ----- */
+
+export const rateTypeSchema = z.enum(["flat", "award"]);
+export type RateType = z.infer<typeof rateTypeSchema>;
+
+/**
+ * Per-employee hourly rate the owner types, in DOLLARS. We store cents.
+ * Capped well above any realistic hourly rate to catch fat-finger input.
+ */
+export const payRateSchema = z.object({
+  rateType: rateTypeSchema,
+  // Dollars as typed; "" / absent means "clear the rate".
+  rateDollars: z
+    .string()
+    .trim()
+    .refine(
+      (v) => v === "" || /^\d{1,4}(\.\d{1,2})?$/.test(v),
+      "Enter an amount like 28.50",
+    ),
+  rateLabel: z.string().trim().max(80).optional(),
+});
+
 /** Cap on a clock-in/out photo once decoded from its data URL. */
 export const MAX_CLOCK_PHOTO_BYTES = 500_000;
 
