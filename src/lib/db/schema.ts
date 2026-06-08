@@ -167,6 +167,29 @@ export const clockPhotoKind = pgEnum("clock_photo_kind", ["in", "out"]);
  */
 export const rateType = pgEnum("rate_type", ["flat", "award"]);
 
+/**
+ * Kind of time off a staff member is requesting. A plain label only — the app
+ * records leave, it does NOT track balances, accruals or entitlements, and does
+ * no NES/award/payroll leave calculation.
+ */
+export const leaveType = pgEnum("leave_type", [
+  "annual",
+  "sick",
+  "unpaid",
+  "other",
+]);
+
+/**
+ * Lifecycle of a leave request. `pending` = submitted by a staff member, awaiting
+ * the owner; `approved`/`denied` = the owner decided. Owner-entered leave (a
+ * verbal heads-up they record themselves) is created straight as `approved`.
+ */
+export const leaveStatus = pgEnum("leave_status", [
+  "pending",
+  "approved",
+  "denied",
+]);
+
 export const staffMembers = pgTable(
   "staff_member",
   {
@@ -441,6 +464,52 @@ export const clockPhotos = pgTable("clock_photo", {
     .defaultNow(),
 });
 
+/**
+ * A staff member's request for time off, and the owner's decision on it.
+ *
+ * `start_date`/`end_date` are inclusive calendar dates ("YYYY-MM-DD"), like
+ * shift dates — timezone-free. `status` starts `pending` for staff-submitted
+ * requests; the owner approves/denies (setting `decided_at`), or enters leave
+ * directly as `approved`. `decision_notified_at` is set once the decision email
+ * has been sent, so the email job is idempotent (mirrors availability
+ * `sent_at`). This table records leave only — NO balances, accruals,
+ * entitlements or NES/award/payroll calculation.
+ */
+export const leaveRequests = pgTable(
+  "leave_request",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    staffMemberId: uuid("staff_member_id")
+      .notNull()
+      .references(() => staffMembers.id, { onDelete: "cascade" }),
+    leaveType: leaveType("leave_type").notNull(),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    note: text("note"),
+    status: leaveStatus("status").notNull().default("pending"),
+    // When the owner approved/denied. Null while pending.
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    // When the decision email was sent; guards the email job against resends.
+    decisionNotifiedAt: timestamp("decision_notified_at", {
+      withTimezone: true,
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("leave_request_business_idx").on(t.businessId),
+    index("leave_request_staff_idx").on(t.staffMemberId),
+    index("leave_request_status_idx").on(t.status),
+  ],
+);
+
 /* -------------------------------------------------------------------------- */
 /* Relations (for relational queries)                                         */
 /* -------------------------------------------------------------------------- */
@@ -536,5 +605,16 @@ export const clockPhotosRelations = relations(clockPhotos, ({ one }) => ({
   entry: one(timesheetEntries, {
     fields: [clockPhotos.timesheetEntryId],
     references: [timesheetEntries.id],
+  }),
+}));
+
+export const leaveRequestsRelations = relations(leaveRequests, ({ one }) => ({
+  business: one(businesses, {
+    fields: [leaveRequests.businessId],
+    references: [businesses.id],
+  }),
+  staff: one(staffMembers, {
+    fields: [leaveRequests.staffMemberId],
+    references: [staffMembers.id],
   }),
 }));
