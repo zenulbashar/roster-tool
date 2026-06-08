@@ -4,6 +4,10 @@ import { cookies } from "next/headers";
 import { ownerRepo } from "@/lib/auth/context";
 import { env } from "@/lib/env";
 import { generateToken } from "@/lib/tokens";
+import {
+  PHOTO_RETENTION_DAYS,
+  parsePhotoRetentionDays,
+} from "@/lib/retention";
 import { Banner, Button, Card, PageHeader } from "@/components/ui";
 import { ClearFlashCookie } from "@/components/ClearFlashCookie";
 
@@ -27,6 +31,19 @@ export default async function SettingsPage() {
     const repo = await ownerRepo();
     const requireClockInPhoto = formData.get("requireClockInPhoto") === "true";
     await repo.updateBusinessSettings({ requireClockInPhoto });
+    revalidatePath(PATH);
+  }
+
+  async function setRetention(formData: FormData) {
+    "use server";
+    const photoRetentionDays = parsePhotoRetentionDays(
+      Number(formData.get("photoRetentionDays")),
+    );
+    // Reject anything outside the allowed 7/30/90 set; retention is always on,
+    // so we never clear it.
+    if (photoRetentionDays === null) return;
+    const repo = await ownerRepo();
+    await repo.updateBusinessSettings({ photoRetentionDays });
     revalidatePath(PATH);
   }
 
@@ -132,6 +149,39 @@ export default async function SettingsPage() {
             </span>
           </button>
         </form>
+
+        <div className="mt-6 border-t border-[var(--color-line)] pt-4">
+          <h3 className="text-base font-semibold">
+            Delete clock-in photos after
+          </h3>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">
+            Photos are automatically deleted after this period — the timesheet
+            entry and hours are always kept. This runs every day.
+          </p>
+          <form
+            action={setRetention}
+            className="mt-3 flex flex-wrap items-center gap-3"
+          >
+            <label htmlFor="photoRetentionDays" className="sr-only">
+              Delete clock-in photos after
+            </label>
+            <select
+              id="photoRetentionDays"
+              name="photoRetentionDays"
+              defaultValue={business.photoRetentionDays}
+              className="rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 text-sm font-medium text-[var(--color-ink)]"
+            >
+              {PHOTO_RETENTION_DAYS.map((days) => (
+                <option key={days} value={days}>
+                  {days} days
+                </option>
+              ))}
+            </select>
+            <Button type="submit" variant="secondary">
+              Save
+            </Button>
+          </form>
+        </div>
       </Card>
     </>
   );
