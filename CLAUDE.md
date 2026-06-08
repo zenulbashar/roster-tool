@@ -17,8 +17,10 @@ availability requests via staff magic links, availability summary, roster
 builder, publish (personal emails + read-only shareable view), one automatic
 reminder before the deadline, staff clock-in (a shared-device kiosk with
 per-staff PINs **and** a personal-phone GPS-checked mode) feeding owner-facing
-timesheets, per-employee pay rates, a CSV export of approved hours, and staff
-**leave requests** with owner approval (record only — see below).
+timesheets, per-employee pay rates, a CSV export of approved hours, staff
+**leave requests** with owner approval (record only — see below), and
+**shift swaps / open shifts** (one-directional release → claim → owner
+approves — see below).
 
 **Out of scope (post-MVP):** SMS/WhatsApp, **payroll / wage calculation**
 (award interpretation, penalty rates, overtime, loading, super, STP — the app
@@ -26,7 +28,9 @@ only records hours and a rate the owner typed, and shows an `hours × rate`
 estimate), **payroll API integration** (Xero/MYOB — file export only),
 **leave balances / accruals / entitlements** and any **NES/award leave
 calculation** (leave is request → approve/deny → record only),
-free-text reply parsing, billing, native apps, shift-swap workflows,
+**bilateral A↔B shift swaps** and **auto-approval** of swaps (the owner always
+approves the handover; only one-directional release/claim is built),
+free-text reply parsing, billing, native apps,
 continuous/background location tracking. If a request drifts here, flag it
 rather than silently building it.
 
@@ -129,6 +133,41 @@ owner approval, not payroll export.
     last week" won't suggest someone on a day they're on approved leave (via the
     optional `isOnLeave` arg to `buildDraft`). It's a flag, not a hard block —
     the owner can still assign them manually if they choose.
+- **Shift swaps / open shifts**: one-directional **release → claim → owner
+  approves**. A staff member offers up a confirmed shift they hold in a
+  PUBLISHED roster (or the owner posts an unassigned published shift as open);
+  another staff member claims it; the **owner approves**, which transfers the
+  assignment. **NO bilateral A↔B swaps, NO auto-approval, and offers only exist
+  on published rosters.** A `shift_offer` carries the `shift_id`, an
+  `offered_by_staff_id` (NULL when the owner posted an open shift),
+  `claimed_by_staff_id`, and a `status`
+  (`open`/`claimed`/`approved`/`denied`/`withdrawn`).
+  - **Never leave a shift uncovered**: releasing does NOT touch the releaser's
+    `roster_assignment`. The releaser stays assigned until the owner approves a
+    replacement, at which point the transfer happens atomically.
+  - **Staff release/claim/cancel** reuse the per-staff PIN auth (same lockout,
+    no geofence — not a clock action) in BOTH the personal-phone (`/clock`) and
+    shared kiosk (`/kiosk`) flows: a "My shifts" view (offer up / cancel your
+    own open offer) and an "Open shifts" view (claim). The shared cores are in
+    `src/lib/shift-offer-submission.ts`; the business always comes from the
+    flow's capability token, never client input. A staff member can't claim
+    their own released shift or one they're already on; claiming while on leave
+    or with a same-day overlap is **flagged, not blocked**.
+  - **Owner Shifts page** (`/app/shifts`, in the nav): review pending claims
+    (Approve / Deny) with leave/overlap conflict flags, withdraw still-open
+    offers, and post an unassigned published shift as claimable.
+  - **The transfer** (`approveOffer`, in one DB transaction): re-check the offer
+    is still `claimed` and the roster still published, assign the claimer as a
+    CONFIRMED `roster_assignment`, remove the releaser's assignment (only when
+    there was a releaser), and set the offer `approved`. **Deny is final**
+    (`denied`, no assignment change). At most one ACTIVE (`open`/`claimed`)
+    offer per shift (partial unique index).
+  - **Notifications**: approval enqueues a pg-boss `shift-offer-decision` job
+    (`handleShiftOfferDecision`) emailing the claimer ("you're confirmed") and,
+    if there was a releaser, the releaser ("now covered by …"). Idempotent via
+    `decision_notified_at`. Deny/withdraw send no email.
+  - **Builder visibility**: shifts with an active offer show an
+    **"Offered"**/**"Claimed"** marker; the handover only happens on approval.
 
 ## Non-negotiable conventions
 
@@ -213,7 +252,7 @@ connection, the worker uses the direct connection (pg-boss needs session mode).
 `business`, `user` (owner) + Auth.js tables, `staff_member`, `shift_template`,
 `roster_period`, `shift`, `availability_request`, `availability_response`,
 `roster_assignment`, `published_roster`, `timesheet_entry`, `clock_photo`,
-`leave_request`. All domain tables are business-scoped.
+`leave_request`, `shift_offer`. All domain tables are business-scoped.
 
 Notable columns / conventions:
 
@@ -278,6 +317,20 @@ Notable columns / conventions:
   or records `approved` rows directly on `/app/leave`. On-leave date maths is
   pure in `src/lib/leave.ts`. **Record only — no balances, accruals,
   entitlements or NES/award calculation.**
+- `shift_offer` — a confirmed published shift made claimable, and its handover
+  lifecycle. `status` (`open`/`claimed`/`approved`/`denied`/`withdrawn`, NOT
+  NULL default `open`); `offered_by_staff_id` (nullable — the releaser, NULL
+  when the owner posted an open shift); `claimed_by_staff_id` (nullable);
+  `decided_at`; `decision_notified_at` (approval-email idempotency). Indexed on
+  `business_id`, `shift_id`, `status`, with a **partial unique index on
+  `shift_id WHERE status IN ('open','claimed')`** so a shift has at most one
+  active offer. Releasing never alters the releaser's `roster_assignment`;
+  `approveOffer` transfers atomically (assign claimer confirmed, remove the
+  releaser). Transition + eligibility logic is pure in `src/lib/shift-offer.ts`;
+  staff PIN-gated release/claim/cancel cores are in
+  `src/lib/shift-offer-submission.ts`; the owner manages it on `/app/shifts`.
+  **One-directional only — no bilateral A↔B swaps, no auto-approval, published
+  rosters only.**
 
 ## Milestones
 
@@ -291,3 +344,4 @@ Notable columns / conventions:
 - [x] M8 — Accessibility + polish
 - [x] M9 — Clock-in kiosk + timesheets (PINs, brute-force guard, optional photos)
 - [x] M10 — Leave requests + owner approvals (PIN submission, decision emails, roster flagging)
+- [x] M11 — Shift swaps / open shifts (release → claim → owner-approved transfer, notifications)
