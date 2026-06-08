@@ -5,6 +5,7 @@ import { requireOwner } from "@/lib/auth/context";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { generateSlug } from "@/lib/tokens";
 import { enqueuePublishedRoster } from "@/lib/jobs/boss";
+import { buildDraft, draftSummary } from "@/lib/draft";
 import { formatDateOnly, formatTimeOnly } from "@/lib/time";
 import { periodStatusLabel } from "@/lib/labels";
 import { Banner, Button, Card, PageHeader } from "@/components/ui";
@@ -13,10 +14,18 @@ type Availability = "yes" | "no" | "unknown";
 
 export default async function BuildRosterPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{
+    drafted?: string;
+    sg?: string;
+    tot?: string;
+    un?: string;
+  }>;
 }) {
   const { id } = await params;
+  const { drafted, sg, tot, un } = await searchParams;
   const { businessId } = await requireOwner();
   const repo = createTenantRepo(businessId);
 
@@ -49,13 +58,16 @@ export default async function BuildRosterPage({
     avail.set(r.shiftId, m);
     if (r.source === "manual") prefilled.add(`${r.shiftId}:${r.staffMemberId}`);
   }
-  // assigned[shiftId] = Set(staffId)
-  const assigned = new Map<string, Set<string>>();
+  // confirmed[shiftId] / suggested[shiftId] = Set(staffId)
+  const confirmed = new Map<string, Set<string>>();
+  const suggested = new Map<string, Set<string>>();
   for (const a of assignments) {
-    const s = assigned.get(a.shiftId) ?? new Set<string>();
+    const target = a.status === "suggested" ? suggested : confirmed;
+    const s = target.get(a.shiftId) ?? new Set<string>();
     s.add(a.staffMemberId);
-    assigned.set(a.shiftId, s);
+    target.set(a.shiftId, s);
   }
+  const hasSuggestions = assignments.some((a) => a.status === "suggested");
   const respondedStaff = new Set(
     requests.filter((r) => r.respondedAt).map((r) => r.staffMemberId),
   );
@@ -84,6 +96,76 @@ export default async function BuildRosterPage({
     if (isAssigned) await repo.unassign(shiftId, staffId);
     else await repo.assign(shiftId, staffId);
 
+    revalidatePath(`/app/periods/${id}/build`);
+  }
+
+  async function draftFromLastWeek() {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const period = await repo.getPeriod(id);
+    if (!period) notFound();
+
+    const last = await repo.getLastPublishedPeriod(id);
+    if (!last) {
+      redirect(`/app/periods/${id}/build?drafted=none`);
+    }
+
+    const [currentShifts, lastAssignments, responses] = await Promise.all([
+      repo.listShifts(id),
+      repo.assignmentsWithShiftType(last.id),
+      repo.listResponses(id),
+    ]);
+
+    // Available = an explicit "yes" response (staff reply or manual pre-fill).
+    const availSet = new Set(
+      responses
+        .filter((r) => r.available)
+        .map((r) => `${r.shiftId}:${r.staffMemberId}`),
+    );
+
+    const { suggestions, counts } = buildDraft({
+      currentShifts,
+      lastAssignments,
+      isAvailable: (shiftId, staffId) => availSet.has(`${shiftId}:${staffId}`),
+    });
+
+    await repo.createSuggestedAssignments(suggestions);
+
+    redirect(
+      `/app/periods/${id}/build?drafted=1&sg=${counts.suggestedShifts}&tot=${counts.totalShifts}&un=${counts.blankDueToUnavailable}`,
+    );
+  }
+
+  async function acceptSuggestion(formData: FormData) {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const shiftId = String(formData.get("shiftId"));
+    const staffId = String(formData.get("staffId"));
+    const shift = await repo.getShift(shiftId);
+    if (!shift || shift.rosterPeriodId !== id) return;
+    await repo.acceptSuggestion(shiftId, staffId);
+    revalidatePath(`/app/periods/${id}/build`);
+  }
+
+  async function clearSuggestion(formData: FormData) {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const shiftId = String(formData.get("shiftId"));
+    const staffId = String(formData.get("staffId"));
+    const shift = await repo.getShift(shiftId);
+    if (!shift || shift.rosterPeriodId !== id) return;
+    await repo.clearSuggestion(shiftId, staffId);
+    revalidatePath(`/app/periods/${id}/build`);
+  }
+
+  async function acceptAllSuggestions() {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    await repo.acceptAllSuggestions(id);
     revalidatePath(`/app/periods/${id}/build`);
   }
 
@@ -120,6 +202,17 @@ export default async function BuildRosterPage({
 
   const respondedCount = requests.filter((r) => r.respondedAt).length;
 
+  const canDraft = period.status !== "draft";
+  const draftedSummary =
+    drafted === "1" && tot
+      ? draftSummary({
+          totalShifts: Number(tot),
+          suggestedShifts: Number(sg ?? 0),
+          blankShifts: Number(tot) - Number(sg ?? 0),
+          blankDueToUnavailable: Number(un ?? 0),
+        })
+      : null;
+
   return (
     <>
       <PageHeader
@@ -134,13 +227,51 @@ export default async function BuildRosterPage({
         grey = no reply yet.
       </p>
 
+      {drafted === "none" ? (
+        <div className="mb-4">
+          <Banner tone="info">
+            No previous roster found — build this one manually and it will be
+            used as the template next week.
+          </Banner>
+        </div>
+      ) : null}
+
+      {draftedSummary ? (
+        <div className="mb-4">
+          <Banner tone="info">{draftedSummary}</Banner>
+        </div>
+      ) : null}
+
+      {canDraft ? (
+        <Card className="mb-4">
+          <h2 className="text-base font-semibold">Save time</h2>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">
+            Start from last week&rsquo;s roster. We&rsquo;ll suggest the same
+            people for the same shifts — but only where they&rsquo;re available.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-3">
+            <form action={draftFromLastWeek}>
+              <Button type="submit">Draft from last week</Button>
+            </form>
+            {hasSuggestions ? (
+              <form action={acceptAllSuggestions}>
+                <Button type="submit" variant="secondary">
+                  Accept all suggestions
+                </Button>
+              </form>
+            ) : null}
+          </div>
+        </Card>
+      ) : null}
+
       <div className="space-y-4">
         {[...byDay.entries()].map(([date, dayShifts]) => (
           <Card key={date}>
             <h2 className="text-base font-semibold">{formatDateOnly(date)}</h2>
             <ul className="mt-3 space-y-4">
               {dayShifts.map((s) => {
-                const assignedSet = assigned.get(s.id) ?? new Set<string>();
+                const confirmedSet = confirmed.get(s.id) ?? new Set<string>();
+                const suggestedSet = suggested.get(s.id) ?? new Set<string>();
                 // Show free + already-assigned + no-reply first; can'ts last.
                 const ordered = [...staff].sort((a, b) => {
                   const rank = (st: string) =>
@@ -158,14 +289,69 @@ export default async function BuildRosterPage({
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2">
                       {ordered.map((member) => {
-                        const isAssigned = assignedSet.has(member.id);
+                        const isConfirmed = confirmedSet.has(member.id);
+                        const isSuggested = suggestedSet.has(member.id);
                         const a = availabilityOf(s.id, member.id);
                         const isPrefilled = prefilled.has(
                           `${s.id}:${member.id}`,
                         );
                         const marker =
                           a === "yes" ? "✓" : a === "no" ? "✗" : "?";
-                        const tone = isAssigned
+
+                        // Suggested (un-accepted) draft: dashed chip with
+                        // Accept (tap the name) and a Clear (✕) control.
+                        if (isSuggested && !isConfirmed) {
+                          return (
+                            <span
+                              key={member.id}
+                              className="inline-flex items-center overflow-hidden rounded-full border border-dashed border-[var(--color-brand)] text-sm font-medium text-[var(--color-brand)]"
+                            >
+                              <form action={acceptSuggestion}>
+                                <input
+                                  type="hidden"
+                                  name="shiftId"
+                                  value={s.id}
+                                />
+                                <input
+                                  type="hidden"
+                                  name="staffId"
+                                  value={member.id}
+                                />
+                                <button
+                                  type="submit"
+                                  className="px-3 py-1.5"
+                                  title="Accept this suggestion"
+                                >
+                                  {member.name}{" "}
+                                  <span className="ml-1 rounded bg-[var(--color-brand)] px-1 py-0.5 text-[10px] font-semibold text-[var(--color-brand-ink)]">
+                                    Suggested
+                                  </span>
+                                </button>
+                              </form>
+                              <form action={clearSuggestion}>
+                                <input
+                                  type="hidden"
+                                  name="shiftId"
+                                  value={s.id}
+                                />
+                                <input
+                                  type="hidden"
+                                  name="staffId"
+                                  value={member.id}
+                                />
+                                <button
+                                  type="submit"
+                                  aria-label={`Clear suggestion for ${member.name}`}
+                                  className="border-l border-dashed border-[var(--color-brand)] px-2 py-1.5"
+                                >
+                                  <span aria-hidden="true">✕</span>
+                                </button>
+                              </form>
+                            </span>
+                          );
+                        }
+
+                        const tone = isConfirmed
                           ? "bg-[var(--color-brand)] text-white border-[var(--color-brand)]"
                           : a === "yes"
                             ? "border-[var(--color-ok)] text-[var(--color-ok)]"
@@ -183,16 +369,16 @@ export default async function BuildRosterPage({
                             <input
                               type="hidden"
                               name="assigned"
-                              value={String(isAssigned)}
+                              value={String(isConfirmed)}
                             />
                             <button
                               type="submit"
-                              aria-pressed={isAssigned}
+                              aria-pressed={isConfirmed}
                               className={`rounded-full border px-3 py-1.5 text-sm font-medium ${tone}`}
                             >
                               {member.name}{" "}
                               <span aria-hidden="true">{marker}</span>
-                              {isPrefilled && !isAssigned ? (
+                              {isPrefilled && !isConfirmed ? (
                                 <span className="ml-1 rounded bg-[var(--color-ok)] px-1 py-0.5 text-[10px] font-semibold text-white">
                                   Pre-filled
                                 </span>
