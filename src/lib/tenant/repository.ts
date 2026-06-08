@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db as defaultDb, type Db } from "@/lib/db";
 import {
   staffMembers,
@@ -65,7 +65,12 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
 
     async updateStaff(
       id: string,
-      input: Partial<{ name: string; email: string; active: boolean }>,
+      input: Partial<{
+        name: string;
+        email: string;
+        active: boolean;
+        notifyByDefault: boolean;
+      }>,
     ) {
       const [row] = await database
         .update(staffMembers)
@@ -308,24 +313,113 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
 
     /* ----- Availability responses ----- */
     listResponses(rosterPeriodId: string) {
+      // Scope by the response's shift (so request-less manual responses are
+      // included too). The staff member is taken from the response directly for
+      // manual rows, else derived from the request.
       return database
         .select({
-          requestId: availabilityResponses.requestId,
-          staffMemberId: availabilityRequests.staffMemberId,
+          staffMemberId: sql<string>`coalesce(${availabilityResponses.staffMemberId}, ${availabilityRequests.staffMemberId})`,
           shiftId: availabilityResponses.shiftId,
           available: availabilityResponses.available,
+          source: availabilityResponses.source,
         })
         .from(availabilityResponses)
-        .innerJoin(
+        .innerJoin(shifts, eq(availabilityResponses.shiftId, shifts.id))
+        .leftJoin(
           availabilityRequests,
           eq(availabilityResponses.requestId, availabilityRequests.id),
         )
         .where(
           and(
-            eq(availabilityRequests.rosterPeriodId, rosterPeriodId),
+            eq(shifts.rosterPeriodId, rosterPeriodId),
             eq(availabilityResponses.businessId, businessId),
           ),
         );
+    },
+
+    /**
+     * Owner pre-fills a staff member as available for every shift in a period,
+     * without sending an email or creating a request. Idempotent: re-running
+     * leaves the same rows (upsert on the manual partial-unique index).
+     * Validates the staff member and period belong to this business first.
+     */
+    async markAvailableManually(staffMemberId: string, rosterPeriodId: string) {
+      const [member, period] = await Promise.all([
+        first(
+          database
+            .select({ id: staffMembers.id })
+            .from(staffMembers)
+            .where(
+              and(
+                eq(staffMembers.id, staffMemberId),
+                eq(staffMembers.businessId, businessId),
+              ),
+            ),
+        ),
+        first(
+          database
+            .select({ id: rosterPeriods.id })
+            .from(rosterPeriods)
+            .where(
+              and(
+                eq(rosterPeriods.id, rosterPeriodId),
+                eq(rosterPeriods.businessId, businessId),
+              ),
+            ),
+        ),
+      ]);
+      if (!member || !period) return 0;
+
+      const periodShifts = await database
+        .select({ id: shifts.id })
+        .from(shifts)
+        .where(
+          and(
+            eq(shifts.rosterPeriodId, rosterPeriodId),
+            eq(shifts.businessId, businessId),
+          ),
+        );
+      if (periodShifts.length === 0) return 0;
+
+      await database
+        .insert(availabilityResponses)
+        .values(
+          periodShifts.map((s) => ({
+            businessId,
+            staffMemberId,
+            shiftId: s.id,
+            available: true,
+            source: "manual" as const,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [
+            availabilityResponses.staffMemberId,
+            availabilityResponses.shiftId,
+          ],
+          targetWhere: sql`${availabilityResponses.requestId} is null`,
+          set: { available: true, updatedAt: new Date() },
+        });
+      return periodShifts.length;
+    },
+
+    /** True if a staff member has any manual pre-fill response in a period. */
+    async hasManualResponses(staffMemberId: string, rosterPeriodId: string) {
+      const row = await first(
+        database
+          .select({ id: availabilityResponses.id })
+          .from(availabilityResponses)
+          .innerJoin(shifts, eq(availabilityResponses.shiftId, shifts.id))
+          .where(
+            and(
+              eq(availabilityResponses.businessId, businessId),
+              eq(availabilityResponses.staffMemberId, staffMemberId),
+              eq(availabilityResponses.source, "manual"),
+              eq(shifts.rosterPeriodId, rosterPeriodId),
+            ),
+          ),
+      );
+      return row !== null;
     },
 
     responsesForRequest(requestId: string) {
@@ -382,6 +476,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           id: rosterAssignments.id,
           shiftId: rosterAssignments.shiftId,
           staffMemberId: rosterAssignments.staffMemberId,
+          status: rosterAssignments.status,
         })
         .from(rosterAssignments)
         .innerJoin(shifts, eq(rosterAssignments.shiftId, shifts.id))
@@ -399,37 +494,50 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
      * the public roster view and per-staff published emails.
      */
     rosterRows(rosterPeriodId: string) {
-      return database
-        .select({
-          shiftId: shifts.id,
-          date: shifts.date,
-          label: shifts.label,
-          startTime: shifts.startTime,
-          endTime: shifts.endTime,
-          staffMemberId: rosterAssignments.staffMemberId,
-          staffName: staffMembers.name,
-        })
-        .from(shifts)
-        .leftJoin(rosterAssignments, eq(rosterAssignments.shiftId, shifts.id))
-        .leftJoin(
-          staffMembers,
-          eq(staffMembers.id, rosterAssignments.staffMemberId),
-        )
-        .where(
-          and(
-            eq(shifts.rosterPeriodId, rosterPeriodId),
-            eq(shifts.businessId, businessId),
-          ),
-        )
-        .orderBy(asc(shifts.date), asc(shifts.startTime));
+      return (
+        database
+          .select({
+            shiftId: shifts.id,
+            date: shifts.date,
+            label: shifts.label,
+            startTime: shifts.startTime,
+            endTime: shifts.endTime,
+            staffMemberId: rosterAssignments.staffMemberId,
+            staffName: staffMembers.name,
+          })
+          .from(shifts)
+          // Only confirmed assignments are published — suggested (un-accepted)
+          // drafts must never leak into the public roster or staff emails. The
+          // status filter lives in the join so unassigned shifts still appear.
+          .leftJoin(
+            rosterAssignments,
+            and(
+              eq(rosterAssignments.shiftId, shifts.id),
+              eq(rosterAssignments.status, "confirmed"),
+            ),
+          )
+          .leftJoin(
+            staffMembers,
+            eq(staffMembers.id, rosterAssignments.staffMemberId),
+          )
+          .where(
+            and(
+              eq(shifts.rosterPeriodId, rosterPeriodId),
+              eq(shifts.businessId, businessId),
+            ),
+          )
+          .orderBy(asc(shifts.date), asc(shifts.startTime))
+      );
     },
 
     async assign(shiftId: string, staffMemberId: string) {
       const [row] = await database
         .insert(rosterAssignments)
-        .values({ shiftId, staffMemberId, businessId })
-        .onConflictDoNothing({
+        .values({ shiftId, staffMemberId, businessId, status: "confirmed" })
+        // If a suggestion already exists for this pair, confirm it.
+        .onConflictDoUpdate({
           target: [rosterAssignments.shiftId, rosterAssignments.staffMemberId],
+          set: { status: "confirmed" },
         })
         .returning();
       return row ?? null;
@@ -443,6 +551,141 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             eq(rosterAssignments.shiftId, shiftId),
             eq(rosterAssignments.staffMemberId, staffMemberId),
             eq(rosterAssignments.businessId, businessId),
+          ),
+        );
+    },
+
+    /**
+     * Insert draft ("suggested") assignments produced by "Draft from last
+     * week". Never overwrites an existing assignment (confirmed or suggested).
+     */
+    async createSuggestedAssignments(
+      rows: Array<{ shiftId: string; staffMemberId: string }>,
+    ) {
+      if (rows.length === 0) return [];
+      return database
+        .insert(rosterAssignments)
+        .values(
+          rows.map((r) => ({ ...r, businessId, status: "suggested" as const })),
+        )
+        .onConflictDoNothing({
+          target: [rosterAssignments.shiftId, rosterAssignments.staffMemberId],
+        })
+        .returning();
+    },
+
+    /** Confirm a single suggested assignment. */
+    async acceptSuggestion(shiftId: string, staffMemberId: string) {
+      const [row] = await database
+        .update(rosterAssignments)
+        .set({ status: "confirmed" })
+        .where(
+          and(
+            eq(rosterAssignments.shiftId, shiftId),
+            eq(rosterAssignments.staffMemberId, staffMemberId),
+            eq(rosterAssignments.businessId, businessId),
+            eq(rosterAssignments.status, "suggested"),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    /** Confirm every suggested assignment in a period in one go. */
+    async acceptAllSuggestions(rosterPeriodId: string) {
+      const ids = await database
+        .select({ id: rosterAssignments.id })
+        .from(rosterAssignments)
+        .innerJoin(shifts, eq(rosterAssignments.shiftId, shifts.id))
+        .where(
+          and(
+            eq(shifts.rosterPeriodId, rosterPeriodId),
+            eq(rosterAssignments.businessId, businessId),
+            eq(rosterAssignments.status, "suggested"),
+          ),
+        );
+      if (ids.length === 0) return 0;
+      await database
+        .update(rosterAssignments)
+        .set({ status: "confirmed" })
+        .where(
+          and(
+            eq(rosterAssignments.businessId, businessId),
+            inArray(
+              rosterAssignments.id,
+              ids.map((r) => r.id),
+            ),
+          ),
+        );
+      return ids.length;
+    },
+
+    /** Clear a single suggested assignment (confirmed ones are untouched). */
+    async clearSuggestion(shiftId: string, staffMemberId: string) {
+      await database
+        .delete(rosterAssignments)
+        .where(
+          and(
+            eq(rosterAssignments.shiftId, shiftId),
+            eq(rosterAssignments.staffMemberId, staffMemberId),
+            eq(rosterAssignments.businessId, businessId),
+            eq(rosterAssignments.status, "suggested"),
+          ),
+        );
+    },
+
+    /**
+     * The most recently published period for this business, excluding the given
+     * one. Used as the template for "Draft from last week".
+     */
+    getLastPublishedPeriod(excludePeriodId: string) {
+      return first(
+        database
+          .select({
+            id: rosterPeriods.id,
+            label: rosterPeriods.label,
+            startDate: rosterPeriods.startDate,
+            endDate: rosterPeriods.endDate,
+            publishedAt: publishedRosters.publishedAt,
+          })
+          .from(publishedRosters)
+          .innerJoin(
+            rosterPeriods,
+            eq(publishedRosters.rosterPeriodId, rosterPeriods.id),
+          )
+          .where(
+            and(
+              eq(publishedRosters.businessId, businessId),
+              sql`${rosterPeriods.id} <> ${excludePeriodId}`,
+            ),
+          )
+          .orderBy(desc(publishedRosters.publishedAt))
+          .limit(1),
+      );
+    },
+
+    /**
+     * Confirmed assignments in a period, each with its shift's identifying
+     * attributes (template, label, times, date) so the draft algorithm can
+     * match shift types across weeks.
+     */
+    assignmentsWithShiftType(rosterPeriodId: string) {
+      return database
+        .select({
+          staffMemberId: rosterAssignments.staffMemberId,
+          templateId: shifts.templateId,
+          label: shifts.label,
+          startTime: shifts.startTime,
+          endTime: shifts.endTime,
+          date: shifts.date,
+        })
+        .from(rosterAssignments)
+        .innerJoin(shifts, eq(rosterAssignments.shiftId, shifts.id))
+        .where(
+          and(
+            eq(shifts.rosterPeriodId, rosterPeriodId),
+            eq(rosterAssignments.businessId, businessId),
+            eq(rosterAssignments.status, "confirmed"),
           ),
         );
     },
