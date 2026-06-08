@@ -494,38 +494,40 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
      * the public roster view and per-staff published emails.
      */
     rosterRows(rosterPeriodId: string) {
-      return database
-        .select({
-          shiftId: shifts.id,
-          date: shifts.date,
-          label: shifts.label,
-          startTime: shifts.startTime,
-          endTime: shifts.endTime,
-          staffMemberId: rosterAssignments.staffMemberId,
-          staffName: staffMembers.name,
-        })
-        .from(shifts)
-        // Only confirmed assignments are published — suggested (un-accepted)
-        // drafts must never leak into the public roster or staff emails. The
-        // status filter lives in the join so unassigned shifts still appear.
-        .leftJoin(
-          rosterAssignments,
-          and(
-            eq(rosterAssignments.shiftId, shifts.id),
-            eq(rosterAssignments.status, "confirmed"),
-          ),
-        )
-        .leftJoin(
-          staffMembers,
-          eq(staffMembers.id, rosterAssignments.staffMemberId),
-        )
-        .where(
-          and(
-            eq(shifts.rosterPeriodId, rosterPeriodId),
-            eq(shifts.businessId, businessId),
-          ),
-        )
-        .orderBy(asc(shifts.date), asc(shifts.startTime));
+      return (
+        database
+          .select({
+            shiftId: shifts.id,
+            date: shifts.date,
+            label: shifts.label,
+            startTime: shifts.startTime,
+            endTime: shifts.endTime,
+            staffMemberId: rosterAssignments.staffMemberId,
+            staffName: staffMembers.name,
+          })
+          .from(shifts)
+          // Only confirmed assignments are published — suggested (un-accepted)
+          // drafts must never leak into the public roster or staff emails. The
+          // status filter lives in the join so unassigned shifts still appear.
+          .leftJoin(
+            rosterAssignments,
+            and(
+              eq(rosterAssignments.shiftId, shifts.id),
+              eq(rosterAssignments.status, "confirmed"),
+            ),
+          )
+          .leftJoin(
+            staffMembers,
+            eq(staffMembers.id, rosterAssignments.staffMemberId),
+          )
+          .where(
+            and(
+              eq(shifts.rosterPeriodId, rosterPeriodId),
+              eq(shifts.businessId, businessId),
+            ),
+          )
+          .orderBy(asc(shifts.date), asc(shifts.startTime))
+      );
     },
 
     async assign(shiftId: string, staffMemberId: string) {
