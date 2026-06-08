@@ -232,7 +232,9 @@ export async function handlePublishedRoster(
  * tenants. Only `clock_photo` rows are removed — timesheet entries/hours are
  * kept. Idempotent, so re-running (or a retry) is safe.
  */
-export async function handlePhotoRetention(now: Date = new Date()): Promise<void> {
+export async function handlePhotoRetention(
+  now: Date = new Date(),
+): Promise<void> {
   const rows = await db.select({ id: businesses.id }).from(businesses);
   let purged = 0;
   for (const { id } of rows) {

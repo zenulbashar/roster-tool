@@ -4,10 +4,7 @@ import { cookies } from "next/headers";
 import { ownerRepo } from "@/lib/auth/context";
 import { env } from "@/lib/env";
 import { generateToken } from "@/lib/tokens";
-import {
-  PHOTO_RETENTION_DAYS,
-  parsePhotoRetentionDays,
-} from "@/lib/retention";
+import { PHOTO_RETENTION_DAYS, parsePhotoRetentionDays } from "@/lib/retention";
 import { Banner, Button, Card, PageHeader } from "@/components/ui";
 import { ClearFlashCookie } from "@/components/ClearFlashCookie";
 

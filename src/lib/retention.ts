@@ -43,5 +43,7 @@ export function isPhotoExpired(
   now: Date,
   retentionDays: number,
 ): boolean {
-  return clockInAt.getTime() < photoRetentionCutoff(now, retentionDays).getTime();
+  return (
+    clockInAt.getTime() < photoRetentionCutoff(now, retentionDays).getTime()
+  );
 }
