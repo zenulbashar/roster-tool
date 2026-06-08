@@ -1,11 +1,20 @@
 import { redirect } from "next/navigation";
 import { auth, signIn, EMAIL_PROVIDER_ID } from "@/lib/auth";
-import { Button, Card, Field, TextInput } from "@/components/ui";
+import { signInErrorMessage } from "@/lib/auth/sign-in-error";
+import { Banner, Button, Card, Field, TextInput } from "@/components/ui";
 
-export default async function SignInPage() {
+export default async function SignInPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
   // Already signed in? Skip straight through.
   const session = await auth();
   if (session?.user) redirect("/app");
+
+  // Auth.js redirects failures (e.g. an expired/used link) here with `?error=`.
+  const { error } = await searchParams;
+  const errorMessage = signInErrorMessage(error);
 
   async function sendLink(formData: FormData) {
     "use server";
@@ -25,6 +34,11 @@ export default async function SignInPage() {
         Enter your email and we&rsquo;ll send you a link to sign in. No password
         needed.
       </p>
+      {errorMessage ? (
+        <div className="mt-6">
+          <Banner tone="warn">{errorMessage}</Banner>
+        </div>
+      ) : null}
       <Card className="mt-6">
         <form action={sendLink} className="space-y-4">
           <Field label="Your email">
