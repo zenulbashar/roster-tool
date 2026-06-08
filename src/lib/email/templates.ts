@@ -151,6 +151,65 @@ export function leaveDecisionEmail(input: {
   };
 }
 
+export function shiftClaimApprovedEmail(input: {
+  businessName: string;
+  staffName: string;
+  /** "Mon 10/06" */
+  dayText: string;
+  /** Shift label, e.g. "Morning". */
+  label: string;
+  /** "9:00 am – 12:00 pm" */
+  timeText: string;
+}): OutgoingEmail {
+  const { businessName, staffName, dayText, label, timeText } = input;
+  return {
+    to: "",
+    subject: `You're confirmed for ${label} on ${dayText} — ${businessName}`,
+    html: layout({
+      heading: `Hi ${staffName},`,
+      bodyHtml: `<p>Good news — your manager approved your claim. You're now confirmed for:</p><p style="margin:12px 0;"><strong>${dayText}</strong> — ${label}, ${timeText}</p><p>See you then!</p>`,
+      footer: "Questions about this shift? Reply to your manager directly.",
+    }),
+    text: [
+      `Hi ${staffName},`,
+      "",
+      `Your manager approved your claim. You're now confirmed for:`,
+      `  • ${dayText} — ${label}, ${timeText}`,
+      "",
+      "See you then!",
+    ].join("\n"),
+  };
+}
+
+export function shiftCoveredEmail(input: {
+  businessName: string;
+  staffName: string;
+  coveredByName: string;
+  dayText: string;
+  label: string;
+  timeText: string;
+}): OutgoingEmail {
+  const { businessName, staffName, coveredByName, dayText, label, timeText } =
+    input;
+  return {
+    to: "",
+    subject: `Your ${label} on ${dayText} is now covered — ${businessName}`,
+    html: layout({
+      heading: `Hi ${staffName},`,
+      bodyHtml: `<p>The shift you offered up is now covered by <strong>${coveredByName}</strong>:</p><p style="margin:12px 0;"><strong>${dayText}</strong> — ${label}, ${timeText}</p><p>You're no longer rostered on for it.</p>`,
+      footer: "Questions? Reply to your manager directly.",
+    }),
+    text: [
+      `Hi ${staffName},`,
+      "",
+      `The shift you offered up is now covered by ${coveredByName}:`,
+      `  • ${dayText} — ${label}, ${timeText}`,
+      "",
+      "You're no longer rostered on for it.",
+    ].join("\n"),
+  };
+}
+
 export function reminderEmail(input: {
   businessName: string;
   staffName: string;

@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db";
 import {
   availabilityRequests,
@@ -6,6 +7,8 @@ import {
   rosterPeriods,
   businesses,
   leaveRequests,
+  shiftOffers,
+  shifts,
 } from "@/lib/db/schema";
 import {
   sendEmail,
@@ -13,6 +16,8 @@ import {
   reminderEmail,
   publishedRosterEmail,
   leaveDecisionEmail,
+  shiftClaimApprovedEmail,
+  shiftCoveredEmail,
 } from "@/lib/email";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { publishedRosters } from "@/lib/db/schema";
@@ -30,6 +35,7 @@ import type {
   AvailabilityReminderJob,
   PublishedRosterJob,
   LeaveDecisionJob,
+  ShiftOfferDecisionJob,
 } from "./queues";
 
 /** Injectable dependencies so handlers can be tested without sending real mail. */
@@ -299,6 +305,100 @@ export async function handleLeaveDecision(
 
   await createTenantRepo(row.businessId).markLeaveDecisionNotified(
     payload.leaveRequestId,
+  );
+}
+
+/**
+ * Email the affected staff when the owner approves a shift claim.
+ *
+ * Sends the claimer a "you're confirmed" email and, when the offer had a
+ * releaser, the releaser a "now covered by …" email. Idempotent: skips if the
+ * offer is missing, not `approved`, or already notified, and stamps
+ * `decision_notified_at` only AFTER sending — so a retry / duplicate enqueue
+ * won't email again. (Both recipients are sent before the single flag is set,
+ * mirroring leave's idempotency model.)
+ */
+export async function handleShiftOfferDecision(
+  payload: ShiftOfferDecisionJob,
+  deps: HandlerDeps = defaultDeps,
+): Promise<void> {
+  const claimer = alias(staffMembers, "claimer");
+  const releaser = alias(staffMembers, "releaser");
+  const [row] = await db
+    .select({
+      status: shiftOffers.status,
+      notifiedAt: shiftOffers.decisionNotifiedAt,
+      businessId: shiftOffers.businessId,
+      offeredByStaffId: shiftOffers.offeredByStaffId,
+      date: shifts.date,
+      label: shifts.label,
+      startTime: shifts.startTime,
+      endTime: shifts.endTime,
+      businessName: businesses.name,
+      claimerName: claimer.name,
+      claimerEmail: claimer.email,
+      releaserName: releaser.name,
+      releaserEmail: releaser.email,
+    })
+    .from(shiftOffers)
+    .innerJoin(shifts, eq(shiftOffers.shiftId, shifts.id))
+    .innerJoin(businesses, eq(shiftOffers.businessId, businesses.id))
+    .innerJoin(claimer, eq(shiftOffers.claimedByStaffId, claimer.id))
+    .leftJoin(releaser, eq(shiftOffers.offeredByStaffId, releaser.id))
+    .where(eq(shiftOffers.id, payload.shiftOfferId))
+    .limit(1);
+
+  if (!row) {
+    logger.warn(
+      { shiftOfferId: payload.shiftOfferId },
+      "Shift offer not found; skipping approval email",
+    );
+    return;
+  }
+  if (row.status !== "approved") {
+    logger.info(
+      { shiftOfferId: payload.shiftOfferId },
+      "Shift offer not approved; no email",
+    );
+    return;
+  }
+  if (row.notifiedAt) {
+    logger.info(
+      { shiftOfferId: payload.shiftOfferId },
+      "Shift offer approval already emailed; skipping",
+    );
+    return;
+  }
+
+  const dayText = formatDateOnly(row.date);
+  const timeText = `${formatTimeOnly(row.startTime)} – ${formatTimeOnly(row.endTime)}`;
+
+  const claimerEmail = shiftClaimApprovedEmail({
+    businessName: row.businessName,
+    staffName: row.claimerName,
+    dayText,
+    label: row.label,
+    timeText,
+  });
+  claimerEmail.to = row.claimerEmail;
+  await deps.send(claimerEmail);
+
+  // If a staff member released this shift, let them know it's covered.
+  if (row.offeredByStaffId && row.releaserEmail && row.releaserName) {
+    const coveredEmail = shiftCoveredEmail({
+      businessName: row.businessName,
+      staffName: row.releaserName,
+      coveredByName: row.claimerName,
+      dayText,
+      label: row.label,
+      timeText,
+    });
+    coveredEmail.to = row.releaserEmail;
+    await deps.send(coveredEmail);
+  }
+
+  await createTenantRepo(row.businessId).markOfferDecisionNotified(
+    payload.shiftOfferId,
   );
 }
 

@@ -3,11 +3,13 @@ import {
   asc,
   desc,
   eq,
+  ne,
   gte,
   lte,
   lt,
   isNull,
   inArray,
+  notExists,
   sql,
 } from "drizzle-orm";
 import { db as defaultDb, type Db } from "@/lib/db";
@@ -24,8 +26,15 @@ import {
   timesheetEntries,
   clockPhotos,
   leaveRequests,
+  shiftOffers,
 } from "@/lib/db/schema";
 import type { LeaveType } from "@/lib/validation";
+import {
+  claimEligibility,
+  ACTIVE_OFFER_STATUSES,
+  type OfferStatus,
+} from "@/lib/shift-offer";
+import { alias } from "drizzle-orm/pg-core";
 import { photoRetentionCutoff } from "@/lib/retention";
 
 /**
@@ -1293,6 +1302,571 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             eq(leaveRequests.businessId, businessId),
           ),
         );
+    },
+
+    /* ----- Shift offers (release → claim → owner approves) ----- */
+
+    /**
+     * The staff member's own upcoming confirmed shifts in PUBLISHED rosters,
+     * each with any active (open/claimed) offer on it. Powers the staff "My
+     * shifts" view (release / cancel own offer). `date >= fromDate`.
+     */
+    listUpcomingShiftsForStaff(staffMemberId: string, fromDate: string) {
+      return database
+        .select({
+          shiftId: shifts.id,
+          date: shifts.date,
+          label: shifts.label,
+          startTime: shifts.startTime,
+          endTime: shifts.endTime,
+          offerId: shiftOffers.id,
+          offerStatus: shiftOffers.status,
+          offeredByStaffId: shiftOffers.offeredByStaffId,
+        })
+        .from(rosterAssignments)
+        .innerJoin(shifts, eq(rosterAssignments.shiftId, shifts.id))
+        .innerJoin(
+          publishedRosters,
+          eq(publishedRosters.rosterPeriodId, shifts.rosterPeriodId),
+        )
+        .leftJoin(
+          shiftOffers,
+          and(
+            eq(shiftOffers.shiftId, shifts.id),
+            inArray(shiftOffers.status, [...ACTIVE_OFFER_STATUSES]),
+          ),
+        )
+        .where(
+          and(
+            eq(rosterAssignments.businessId, businessId),
+            eq(rosterAssignments.staffMemberId, staffMemberId),
+            eq(rosterAssignments.status, "confirmed"),
+            gte(shifts.date, fromDate),
+          ),
+        )
+        .orderBy(asc(shifts.date), asc(shifts.startTime));
+    },
+
+    getOffer(id: string) {
+      return first(
+        database
+          .select()
+          .from(shiftOffers)
+          .where(
+            and(eq(shiftOffers.id, id), eq(shiftOffers.businessId, businessId)),
+          ),
+      );
+    },
+
+    /** The active (open/claimed) offer on a shift, if any. */
+    getActiveOfferForShift(shiftId: string) {
+      return first(
+        database
+          .select()
+          .from(shiftOffers)
+          .where(
+            and(
+              eq(shiftOffers.shiftId, shiftId),
+              eq(shiftOffers.businessId, businessId),
+              inArray(shiftOffers.status, [...ACTIVE_OFFER_STATUSES]),
+            ),
+          ),
+      );
+    },
+
+    /** Shift detail IF it sits in a published period for this business. */
+    getPublishedShift(shiftId: string) {
+      return first(
+        database
+          .select({
+            id: shifts.id,
+            date: shifts.date,
+            label: shifts.label,
+            startTime: shifts.startTime,
+            endTime: shifts.endTime,
+          })
+          .from(shifts)
+          .innerJoin(
+            publishedRosters,
+            eq(publishedRosters.rosterPeriodId, shifts.rosterPeriodId),
+          )
+          .where(
+            and(eq(shifts.id, shiftId), eq(shifts.businessId, businessId)),
+          ),
+      );
+    },
+
+    /** True if the staff member holds a confirmed assignment to the shift. */
+    async hasConfirmedAssignment(staffMemberId: string, shiftId: string) {
+      const row = await first(
+        database
+          .select({ id: rosterAssignments.id })
+          .from(rosterAssignments)
+          .where(
+            and(
+              eq(rosterAssignments.businessId, businessId),
+              eq(rosterAssignments.shiftId, shiftId),
+              eq(rosterAssignments.staffMemberId, staffMemberId),
+              eq(rosterAssignments.status, "confirmed"),
+            ),
+          ),
+      );
+      return row !== null;
+    },
+
+    /**
+     * A staff member releases a confirmed shift they hold. Creates an `open`
+     * offer (offered_by = them). Their assignment is left UNTOUCHED — they stay
+     * covered until the owner approves a replacement. Guards: the shift is in a
+     * published period, they actually hold it, and there's no active offer
+     * already. Returns the offer, or a typed failure.
+     */
+    async releaseOwnShift(staffMemberId: string, shiftId: string) {
+      const shift = await this.getPublishedShift(shiftId);
+      if (!shift) {
+        return {
+          ok: false as const,
+          reason: "That shift can't be offered up.",
+        };
+      }
+      if (!(await this.hasConfirmedAssignment(staffMemberId, shiftId))) {
+        return {
+          ok: false as const,
+          reason: "That shift isn't yours to offer.",
+        };
+      }
+      if (await this.getActiveOfferForShift(shiftId)) {
+        return {
+          ok: false as const,
+          reason: "This shift has already been offered up.",
+        };
+      }
+      const [row] = await database
+        .insert(shiftOffers)
+        .values({ businessId, shiftId, offeredByStaffId: staffMemberId })
+        .returning();
+      return { ok: true as const, offer: row! };
+    },
+
+    /**
+     * Owner posts an UNASSIGNED published shift as claimable (offered_by NULL).
+     * Guards: published, currently has no confirmed assignee, and no active
+     * offer. Returns the offer, or a typed failure.
+     */
+    async postOpenShift(shiftId: string) {
+      const shift = await this.getPublishedShift(shiftId);
+      if (!shift) {
+        return {
+          ok: false as const,
+          reason: "Only shifts on a published roster can be opened up.",
+        };
+      }
+      const assigned = await first(
+        database
+          .select({ id: rosterAssignments.id })
+          .from(rosterAssignments)
+          .where(
+            and(
+              eq(rosterAssignments.businessId, businessId),
+              eq(rosterAssignments.shiftId, shiftId),
+              eq(rosterAssignments.status, "confirmed"),
+            ),
+          ),
+      );
+      if (assigned) {
+        return {
+          ok: false as const,
+          reason: "That shift already has someone on it.",
+        };
+      }
+      if (await this.getActiveOfferForShift(shiftId)) {
+        return {
+          ok: false as const,
+          reason: "This shift is already open for claims.",
+        };
+      }
+      const [row] = await database
+        .insert(shiftOffers)
+        .values({ businessId, shiftId, offeredByStaffId: null })
+        .returning();
+      return { ok: true as const, offer: row! };
+    },
+
+    /** Open offers for the business, with shift detail + releaser name. */
+    listOpenOffers() {
+      const offeredBy = staffMembers;
+      return database
+        .select({
+          offerId: shiftOffers.id,
+          shiftId: shifts.id,
+          date: shifts.date,
+          label: shifts.label,
+          startTime: shifts.startTime,
+          endTime: shifts.endTime,
+          offeredByStaffId: shiftOffers.offeredByStaffId,
+          offeredByName: offeredBy.name,
+        })
+        .from(shiftOffers)
+        .innerJoin(shifts, eq(shiftOffers.shiftId, shifts.id))
+        .leftJoin(offeredBy, eq(offeredBy.id, shiftOffers.offeredByStaffId))
+        .where(
+          and(
+            eq(shiftOffers.businessId, businessId),
+            eq(shiftOffers.status, "open"),
+          ),
+        )
+        .orderBy(asc(shifts.date), asc(shifts.startTime));
+    },
+
+    /**
+     * A staff member claims an open offer. Eligibility (pure) blocks claiming a
+     * non-open offer, your own released shift, or a shift you're already on.
+     * Sets claimed_by + status `claimed` (guarded so two people can't both
+     * claim). Returns the claimed offer or a typed failure.
+     */
+    async claimOffer(offerId: string, claimerStaffId: string) {
+      const offer = await this.getOffer(offerId);
+      if (!offer) {
+        return {
+          ok: false as const,
+          reason: "That shift is no longer listed.",
+        };
+      }
+      const alreadyAssigned = await this.hasConfirmedAssignment(
+        claimerStaffId,
+        offer.shiftId,
+      );
+      const elig = claimEligibility({
+        offerStatus: offer.status as OfferStatus,
+        offeredByStaffId: offer.offeredByStaffId,
+        claimerStaffId,
+        alreadyAssignedToShift: alreadyAssigned,
+      });
+      if (!elig.ok) return { ok: false as const, reason: elig.reason };
+
+      const [row] = await database
+        .update(shiftOffers)
+        .set({
+          claimedByStaffId: claimerStaffId,
+          status: "claimed",
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(shiftOffers.id, offerId),
+            eq(shiftOffers.businessId, businessId),
+            eq(shiftOffers.status, "open"),
+          ),
+        )
+        .returning();
+      if (!row) {
+        return { ok: false as const, reason: "Someone else just claimed it." };
+      }
+      return { ok: true as const, offer: row };
+    },
+
+    /**
+     * Owner approves a claim — THE TRANSFER. In one transaction: re-check the
+     * offer is still `claimed` and the shift's roster is still published; assign
+     * the claimer as a CONFIRMED assignment; remove the releaser's assignment
+     * (only when offered_by was set — the handover); mark the offer `approved`.
+     * Never runs if state changed underneath. Returns the offer for emailing.
+     */
+    async approveOffer(offerId: string) {
+      return database.transaction(async (tx) => {
+        const [offer] = await tx
+          .select()
+          .from(shiftOffers)
+          .where(
+            and(
+              eq(shiftOffers.id, offerId),
+              eq(shiftOffers.businessId, businessId),
+            ),
+          );
+        if (!offer || offer.status !== "claimed") {
+          return {
+            ok: false as const,
+            reason: "This claim can't be approved.",
+          };
+        }
+        if (!offer.claimedByStaffId) {
+          return { ok: false as const, reason: "This claim has no claimer." };
+        }
+        // Guard: the shift must still be in a published roster.
+        const [pub] = await tx
+          .select({ id: shifts.id })
+          .from(shifts)
+          .innerJoin(
+            publishedRosters,
+            eq(publishedRosters.rosterPeriodId, shifts.rosterPeriodId),
+          )
+          .where(
+            and(
+              eq(shifts.id, offer.shiftId),
+              eq(shifts.businessId, businessId),
+            ),
+          );
+        if (!pub) {
+          return {
+            ok: false as const,
+            reason: "That roster is no longer published.",
+          };
+        }
+
+        // Assign the claimer (confirmed). Upsert in case a suggestion exists.
+        await tx
+          .insert(rosterAssignments)
+          .values({
+            shiftId: offer.shiftId,
+            staffMemberId: offer.claimedByStaffId,
+            businessId,
+            status: "confirmed",
+          })
+          .onConflictDoUpdate({
+            target: [
+              rosterAssignments.shiftId,
+              rosterAssignments.staffMemberId,
+            ],
+            set: { status: "confirmed" },
+          });
+
+        // Remove the releaser's assignment (the handover). Owner-posted open
+        // shifts have no releaser, so nothing to remove.
+        if (offer.offeredByStaffId) {
+          await tx
+            .delete(rosterAssignments)
+            .where(
+              and(
+                eq(rosterAssignments.shiftId, offer.shiftId),
+                eq(rosterAssignments.staffMemberId, offer.offeredByStaffId),
+                eq(rosterAssignments.businessId, businessId),
+              ),
+            );
+        }
+
+        const [updated] = await tx
+          .update(shiftOffers)
+          .set({
+            status: "approved",
+            decidedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(shiftOffers.id, offerId),
+              eq(shiftOffers.businessId, businessId),
+              eq(shiftOffers.status, "claimed"),
+            ),
+          )
+          .returning();
+        return { ok: true as const, offer: updated! };
+      });
+    },
+
+    /** Owner denies a claim — final, no assignment change. */
+    async denyOffer(offerId: string) {
+      const [row] = await database
+        .update(shiftOffers)
+        .set({ status: "denied", decidedAt: new Date(), updatedAt: new Date() })
+        .where(
+          and(
+            eq(shiftOffers.id, offerId),
+            eq(shiftOffers.businessId, businessId),
+            eq(shiftOffers.status, "claimed"),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    /**
+     * Withdraw an OPEN offer (no claimer yet). The owner can withdraw any open
+     * offer; pass `byStaffId` for the releaser self-cancelling, which also
+     * requires the offer to be theirs. No assignment change.
+     */
+    async withdrawOffer(offerId: string, opts: { byStaffId?: string } = {}) {
+      const conds = [
+        eq(shiftOffers.id, offerId),
+        eq(shiftOffers.businessId, businessId),
+        eq(shiftOffers.status, "open"),
+      ];
+      if (opts.byStaffId) {
+        conds.push(eq(shiftOffers.offeredByStaffId, opts.byStaffId));
+      }
+      const [row] = await database
+        .update(shiftOffers)
+        .set({
+          status: "withdrawn",
+          decidedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(and(...conds))
+        .returning();
+      return row ?? null;
+    },
+
+    /** Pending claims (status `claimed`) for the owner, with names + shift. */
+    listPendingClaims() {
+      const offeredBy = staffMembers;
+      const claimedBy = alias(staffMembers, "claimed_by_staff");
+      return database
+        .select({
+          offerId: shiftOffers.id,
+          shiftId: shifts.id,
+          date: shifts.date,
+          label: shifts.label,
+          startTime: shifts.startTime,
+          endTime: shifts.endTime,
+          offeredByStaffId: shiftOffers.offeredByStaffId,
+          offeredByName: offeredBy.name,
+          claimedByStaffId: shiftOffers.claimedByStaffId,
+          claimedByName: claimedBy.name,
+        })
+        .from(shiftOffers)
+        .innerJoin(shifts, eq(shiftOffers.shiftId, shifts.id))
+        .leftJoin(offeredBy, eq(offeredBy.id, shiftOffers.offeredByStaffId))
+        .leftJoin(claimedBy, eq(claimedBy.id, shiftOffers.claimedByStaffId))
+        .where(
+          and(
+            eq(shiftOffers.businessId, businessId),
+            eq(shiftOffers.status, "claimed"),
+          ),
+        )
+        .orderBy(asc(shifts.date), asc(shifts.startTime));
+    },
+
+    /** Active offers on a period's shifts: shiftId → status (+ claimer name). */
+    listActiveOffersForPeriod(rosterPeriodId: string) {
+      const claimedBy = staffMembers;
+      return database
+        .select({
+          shiftId: shiftOffers.shiftId,
+          status: shiftOffers.status,
+          claimedByName: claimedBy.name,
+        })
+        .from(shiftOffers)
+        .innerJoin(shifts, eq(shiftOffers.shiftId, shifts.id))
+        .leftJoin(claimedBy, eq(claimedBy.id, shiftOffers.claimedByStaffId))
+        .where(
+          and(
+            eq(shiftOffers.businessId, businessId),
+            eq(shifts.rosterPeriodId, rosterPeriodId),
+            inArray(shiftOffers.status, [...ACTIVE_OFFER_STATUSES]),
+          ),
+        );
+    },
+
+    /**
+     * Unassigned shifts in published rosters (no confirmed assignee, no active
+     * offer), `date >= fromDate`. Powers the owner "post an open shift" picker.
+     */
+    listUnassignedPublishedShifts(fromDate: string) {
+      return database
+        .select({
+          shiftId: shifts.id,
+          date: shifts.date,
+          label: shifts.label,
+          startTime: shifts.startTime,
+          endTime: shifts.endTime,
+        })
+        .from(shifts)
+        .innerJoin(
+          publishedRosters,
+          eq(publishedRosters.rosterPeriodId, shifts.rosterPeriodId),
+        )
+        .where(
+          and(
+            eq(shifts.businessId, businessId),
+            gte(shifts.date, fromDate),
+            notExists(
+              database
+                .select({ one: sql`1` })
+                .from(rosterAssignments)
+                .where(
+                  and(
+                    eq(rosterAssignments.shiftId, shifts.id),
+                    eq(rosterAssignments.status, "confirmed"),
+                  ),
+                ),
+            ),
+            notExists(
+              database
+                .select({ one: sql`1` })
+                .from(shiftOffers)
+                .where(
+                  and(
+                    eq(shiftOffers.shiftId, shifts.id),
+                    inArray(shiftOffers.status, [...ACTIVE_OFFER_STATUSES]),
+                  ),
+                ),
+            ),
+          ),
+        )
+        .orderBy(asc(shifts.date), asc(shifts.startTime));
+    },
+
+    /** True if the staff member has approved leave covering a calendar date. */
+    async hasApprovedLeaveOn(staffMemberId: string, date: string) {
+      const row = await first(
+        database
+          .select({ id: leaveRequests.id })
+          .from(leaveRequests)
+          .where(
+            and(
+              eq(leaveRequests.businessId, businessId),
+              eq(leaveRequests.staffMemberId, staffMemberId),
+              eq(leaveRequests.status, "approved"),
+              lte(leaveRequests.startDate, date),
+              gte(leaveRequests.endDate, date),
+            ),
+          ),
+      );
+      return row !== null;
+    },
+
+    /**
+     * Confirmed shifts (times) the staff member already holds on a date in a
+     * published roster, excluding `excludeShiftId`. Used to flag a same-day
+     * overlap when someone claims an offer.
+     */
+    confirmedShiftsForStaffOnDate(
+      staffMemberId: string,
+      date: string,
+      excludeShiftId: string,
+    ) {
+      return database
+        .select({
+          shiftId: shifts.id,
+          startTime: shifts.startTime,
+          endTime: shifts.endTime,
+        })
+        .from(rosterAssignments)
+        .innerJoin(shifts, eq(rosterAssignments.shiftId, shifts.id))
+        .innerJoin(
+          publishedRosters,
+          eq(publishedRosters.rosterPeriodId, shifts.rosterPeriodId),
+        )
+        .where(
+          and(
+            eq(rosterAssignments.businessId, businessId),
+            eq(rosterAssignments.staffMemberId, staffMemberId),
+            eq(rosterAssignments.status, "confirmed"),
+            eq(shifts.date, date),
+            ne(shifts.id, excludeShiftId),
+          ),
+        );
+    },
+
+    /** Mark an offer's approval email as sent (idempotency guard). */
+    async markOfferDecisionNotified(id: string, at: Date = new Date()) {
+      const [row] = await database
+        .update(shiftOffers)
+        .set({ decisionNotifiedAt: at })
+        .where(
+          and(eq(shiftOffers.id, id), eq(shiftOffers.businessId, businessId)),
+        )
+        .returning();
+      return row ?? null;
     },
 
     /* ----- Published rosters ----- */

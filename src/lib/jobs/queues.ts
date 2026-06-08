@@ -6,6 +6,7 @@ export const QUEUES = {
   publishedRoster: "published-roster",
   photoRetention: "photo-retention",
   leaveDecision: "leave-decision",
+  shiftOfferDecision: "shift-offer-decision",
 } as const;
 
 /** Sends one staff member their availability magic link. */
@@ -43,4 +44,14 @@ export type PhotoRetentionJob = Record<string, never>;
  */
 export type LeaveDecisionJob = {
   leaveRequestId: string;
+};
+
+/**
+ * Emails the affected staff when the owner approves a shift claim: the claimer
+ * ("you're confirmed") and, if there was a releaser, the releaser ("now
+ * covered by …"). Enqueued on approval only; idempotent via the offer's
+ * `decision_notified_at`.
+ */
+export type ShiftOfferDecisionJob = {
+  shiftOfferId: string;
 };

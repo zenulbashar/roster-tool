@@ -190,6 +190,22 @@ export const leaveStatus = pgEnum("leave_status", [
   "denied",
 ]);
 
+/**
+ * Lifecycle of a shift offer (release → claim → owner decision). `open` =
+ * claimable; `claimed` = a staff member has claimed it, awaiting the owner;
+ * `approved` = the owner approved the handover (assignment transferred);
+ * `denied` = the owner declined the claim; `withdrawn` = pulled before anyone
+ * claimed (by the owner, or the releaser self-cancelling their own open offer).
+ * Only `open` and `claimed` are "active" — at most one active offer per shift.
+ */
+export const shiftOfferStatus = pgEnum("shift_offer_status", [
+  "open",
+  "claimed",
+  "approved",
+  "denied",
+  "withdrawn",
+]);
+
 export const staffMembers = pgTable(
   "staff_member",
   {
@@ -510,6 +526,64 @@ export const leaveRequests = pgTable(
   ],
 );
 
+/**
+ * A shift offer: a confirmed shift in a published roster that's been made
+ * claimable, and the handover lifecycle around it (release → claim → owner
+ * decision). See `shiftOfferStatus`. `offered_by_staff_id` is the staff member
+ * who released their own assignment, or NULL when the owner posted an open shift
+ * on an unassigned shift. `claimed_by_staff_id` is whoever claimed it.
+ *
+ * The original assignee's `roster_assignment` is NEVER removed on release — it's
+ * removed only when the owner approves a replacement (the transfer), so a shift
+ * is never left uncovered. `decision_notified_at` makes the approval email job
+ * idempotent (mirrors leave). A partial unique index keeps at most ONE active
+ * (`open`/`claimed`) offer per shift; re-offering after a final state is allowed.
+ */
+export const shiftOffers = pgTable(
+  "shift_offer",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    shiftId: uuid("shift_id")
+      .notNull()
+      .references(() => shifts.id, { onDelete: "cascade" }),
+    // Set when a staff member released their own assignment; NULL for an
+    // owner-posted open shift. On staff deletion we keep the offer but null this.
+    offeredByStaffId: uuid("offered_by_staff_id").references(
+      () => staffMembers.id,
+      { onDelete: "set null" },
+    ),
+    claimedByStaffId: uuid("claimed_by_staff_id").references(
+      () => staffMembers.id,
+      { onDelete: "set null" },
+    ),
+    status: shiftOfferStatus("status").notNull().default("open"),
+    // When the owner approved/denied (or it was withdrawn). Null while open.
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    // When the approval email was sent; guards the email job against resends.
+    decisionNotifiedAt: timestamp("decision_notified_at", {
+      withTimezone: true,
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("shift_offer_business_idx").on(t.businessId),
+    index("shift_offer_shift_idx").on(t.shiftId),
+    index("shift_offer_status_idx").on(t.status),
+    // At most one active (open/claimed) offer per shift, enforced in the DB.
+    uniqueIndex("shift_offer_one_active_per_shift")
+      .on(t.shiftId)
+      .where(sql`${t.status} in ('open', 'claimed')`),
+  ],
+);
+
 /* -------------------------------------------------------------------------- */
 /* Relations (for relational queries)                                         */
 /* -------------------------------------------------------------------------- */
@@ -615,6 +689,25 @@ export const leaveRequestsRelations = relations(leaveRequests, ({ one }) => ({
   }),
   staff: one(staffMembers, {
     fields: [leaveRequests.staffMemberId],
+    references: [staffMembers.id],
+  }),
+}));
+
+export const shiftOffersRelations = relations(shiftOffers, ({ one }) => ({
+  business: one(businesses, {
+    fields: [shiftOffers.businessId],
+    references: [businesses.id],
+  }),
+  shift: one(shifts, {
+    fields: [shiftOffers.shiftId],
+    references: [shifts.id],
+  }),
+  offeredBy: one(staffMembers, {
+    fields: [shiftOffers.offeredByStaffId],
+    references: [staffMembers.id],
+  }),
+  claimedBy: one(staffMembers, {
+    fields: [shiftOffers.claimedByStaffId],
     references: [staffMembers.id],
   }),
 }));
