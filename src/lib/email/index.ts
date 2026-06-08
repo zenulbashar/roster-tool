@@ -4,4 +4,6 @@ export {
   reminderEmail,
   publishedRosterEmail,
   leaveDecisionEmail,
+  shiftClaimApprovedEmail,
+  shiftCoveredEmail,
 } from "./templates";

@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { businesses, publishedRosters } from "@/lib/db/schema";
 import { createTenantRepo, type TenantRepo } from "@/lib/tenant/repository";
 import { timesOverlap } from "@/lib/shift-offer";
+import { handleShiftOfferDecision } from "@/lib/jobs/handlers";
 
 /**
  * Integration coverage of the shift-offer lifecycle against the real DB:
@@ -307,5 +308,77 @@ describe("shift swap flow", () => {
 
     // A's offer is untouched.
     expect((await repoA.getOffer(id))?.status).toBe("open");
+  });
+
+  it("emails both claimer and releaser once on approval (idempotent)", async () => {
+    const [shift] = await repoA.createShifts([
+      {
+        rosterPeriodId: periodA,
+        date: DATE2,
+        label: "Email one",
+        startTime: "06:00",
+        endTime: "09:00",
+      },
+    ]);
+    await repoA.assign(shift!.id, ava);
+    const released = (await repoA.releaseOwnShift(ava, shift!.id)) as {
+      ok: true;
+      offer: { id: string };
+    };
+    await repoA.claimOffer(released.offer.id, cara);
+
+    const send = vi.fn().mockResolvedValue(undefined);
+
+    // Not approved yet → no email.
+    await handleShiftOfferDecision(
+      { shiftOfferId: released.offer.id },
+      { send },
+    );
+    expect(send).not.toHaveBeenCalled();
+
+    await repoA.approveOffer(released.offer.id);
+    await handleShiftOfferDecision(
+      { shiftOfferId: released.offer.id },
+      { send },
+    );
+    // Claimer (Cara) + releaser (Ava) = two emails.
+    expect(send).toHaveBeenCalledTimes(2);
+    const recipients = send.mock.calls.map((c) => c[0].to).sort();
+    expect(recipients).toEqual(["ava@a.test", "cara@a.test"]);
+    expect(send.mock.calls.some((c) => /confirmed/i.test(c[0].subject))).toBe(
+      true,
+    );
+    expect(send.mock.calls.some((c) => /covered/i.test(c[0].subject))).toBe(
+      true,
+    );
+
+    // Retry / duplicate enqueue must not resend (decision_notified_at set).
+    await handleShiftOfferDecision(
+      { shiftOfferId: released.offer.id },
+      { send },
+    );
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("emails only the claimer for an owner-posted open shift (no releaser)", async () => {
+    const [shift] = await repoA.createShifts([
+      {
+        rosterPeriodId: periodA,
+        date: DATE2,
+        label: "Owner open",
+        startTime: "19:00",
+        endTime: "22:00",
+      },
+    ]);
+    const posted = await repoA.postOpenShift(shift!.id);
+    expect(posted.ok).toBe(true);
+    if (!posted.ok) return;
+    await repoA.claimOffer(posted.offer.id, ben);
+    await repoA.approveOffer(posted.offer.id);
+
+    const send = vi.fn().mockResolvedValue(undefined);
+    await handleShiftOfferDecision({ shiftOfferId: posted.offer.id }, { send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]![0].to).toBe("ben@a.test");
   });
 });
