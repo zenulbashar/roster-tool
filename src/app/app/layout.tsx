@@ -54,6 +54,9 @@ export default async function OwnerLayout({
           <Link href="/app/timesheets" className="whitespace-nowrap">
             Timesheets
           </Link>
+          <Link href="/app/leave" className="whitespace-nowrap">
+            Leave
+          </Link>
           <Link href="/app/settings" className="whitespace-nowrap">
             Settings
           </Link>
