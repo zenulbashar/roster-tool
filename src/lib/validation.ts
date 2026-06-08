@@ -89,6 +89,30 @@ export const payRateSchema = z.object({
   rateLabel: z.string().trim().max(80).optional(),
 });
 
+/* ----- Leave requests (record only; no balances/accruals/award calc) ----- */
+
+export const leaveTypeSchema = z.enum(["annual", "sick", "unpaid", "other"]);
+export type LeaveType = z.infer<typeof leaveTypeSchema>;
+
+/**
+ * A leave request's fields, shared by staff submission and owner entry. Dates
+ * are calendar dates ("YYYY-MM-DD"); the note is optional and length-capped.
+ * The PIN (staff submission) is validated separately with `pinSchema`.
+ */
+export const leaveRequestSchema = z
+  .object({
+    leaveType: leaveTypeSchema,
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a start date"),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick an end date"),
+    note: z.string().trim().max(500).optional(),
+  })
+  .refine((l) => l.startDate <= l.endDate, {
+    message: "End date can't be before the start date",
+    path: ["endDate"],
+  });
+
+export type LeaveRequestInput = z.infer<typeof leaveRequestSchema>;
+
 /** Cap on a clock-in/out photo once decoded from its data URL. */
 export const MAX_CLOCK_PHOTO_BYTES = 500_000;
 

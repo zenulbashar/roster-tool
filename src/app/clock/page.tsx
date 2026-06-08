@@ -5,13 +5,15 @@ import { resolvePersonalClockBusiness } from "@/lib/tenant/personal-clock-access
 import { PERSONAL_CLOCK_COOKIE } from "@/lib/kiosk-cookie";
 import { Banner, Card } from "@/components/ui";
 import { PersonalClockForm } from "@/components/PersonalClockForm";
+import { LeaveRequestForm } from "@/components/LeaveRequestForm";
+import { personalClockLeaveAction } from "@/app/clock/actions";
 
 export const dynamic = "force-dynamic";
 
 export default async function PersonalClockPage({
   searchParams,
 }: {
-  searchParams: Promise<{ staff?: string }>;
+  searchParams: Promise<{ staff?: string; mode?: string }>;
 }) {
   const cookieStore = await cookies();
   const token = cookieStore.get(PERSONAL_CLOCK_COOKIE)?.value ?? "";
@@ -34,20 +36,41 @@ export default async function PersonalClockPage({
 
   const repo = createTenantRepo(business.businessId);
   const staff = await repo.listActiveStaffForKiosk();
-  const { staff: selectedId } = await searchParams;
+  const { staff: selectedId, mode } = await searchParams;
   const selected = selectedId
     ? staff.find((s) => s.id === selectedId)
     : undefined;
 
+  if (selected && mode === "leave") {
+    return (
+      <LeaveRequestForm
+        action={personalClockLeaveAction}
+        staffId={selected.id}
+        staffName={selected.name}
+        backHref="/clock"
+      />
+    );
+  }
+
   if (selected) {
     const open = await repo.getOpenEntry(selected.id);
     return (
-      <PersonalClockForm
-        staffId={selected.id}
-        staffName={selected.name}
-        currentlyIn={open !== null}
-        locationConfigured={locationConfigured}
-      />
+      <>
+        <PersonalClockForm
+          staffId={selected.id}
+          staffName={selected.name}
+          currentlyIn={open !== null}
+          locationConfigured={locationConfigured}
+        />
+        <p className="mt-4 text-center">
+          <Link
+            href={`/clock?staff=${selected.id}&mode=leave`}
+            className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
+          >
+            Request leave instead
+          </Link>
+        </p>
+      </>
     );
   }
 

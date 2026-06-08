@@ -5,22 +5,31 @@ import {
   staffMembers,
   rosterPeriods,
   businesses,
+  leaveRequests,
 } from "@/lib/db/schema";
 import {
   sendEmail,
   availabilityRequestEmail,
   reminderEmail,
   publishedRosterEmail,
+  leaveDecisionEmail,
 } from "@/lib/email";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { publishedRosters } from "@/lib/db/schema";
 import { env } from "@/lib/env";
-import { formatDateTime, formatDateOnly, formatTimeOnly } from "@/lib/time";
+import {
+  formatDateTime,
+  formatDateOnly,
+  formatDateRange,
+  formatTimeOnly,
+} from "@/lib/time";
+import { leaveTypeLabel } from "@/lib/labels";
 import { logger } from "@/lib/logger";
 import type {
   AvailabilityRequestJob,
   AvailabilityReminderJob,
   PublishedRosterJob,
+  LeaveDecisionJob,
 } from "./queues";
 
 /** Injectable dependencies so handlers can be tested without sending real mail. */
@@ -222,6 +231,75 @@ export async function handlePublishedRoster(
   email.to = member.email;
 
   await deps.send(email);
+}
+
+/**
+ * Email a staff member the owner's decision on their leave request.
+ *
+ * Idempotent: skips if the request is missing, still pending, or already
+ * notified (`decisionNotifiedAt` set), and only stamps `decisionNotifiedAt`
+ * AFTER a successful send — so a retry or duplicate enqueue won't email twice,
+ * and a failure mid-way leaves the job to retry. The current row's status is the
+ * source of truth for which decision to report.
+ */
+export async function handleLeaveDecision(
+  payload: LeaveDecisionJob,
+  deps: HandlerDeps = defaultDeps,
+): Promise<void> {
+  const [row] = await db
+    .select({
+      status: leaveRequests.status,
+      notifiedAt: leaveRequests.decisionNotifiedAt,
+      leaveType: leaveRequests.leaveType,
+      startDate: leaveRequests.startDate,
+      endDate: leaveRequests.endDate,
+      businessId: leaveRequests.businessId,
+      staffName: staffMembers.name,
+      staffEmail: staffMembers.email,
+      businessName: businesses.name,
+    })
+    .from(leaveRequests)
+    .innerJoin(staffMembers, eq(leaveRequests.staffMemberId, staffMembers.id))
+    .innerJoin(businesses, eq(leaveRequests.businessId, businesses.id))
+    .where(eq(leaveRequests.id, payload.leaveRequestId))
+    .limit(1);
+
+  if (!row) {
+    logger.warn(
+      { leaveRequestId: payload.leaveRequestId },
+      "Leave request not found; skipping decision email",
+    );
+    return;
+  }
+  if (row.status === "pending") {
+    logger.info(
+      { leaveRequestId: payload.leaveRequestId },
+      "Leave request still pending; no decision email",
+    );
+    return;
+  }
+  if (row.notifiedAt) {
+    logger.info(
+      { leaveRequestId: payload.leaveRequestId },
+      "Leave decision already emailed; skipping",
+    );
+    return;
+  }
+
+  const email = leaveDecisionEmail({
+    businessName: row.businessName,
+    staffName: row.staffName,
+    leaveTypeLabel: leaveTypeLabel(row.leaveType),
+    dateRangeText: formatDateRange(row.startDate, row.endDate),
+    approved: row.status === "approved",
+  });
+  email.to = row.staffEmail;
+
+  await deps.send(email);
+
+  await createTenantRepo(row.businessId).markLeaveDecisionNotified(
+    payload.leaveRequestId,
+  );
 }
 
 /**

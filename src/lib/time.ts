@@ -79,6 +79,16 @@ export function formatTimeOnly(time: TimeOnly): string {
 }
 
 /**
+ * Format an inclusive date range of "YYYY-MM-DD" calendar dates for display,
+ * e.g. "Tue 10/06 – Sat 14/06". A single-day range shows just the one date.
+ */
+export function formatDateRange(start: DateOnly, end: DateOnly): string {
+  return start === end
+    ? formatDateOnly(start)
+    : `${formatDateOnly(start)} – ${formatDateOnly(end)}`;
+}
+
+/**
  * Inclusive list of "YYYY-MM-DD" dates from start to end. Used to expand a
  * roster period into individual days.
  */
