@@ -7,7 +7,7 @@ import { generateSlug } from "@/lib/tokens";
 import { enqueuePublishedRoster } from "@/lib/jobs/boss";
 import { buildDraft, draftSummary } from "@/lib/draft";
 import { formatDateOnly, formatTimeOnly } from "@/lib/time";
-import { periodStatusLabel } from "@/lib/labels";
+import { periodStatusLabel, rosterBuildVerb } from "@/lib/labels";
 import { Banner, Button, Card, PageHeader } from "@/components/ui";
 
 type Availability = "yes" | "no" | "unknown";
@@ -226,7 +226,7 @@ export default async function BuildRosterPage({
   return (
     <>
       <PageHeader
-        title={`Build: ${period.label}`}
+        title={`${rosterBuildVerb(period.status)}: ${period.label}`}
         subtitle={`${formatDateOnly(period.startDate)} – ${formatDateOnly(period.endDate)} · ${periodStatusLabel(period.status)}`}
       />
 
