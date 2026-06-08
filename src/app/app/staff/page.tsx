@@ -1,7 +1,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ownerRepo } from "@/lib/auth/context";
-import { staffSchema } from "@/lib/validation";
+import { staffSchema, pinSchema } from "@/lib/validation";
+import { hashPin } from "@/lib/pin";
 import {
   Banner,
   Button,
@@ -25,7 +26,7 @@ function isUniqueViolation(err: unknown): boolean {
 export default async function StaffPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; added?: string }>;
+  searchParams: Promise<{ error?: string; added?: string; pin?: string }>;
 }) {
   const sp = await searchParams;
   const repo = await ownerRepo();
@@ -75,6 +76,23 @@ export default async function StaffPage({
     revalidatePath(PATH);
   }
 
+  async function setPin(formData: FormData) {
+    "use server";
+    const repo = await ownerRepo();
+    const id = String(formData.get("id"));
+    const parsed = pinSchema.safeParse(formData.get("pin"));
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Enter a 4-digit PIN";
+      redirect(`${PATH}?error=${encodeURIComponent(msg)}`);
+    }
+    // Hash before storing; the PIN itself is never persisted or logged.
+    const updated = await repo.setStaffPin(id, hashPin(parsed.data));
+    if (!updated)
+      redirect(`${PATH}?error=${encodeURIComponent("Staff member not found")}`);
+    revalidatePath(PATH);
+    redirect(`${PATH}?pin=1`);
+  }
+
   return (
     <>
       <PageHeader
@@ -84,6 +102,7 @@ export default async function StaffPage({
 
       {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
       {sp.added ? <Banner tone="success">Staff member added.</Banner> : null}
+      {sp.pin ? <Banner tone="success">PIN updated.</Banner> : null}
 
       <Card className="mt-4">
         <h2 className="text-lg font-semibold">Add someone</h2>
@@ -156,6 +175,34 @@ export default async function StaffPage({
                           {s.notifyByDefault ? "On" : "Off"}
                         </span>
                       </button>
+                    </form>
+                    <form
+                      action={setPin}
+                      className="mt-3 flex flex-wrap items-end gap-2"
+                    >
+                      <input type="hidden" name="id" value={s.id} />
+                      <label className="block">
+                        <span className="mb-1 block text-sm font-semibold">
+                          Clock-in PIN
+                          <span className="ml-2 font-normal text-[var(--color-muted)]">
+                            {s.pinHash ? "Set" : "Not set"}
+                          </span>
+                        </span>
+                        <TextInput
+                          name="pin"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          pattern="\d{4}"
+                          maxLength={4}
+                          required
+                          placeholder="4 digits"
+                          className="w-32"
+                          aria-label={`Set clock-in PIN for ${s.name}`}
+                        />
+                      </label>
+                      <Button type="submit" variant="secondary">
+                        {s.pinHash ? "Reset PIN" : "Set PIN"}
+                      </Button>
                     </form>
                   </div>
                   <form action={toggleActive}>
