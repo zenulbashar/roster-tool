@@ -17,7 +17,10 @@ export type OfferStatus =
   | "withdrawn";
 
 /** Statuses that occupy a shift — at most one active offer per shift. */
-export const ACTIVE_OFFER_STATUSES: readonly OfferStatus[] = ["open", "claimed"];
+export const ACTIVE_OFFER_STATUSES: readonly OfferStatus[] = [
+  "open",
+  "claimed",
+];
 
 export function isActiveOfferStatus(status: OfferStatus): boolean {
   return ACTIVE_OFFER_STATUSES.includes(status);
@@ -76,7 +79,10 @@ export function claimEligibility(input: {
   alreadyAssignedToShift: boolean;
 }): ClaimEligibility {
   if (input.offerStatus !== "open") {
-    return { ok: false, reason: "This shift isn't available to claim anymore." };
+    return {
+      ok: false,
+      reason: "This shift isn't available to claim anymore.",
+    };
   }
   if (input.offeredByStaffId === input.claimerStaffId) {
     return { ok: false, reason: "You can't claim a shift you offered up." };

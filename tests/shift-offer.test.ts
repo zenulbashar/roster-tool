@@ -71,7 +71,9 @@ describe("claimEligibility", () => {
   });
 
   it("blocks claiming a non-open offer", () => {
-    expect(claimEligibility({ ...base, offerStatus: "claimed" }).ok).toBe(false);
+    expect(claimEligibility({ ...base, offerStatus: "claimed" }).ok).toBe(
+      false,
+    );
   });
 
   it("blocks claiming your own released shift", () => {
