@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { requireOwner } from "@/lib/auth/context";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { formatDateOnly, formatTimeOnly } from "@/lib/time";
-import { periodStatusLabel } from "@/lib/labels";
+import { periodStatusLabel, rosterActionLabel } from "@/lib/labels";
 import { Banner, ButtonLink, Card, PageHeader } from "@/components/ui";
 
 export default async function PeriodDetailPage({
@@ -131,7 +131,7 @@ export default async function PeriodDetailPage({
           </ul>
           <div className="mt-4">
             <ButtonLink href={`/app/periods/${id}/build`}>
-              Build the roster
+              {rosterActionLabel(period.status)}
             </ButtonLink>
           </div>
         </Card>
