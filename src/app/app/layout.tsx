@@ -51,6 +51,12 @@ export default async function OwnerLayout({
           <Link href="/app/templates" className="whitespace-nowrap">
             Shift types
           </Link>
+          <Link href="/app/timesheets" className="whitespace-nowrap">
+            Timesheets
+          </Link>
+          <Link href="/app/settings" className="whitespace-nowrap">
+            Settings
+          </Link>
         </nav>
       </header>
       <main id="main" className="mx-auto max-w-3xl px-5 py-8">
