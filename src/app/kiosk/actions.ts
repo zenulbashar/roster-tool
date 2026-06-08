@@ -14,7 +14,10 @@ import {
 import { pinSchema, parseClockPhoto } from "@/lib/validation";
 import { businessDateOf, formatTimeOnly } from "@/lib/time";
 import { formatElapsed, entryDurationMs } from "@/lib/clock";
-import { submitStaffLeave, type LeaveSubmitResult } from "@/lib/leave-submission";
+import {
+  submitStaffLeave,
+  type LeaveSubmitResult,
+} from "@/lib/leave-submission";
 
 export type ClockResult =
   | { status: "idle" }

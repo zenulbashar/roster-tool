@@ -106,7 +106,10 @@ export async function submitStaffLeave(
     status: "pending",
   });
   if (!created) {
-    return { status: "error", message: "Couldn't send your request. Try again." };
+    return {
+      status: "error",
+      message: "Couldn't send your request. Try again.",
+    };
   }
 
   return {

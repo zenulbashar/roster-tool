@@ -37,7 +37,10 @@ export function isOnLeave(
 export function makeOnLeaveLookup(
   ranges: LeaveRange[],
 ): (staffMemberId: string, date: DateOnly) => boolean {
-  const byStaff = new Map<string, Array<{ startDate: string; endDate: string }>>();
+  const byStaff = new Map<
+    string,
+    Array<{ startDate: string; endDate: string }>
+  >();
   for (const r of ranges) {
     const list = byStaff.get(r.staffMemberId) ?? [];
     list.push({ startDate: r.startDate, endDate: r.endDate });
