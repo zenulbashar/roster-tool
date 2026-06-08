@@ -59,9 +59,11 @@ owner approval, not payroll export.
   kiosk captures a webcam still at clock in/out, stored as `bytea` in
   `clock_photo`. Privacy: a consent line shows on the kiosk; **no facial
   recognition**; photos live in our Postgres DB and are served only to the owner;
-  deleting a timesheet entry deletes its photos. No auto-retention/purge yet —
-  recommended follow-up. Camera-denied/unavailable falls back to PIN-only; a
-  missing photo never blocks clocking.
+  deleting a timesheet entry deletes its photos. Photos are also **auto-purged
+  per business** by a daily retention job (`photo_retention_days`, default 7;
+  owners pick 7/30/90 in Settings) — only the photos are deleted, the timesheet
+  entry/hours are always kept. Camera-denied/unavailable falls back to PIN-only;
+  a missing photo never blocks clocking.
 
 ## Non-negotiable conventions
 
@@ -158,7 +160,9 @@ Notable columns / conventions:
   `src/lib/pin.ts`; the PIN itself is never stored or logged.
 - `business.kiosk_token_hash` — SHA-256 hash of the kiosk capability token (only
   the hash is stored; raw token lives in the link/cookie). `require_clock_in_photo`
-  toggles kiosk photo capture (off by default).
+  toggles kiosk photo capture (off by default). `photo_retention_days` (NOT NULL
+  default 7; allowed 7/30/90) is how long clock-in photos are kept before the
+  daily retention job purges them — always on, owner picks the number in Settings.
 - `timesheet_entry` — one clock in/out. `clock_out_at` null = currently in; a
   **partial unique index** on `staff_member_id WHERE clock_out_at IS NULL` makes
   double clock-in impossible. `shift_id` links a rostered shift when one matches
@@ -166,7 +170,13 @@ Notable columns / conventions:
   `approved` is the owner's payroll sign-off. Clock logic is pure in
   `src/lib/clock.ts`.
 - `clock_photo` — optional clock in/out still, stored inline as `bytea`, cascaded
-  with its entry. Served only to the owner via `/app/timesheets/photo/[id]`.
+  with its entry. Served only to the owner via `/app/timesheets/photo/[id]`. A
+  daily pg-boss cron (03:00 UTC, registered in the worker boot path) sweeps every
+  business and deletes photos whose entry's `clock_in_at` is older than that
+  business's `photo_retention_days`. It deletes **only** `clock_photo` rows (never
+  `timesheet_entry`), is tenant-scoped per business, and is idempotent. Cutoff
+  logic is pure in `src/lib/retention.ts`; deletion is `deleteExpiredPhotos` on
+  the tenant repo.
 - `availability_response` — `request_id` is **nullable**. A response with no
   request is an owner **manual pre-fill** (`source = 'manual'`); it carries
   `staff_member_id` directly (staff replies derive theirs via the request).
