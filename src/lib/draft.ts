@@ -63,14 +63,18 @@ function shiftTypeKey(s: {
 /**
  * Build draft suggestions. `isAvailable(shiftId, staffMemberId)` must return
  * true only when that person is known to be available for that shift (their own
- * response OR a manual pre-fill). Pure and order-stable.
+ * response OR a manual pre-fill). The optional `isOnLeave(shiftId,
+ * staffMemberId)` excludes anyone on approved leave on that shift's day, even if
+ * they're otherwise available — keeping people on leave off the draft. Pure and
+ * order-stable.
  */
 export function buildDraft(input: {
   currentShifts: ShiftLike[];
   lastAssignments: PastAssignmentLike[];
   isAvailable: (shiftId: string, staffMemberId: string) => boolean;
+  isOnLeave?: (shiftId: string, staffMemberId: string) => boolean;
 }): DraftResult {
-  const { currentShifts, lastAssignments, isAvailable } = input;
+  const { currentShifts, lastAssignments, isAvailable, isOnLeave } = input;
 
   // Last week's staff per shift-type+weekday slot. Insertion order preserved so
   // suggestions come out deterministically.
@@ -88,8 +92,10 @@ export function buildDraft(input: {
 
   for (const shift of currentShifts) {
     const candidates = lastBySlot.get(shiftTypeKey(shift)) ?? [];
-    const available = candidates.filter((staffId) =>
-      isAvailable(shift.id, staffId),
+    const available = candidates.filter(
+      (staffId) =>
+        isAvailable(shift.id, staffId) &&
+        !(isOnLeave?.(shift.id, staffId) ?? false),
     );
 
     if (available.length > 0) {
