@@ -58,6 +58,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   pages: {
     signIn: "/sign-in",
     verifyRequest: "/sign-in/check-email",
+    // Route auth failures (e.g. an expired/used magic link) to our own sign-in
+    // page with the code in `?error=`, instead of Auth.js's built-in error page
+    // whose "Sign in" button leads to a dead-end Error page. The sign-in page
+    // shows a friendly message and lets the user request a fresh link.
+    error: "/sign-in",
   },
   providers: [emailProvider],
   callbacks: {
