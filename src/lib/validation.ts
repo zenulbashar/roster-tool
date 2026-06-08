@@ -36,6 +36,11 @@ export const periodSchema = z
     path: ["endDate"],
   });
 
+/** A four-digit kiosk PIN. */
+export const pinSchema = z
+  .string()
+  .regex(/^\d{4}$/, "Enter a 4-digit PIN (numbers only)");
+
 export type StaffInput = z.infer<typeof staffSchema>;
 export type TemplateInput = z.infer<typeof templateSchema>;
 export type PeriodInput = z.infer<typeof periodSchema>;

@@ -143,6 +143,25 @@ export function zonedDateTimeToUtc(
   return new Date(naiveUtc.getTime() - offset);
 }
 
+/**
+ * The business-local calendar date ("YYYY-MM-DD") for a UTC instant. e.g. an
+ * 07:30Z clock-in is "today" in Sydney but may be a different date than the UTC
+ * date. Used to link a clock-in to the rostered shift on that local day.
+ */
+export function businessDateOf(
+  instant: Date,
+  timeZone: string = DEFAULT_TIMEZONE,
+): DateOnly {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(instant);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value;
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
 /** ISO weekday for a "YYYY-MM-DD" date: 1 = Monday ... 7 = Sunday. */
 export function isoWeekday(date: DateOnly): number {
   const [y, m, d] = date.split("-").map(Number);
