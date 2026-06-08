@@ -15,6 +15,7 @@ import { pinSchema, coordinatesSchema } from "@/lib/validation";
 import { isWithinRadius } from "@/lib/geo";
 import { businessDateOf, formatTimeOnly } from "@/lib/time";
 import { formatElapsed, entryDurationMs } from "@/lib/clock";
+import { submitStaffLeave, type LeaveSubmitResult } from "@/lib/leave-submission";
 
 export type ClockResult =
   | { status: "idle" }
@@ -179,4 +180,26 @@ export async function personalClockAction(
     status: "success",
     message: `${staff.name}, you clocked in at ${clockTime(now, business.timezone)}.`,
   };
+}
+
+/**
+ * Submit a leave request from a staff member's own phone. Business comes from
+ * the personal-clock cookie (never client input); the staff member is PIN-authed
+ * by the shared core. Deliberately NO geofence — requesting time off isn't a
+ * clock action, so it can be done from anywhere.
+ */
+export async function personalClockLeaveAction(
+  _prev: LeaveSubmitResult,
+  formData: FormData,
+): Promise<LeaveSubmitResult> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(PERSONAL_CLOCK_COOKIE)?.value ?? "";
+  const business = await resolvePersonalClockBusiness(token);
+  if (!business) {
+    return {
+      status: "error",
+      message: "This clock-in link is no longer active. Ask your manager.",
+    };
+  }
+  return submitStaffLeave(createTenantRepo(business.businessId), formData);
 }

@@ -4,6 +4,14 @@ import { db } from "@/lib/db";
 import { businesses } from "@/lib/db/schema";
 import { createTenantRepo, type TenantRepo } from "@/lib/tenant/repository";
 import { handleLeaveDecision } from "@/lib/jobs/handlers";
+import { submitStaffLeave } from "@/lib/leave-submission";
+import { hashPin } from "@/lib/pin";
+
+function leaveForm(fields: Record<string, string>): FormData {
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(fields)) fd.set(k, v);
+  return fd;
+}
 
 /**
  * Integration coverage of the leave-request lifecycle against the real DB:
@@ -179,5 +187,57 @@ describe("leave request flow", () => {
     expect(send).toHaveBeenCalledTimes(1);
 
     await repoA.deleteLeaveRequest(req!.id);
+  });
+
+  it("staff submission verifies PIN, scopes to the repo's business, and rejects wrong/foreign", async () => {
+    await repoA.setStaffPin(staffA, hashPin("1234"));
+
+    // Wrong PIN → error, no row created.
+    const before = (await repoA.listLeaveByStatus("pending")).length;
+    const wrong = await submitStaffLeave(
+      repoA,
+      leaveForm({
+        staffId: staffA,
+        pin: "9999",
+        leaveType: "annual",
+        startDate: "2026-11-02",
+        endDate: "2026-11-03",
+      }),
+    );
+    expect(wrong.status).toBe("error");
+    expect((await repoA.listLeaveByStatus("pending")).length).toBe(before);
+
+    // Correct PIN → pending request created for the right staff member.
+    const ok = await submitStaffLeave(
+      repoA,
+      leaveForm({
+        staffId: staffA,
+        pin: "1234",
+        leaveType: "annual",
+        startDate: "2026-11-02",
+        endDate: "2026-11-03",
+        note: "Long weekend",
+      }),
+    );
+    expect(ok.status).toBe("success");
+    const pending = await repoA.listLeaveByStatus("pending");
+    const mine = pending.filter((r) => r.startDate === "2026-11-02");
+    expect(mine.length).toBe(1);
+    expect(mine[0]!.staffName).toBe("Ava");
+
+    // A foreign staff id (business B's staff) can't submit through repo A —
+    // getStaff is scoped, so it's the generic PIN error and creates nothing.
+    const foreign = await submitStaffLeave(
+      repoA,
+      leaveForm({
+        staffId: staffB,
+        pin: "1234",
+        leaveType: "annual",
+        startDate: "2026-11-02",
+        endDate: "2026-11-03",
+      }),
+    );
+    expect(foreign.status).toBe("error");
+    expect(await repoB.listLeaveByStatus("pending")).toEqual([]);
   });
 });

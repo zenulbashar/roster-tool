@@ -14,6 +14,7 @@ import {
 import { pinSchema, parseClockPhoto } from "@/lib/validation";
 import { businessDateOf, formatTimeOnly } from "@/lib/time";
 import { formatElapsed, entryDurationMs } from "@/lib/clock";
+import { submitStaffLeave, type LeaveSubmitResult } from "@/lib/leave-submission";
 
 export type ClockResult =
   | { status: "idle" }
@@ -145,4 +146,25 @@ export async function clockAction(
   }
 
   return { status: "success", message };
+}
+
+/**
+ * Submit a leave request from the shared kiosk. Business comes from the kiosk
+ * cookie (never client input); the staff member is PIN-authed by the shared
+ * core. No geofence — leave isn't a clock action.
+ */
+export async function kioskLeaveAction(
+  _prev: LeaveSubmitResult,
+  formData: FormData,
+): Promise<LeaveSubmitResult> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(KIOSK_COOKIE)?.value ?? "";
+  const business = await resolveKioskBusiness(token);
+  if (!business) {
+    return {
+      status: "error",
+      message: "This kiosk link is no longer active. Ask your manager.",
+    };
+  }
+  return submitStaffLeave(createTenantRepo(business.businessId), formData);
 }
