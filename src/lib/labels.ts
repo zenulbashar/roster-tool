@@ -23,3 +23,15 @@ export function rosterActionLabel(status: string): string {
 export function rosterBuildVerb(status: string): string {
   return status === "published" ? "Edit" : "Build";
 }
+
+/** Friendly label for a leave type, used in the owner UI and decision emails. */
+export const LEAVE_TYPE_LABEL: Record<string, string> = {
+  annual: "Annual leave",
+  sick: "Sick leave",
+  unpaid: "Unpaid leave",
+  other: "Leave",
+};
+
+export function leaveTypeLabel(type: string): string {
+  return LEAVE_TYPE_LABEL[type] ?? "Leave";
+}

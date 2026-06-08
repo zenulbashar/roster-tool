@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { businesses } from "@/lib/db/schema";
 import { createTenantRepo, type TenantRepo } from "@/lib/tenant/repository";
+import { handleLeaveDecision } from "@/lib/jobs/handlers";
 
 /**
  * Integration coverage of the leave-request lifecycle against the real DB:
@@ -149,5 +150,34 @@ describe("leave request flow", () => {
     // A can delete its own.
     await repoA.deleteLeaveRequest(inA!.id);
     expect(await repoA.getLeaveRequest(inA!.id)).toBeNull();
+  });
+
+  it("emails the decision once (idempotent) and skips while pending", async () => {
+    const req = await repoA.createLeaveRequest({
+      staffMemberId: staffA,
+      leaveType: "annual",
+      startDate: "2026-10-05",
+      endDate: "2026-10-09",
+    });
+
+    // Pending → no email.
+    const send = vi.fn().mockResolvedValue(undefined);
+    await handleLeaveDecision({ leaveRequestId: req!.id }, { send });
+    expect(send).not.toHaveBeenCalled();
+
+    // Decide, then the email goes out once.
+    await repoA.decideLeaveRequest(req!.id, "approved");
+    await handleLeaveDecision({ leaveRequestId: req!.id }, { send });
+    expect(send).toHaveBeenCalledTimes(1);
+    const sent = send.mock.calls[0]![0];
+    expect(sent.to).toBe("ava@a.test");
+    expect(sent.subject).toContain("approved");
+    expect(sent.text).toContain("approved");
+
+    // A retry / duplicate enqueue must NOT resend (decision_notified_at set).
+    await handleLeaveDecision({ leaveRequestId: req!.id }, { send });
+    expect(send).toHaveBeenCalledTimes(1);
+
+    await repoA.deleteLeaveRequest(req!.id);
   });
 });

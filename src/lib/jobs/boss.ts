@@ -7,12 +7,14 @@ import {
   type AvailabilityReminderJob,
   type PublishedRosterJob,
   type PhotoRetentionJob,
+  type LeaveDecisionJob,
 } from "./queues";
 import {
   handleAvailabilityRequest,
   handleAvailabilityReminder,
   handlePublishedRoster,
   handlePhotoRetention,
+  handleLeaveDecision,
 } from "./handlers";
 
 /** Cron for the daily clock-in photo retention sweep: 03:00 UTC every day. */
@@ -78,6 +80,17 @@ export async function enqueuePublishedRoster(
   });
 }
 
+export async function enqueueLeaveDecision(
+  payload: LeaveDecisionJob,
+): Promise<void> {
+  const boss = await getBoss();
+  await boss.send(QUEUES.leaveDecision, payload, {
+    ...RETRY,
+    // Collapse duplicate enqueues for the same decision.
+    singletonKey: payload.leaveRequestId,
+  });
+}
+
 /**
  * Register all job handlers. Called by the worker process. The handler receives
  * a batch of jobs from pg-boss; we process each.
@@ -117,6 +130,15 @@ export async function registerWorkers(): Promise<void> {
     async (jobs: Job<PhotoRetentionJob>[]) => {
       for (const _job of jobs) {
         await handlePhotoRetention();
+      }
+    },
+  );
+
+  await boss.work<LeaveDecisionJob>(
+    QUEUES.leaveDecision,
+    async (jobs: Job<LeaveDecisionJob>[]) => {
+      for (const job of jobs) {
+        await handleLeaveDecision(job.data);
       }
     },
   );

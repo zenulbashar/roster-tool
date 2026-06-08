@@ -3,4 +3,5 @@ export {
   availabilityRequestEmail,
   reminderEmail,
   publishedRosterEmail,
+  leaveDecisionEmail,
 } from "./templates";

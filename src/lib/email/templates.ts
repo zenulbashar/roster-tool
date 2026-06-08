@@ -117,6 +117,40 @@ export function publishedRosterEmail(input: {
   };
 }
 
+export function leaveDecisionEmail(input: {
+  businessName: string;
+  staffName: string;
+  /** Friendly leave-type label, e.g. "Annual leave". */
+  leaveTypeLabel: string;
+  /** Pre-formatted date range, e.g. "Tue 10/06 – Sat 14/06" (or a single day). */
+  dateRangeText: string;
+  approved: boolean;
+}): OutgoingEmail {
+  const { businessName, staffName, leaveTypeLabel, dateRangeText, approved } =
+    input;
+  const outcome = approved ? "approved" : "not approved";
+  const subject = `Your leave request for ${dateRangeText} was ${approved ? "approved" : "declined"} — ${businessName}`;
+  const followUp = approved
+    ? "Enjoy your time off!"
+    : "If you have questions, please speak to your manager.";
+  return {
+    to: "",
+    subject,
+    html: layout({
+      heading: `Hi ${staffName},`,
+      bodyHtml: `<p>Your ${leaveTypeLabel.toLowerCase()} request for <strong>${dateRangeText}</strong> has been <strong>${outcome}</strong> by ${businessName}.</p><p>${followUp}</p>`,
+      footer: "Questions about your leave? Reply to your manager directly.",
+    }),
+    text: [
+      `Hi ${staffName},`,
+      "",
+      `Your ${leaveTypeLabel.toLowerCase()} request for ${dateRangeText} has been ${outcome} by ${businessName}.`,
+      "",
+      followUp,
+    ].join("\n"),
+  };
+}
+
 export function reminderEmail(input: {
   businessName: string;
   staffName: string;
