@@ -181,11 +181,21 @@ export default async function BuildRosterPage({
     await repo.publish(id, existing?.publicSlug ?? generateSlug());
     await repo.updatePeriod(id, { status: "published" });
 
-    // Email everyone who was asked (or all active staff if none were asked).
-    const reqs = await repo.listRequests(id);
-    const targets = reqs.length
-      ? reqs.map((r) => r.staffMemberId)
-      : (await repo.listStaff({ activeOnly: true })).map((s) => s.id);
+    // Email everyone who was asked or who ended up on a (confirmed) shift —
+    // including people the owner pre-filled, who never got a request. Fall back
+    // to all active staff only when there's nothing to go on.
+    const [reqs, assignmentsNow] = await Promise.all([
+      repo.listRequests(id),
+      repo.listAssignments(id),
+    ]);
+    const asked = reqs.map((r) => r.staffMemberId);
+    const assignedStaff = assignmentsNow
+      .filter((a) => a.status === "confirmed")
+      .map((a) => a.staffMemberId);
+    const targets =
+      asked.length || assignedStaff.length
+        ? [...asked, ...assignedStaff]
+        : (await repo.listStaff({ activeOnly: true })).map((s) => s.id);
     for (const staffMemberId of new Set(targets)) {
       await enqueuePublishedRoster({ rosterPeriodId: id, staffMemberId });
     }
