@@ -13,6 +13,7 @@ import {
   timesheetEntries,
   clockPhotos,
 } from "@/lib/db/schema";
+import { photoRetentionCutoff } from "@/lib/retention";
 
 /**
  * Tenant-scoped data access.
@@ -742,6 +743,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     async updateBusinessSettings(
       input: Partial<{
         requireClockInPhoto: boolean;
+        photoRetentionDays: number;
         kioskTokenHash: string | null;
       }>,
     ) {
@@ -841,6 +843,47 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             and(eq(clockPhotos.id, id), eq(clockPhotos.businessId, businessId)),
           ),
       );
+    },
+
+    /**
+     * Delete this business's clock photos whose parent entry clocked in before
+     * the retention cutoff (using the business's own `photoRetentionDays`).
+     *
+     * Deletes ONLY `clock_photo` rows — the timesheet entries and their hours
+     * are kept. Scoped to this business on both tables, so it can never touch
+     * another tenant. Idempotent: re-running deletes nothing. Returns the count
+     * of photos purged.
+     */
+    async deleteExpiredPhotos(now: Date = new Date()): Promise<number> {
+      const business = await first(
+        database
+          .select({ retentionDays: businesses.photoRetentionDays })
+          .from(businesses)
+          .where(eq(businesses.id, businessId)),
+      );
+      if (!business) return 0;
+
+      const cutoff = photoRetentionCutoff(now, business.retentionDays);
+      const expiredEntries = database
+        .select({ id: timesheetEntries.id })
+        .from(timesheetEntries)
+        .where(
+          and(
+            eq(timesheetEntries.businessId, businessId),
+            lt(timesheetEntries.clockInAt, cutoff),
+          ),
+        );
+
+      const deleted = await database
+        .delete(clockPhotos)
+        .where(
+          and(
+            eq(clockPhotos.businessId, businessId),
+            inArray(clockPhotos.timesheetEntryId, expiredEntries),
+          ),
+        )
+        .returning({ id: clockPhotos.id });
+      return deleted.length;
     },
 
     /**

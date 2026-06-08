@@ -6,12 +6,17 @@ import {
   type AvailabilityRequestJob,
   type AvailabilityReminderJob,
   type PublishedRosterJob,
+  type PhotoRetentionJob,
 } from "./queues";
 import {
   handleAvailabilityRequest,
   handleAvailabilityReminder,
   handlePublishedRoster,
+  handlePhotoRetention,
 } from "./handlers";
+
+/** Cron for the daily clock-in photo retention sweep: 03:00 UTC every day. */
+const PHOTO_RETENTION_CRON = "0 3 * * *";
 
 /**
  * pg-boss singleton. One instance per process (Next dev hot-reload safe via
@@ -105,6 +110,25 @@ export async function registerWorkers(): Promise<void> {
         await handlePublishedRoster(job.data);
       }
     },
+  );
+
+  await boss.work<PhotoRetentionJob>(
+    QUEUES.photoRetention,
+    async (jobs: Job<PhotoRetentionJob>[]) => {
+      for (const _job of jobs) {
+        await handlePhotoRetention();
+      }
+    },
+  );
+
+  // Daily cron sweep of expired clock-in photos. Re-scheduling with the same
+  // queue name is idempotent (pg-boss upserts the schedule), so booting the
+  // worker repeatedly is safe. singletonKey collapses any overlapping runs.
+  await boss.schedule(
+    QUEUES.photoRetention,
+    PHOTO_RETENTION_CRON,
+    {},
+    { ...RETRY, tz: "UTC", singletonKey: QUEUES.photoRetention },
   );
 
   logger.info("Workers registered");

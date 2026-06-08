@@ -41,6 +41,10 @@ export const businesses = pgTable("business", {
   requireClockInPhoto: boolean("require_clock_in_photo")
     .notNull()
     .default(false),
+  // How many days clock-in photos are kept before the daily retention job
+  // purges them. Always on (no "off"); owners pick 7, 30 or 90. Only the photos
+  // are deleted — the timesheet entry/hours are kept. See CLAUDE.md.
+  photoRetentionDays: integer("photo_retention_days").notNull().default(7),
   // SHA-256 hash of the kiosk capability token. Only the hash is stored; the
   // raw token lives in the kiosk link / cookie. Rotating it revokes old links.
   kioskTokenHash: text("kiosk_token_hash").unique(),
