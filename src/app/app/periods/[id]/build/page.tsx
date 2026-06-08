@@ -40,10 +40,14 @@ export default async function BuildRosterPage({
 
   // availability[shiftId][staffId] = yes | no
   const avail = new Map<string, Map<string, boolean>>();
+  // Set of `${shiftId}:${staffId}` that were pre-filled by the owner (manual),
+  // not answered by the staff member themselves.
+  const prefilled = new Set<string>();
   for (const r of responses) {
     const m = avail.get(r.shiftId) ?? new Map<string, boolean>();
     m.set(r.staffMemberId, r.available);
     avail.set(r.shiftId, m);
+    if (r.source === "manual") prefilled.add(`${r.shiftId}:${r.staffMemberId}`);
   }
   // assigned[shiftId] = Set(staffId)
   const assigned = new Map<string, Set<string>>();
@@ -156,6 +160,9 @@ export default async function BuildRosterPage({
                       {ordered.map((member) => {
                         const isAssigned = assignedSet.has(member.id);
                         const a = availabilityOf(s.id, member.id);
+                        const isPrefilled = prefilled.has(
+                          `${s.id}:${member.id}`,
+                        );
                         const marker =
                           a === "yes" ? "✓" : a === "no" ? "✗" : "?";
                         const tone = isAssigned
@@ -185,6 +192,11 @@ export default async function BuildRosterPage({
                             >
                               {member.name}{" "}
                               <span aria-hidden="true">{marker}</span>
+                              {isPrefilled && !isAssigned ? (
+                                <span className="ml-1 rounded bg-[var(--color-ok)] px-1 py-0.5 text-[10px] font-semibold text-white">
+                                  Pre-filled
+                                </span>
+                              ) : null}
                             </button>
                           </form>
                         );

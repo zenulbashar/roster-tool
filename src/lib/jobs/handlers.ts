@@ -112,6 +112,9 @@ export async function handleAvailabilityReminder(
 ): Promise<void> {
   const [row] = await db
     .select({
+      businessId: availabilityRequests.businessId,
+      staffMemberId: availabilityRequests.staffMemberId,
+      rosterPeriodId: availabilityRequests.rosterPeriodId,
       respondedAt: availabilityRequests.respondedAt,
       reminderSentAt: availabilityRequests.reminderSentAt,
       staffName: staffMembers.name,
@@ -139,6 +142,17 @@ export async function handleAvailabilityReminder(
     logger.info(
       { requestId: payload.requestId },
       "Reminder not needed; skipping",
+    );
+    return;
+  }
+
+  // Don't remind anyone the owner has already pre-filled as available — their
+  // availability is recorded, even though they never got the original email.
+  const repo = createTenantRepo(row.businessId);
+  if (await repo.hasManualResponses(row.staffMemberId, row.rosterPeriodId)) {
+    logger.info(
+      { requestId: payload.requestId },
+      "Staff pre-filled; reminder not needed; skipping",
     );
     return;
   }
