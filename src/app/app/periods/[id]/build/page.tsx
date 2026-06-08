@@ -33,20 +33,42 @@ export default async function BuildRosterPage({
   const period = await repo.getPeriod(id);
   if (!period) notFound();
 
-  const [shifts, staff, responses, assignments, requests, published, leave] =
-    await Promise.all([
-      repo.listShifts(id),
-      repo.listStaff({ activeOnly: true }),
-      repo.listResponses(id),
-      repo.listAssignments(id),
-      repo.listRequests(id),
-      repo.getPublished(id),
-      repo.listApprovedLeaveBetween(period.startDate, period.endDate),
-    ]);
+  const [
+    shifts,
+    staff,
+    responses,
+    assignments,
+    requests,
+    published,
+    leave,
+    activeOffers,
+  ] = await Promise.all([
+    repo.listShifts(id),
+    repo.listStaff({ activeOnly: true }),
+    repo.listResponses(id),
+    repo.listAssignments(id),
+    repo.listRequests(id),
+    repo.getPublished(id),
+    repo.listApprovedLeaveBetween(period.startDate, period.endDate),
+    repo.listActiveOffersForPeriod(id),
+  ]);
 
   // Is this staff member on approved leave on a given day? Used to flag (not
   // block) on-leave staff in the picker.
   const onLeave = makeOnLeaveLookup(leave);
+
+  // Active shift offers by shift, so the owner sees an "Offered"/"Claimed"
+  // marker for shifts mid-swap. The handover only happens on the Shifts page.
+  const offerByShift = new Map<
+    string,
+    { status: string; claimedByName: string | null }
+  >();
+  for (const o of activeOffers) {
+    offerByShift.set(o.shiftId, {
+      status: o.status,
+      claimedByName: o.claimedByName,
+    });
+  }
 
   // Move the period into "building" the first time the owner opens the builder.
   if (period.status === "collecting") {
@@ -311,10 +333,20 @@ export default async function BuildRosterPage({
                         : 0;
                   return rank(a.id) - rank(b.id);
                 });
+                const offer = offerByShift.get(s.id);
                 return (
                   <li key={s.id}>
                     <div className="flex items-baseline justify-between">
-                      <span className="font-medium">{s.label}</span>
+                      <span className="font-medium">
+                        {s.label}
+                        {offer ? (
+                          <span className="ml-2 rounded bg-[var(--color-brand)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-brand-ink)]">
+                            {offer.status === "claimed"
+                              ? `Claim: ${offer.claimedByName ?? "pending"}`
+                              : "Offered"}
+                          </span>
+                        ) : null}
+                      </span>
                       <span className="text-sm text-[var(--color-muted)]">
                         {formatTimeOnly(s.startTime)} –{" "}
                         {formatTimeOnly(s.endTime)}
