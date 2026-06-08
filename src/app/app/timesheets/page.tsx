@@ -171,6 +171,29 @@ export default async function TimesheetsPage({
         </Link>
       </nav>
 
+      <Card className="mt-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="font-semibold">Export approved hours (CSV)</p>
+            <p className="mt-1 text-sm text-[var(--color-muted)]">
+              Hours and rates for this week, for your bookkeeper or payroll
+              system to import. Only entries you&apos;ve approved are included.
+              <strong className="text-[var(--color-ink)]">
+                {" "}
+                This is NOT a payroll calculation — it doesn&apos;t work out
+                penalty rates, overtime, super or final pay.
+              </strong>
+            </p>
+          </div>
+          <a
+            href={`${PATH}/export?week=${weekStart}`}
+            className="inline-flex min-h-11 items-center justify-center rounded-lg bg-[var(--color-brand)] px-5 py-2.5 text-sm font-semibold text-[var(--color-brand-ink)]"
+          >
+            Download CSV
+          </a>
+        </div>
+      </Card>
+
       {groups.size === 0 ? (
         <Card className="mt-6 text-center text-[var(--color-muted)]">
           No clock-ins this week.
@@ -225,6 +248,11 @@ export default async function TimesheetsPage({
                             </p>
                           </div>
                           <div className="flex items-center gap-3">
+                            {e.withinGeofence ? (
+                              <span className="rounded bg-[var(--color-canvas)] px-2 py-0.5 text-xs font-medium text-[var(--color-muted)]">
+                                Location verified
+                              </span>
+                            ) : null}
                             {e.approved ? (
                               <span className="rounded bg-green-50 px-2 py-0.5 text-xs font-medium text-[var(--color-ok)]">
                                 Approved

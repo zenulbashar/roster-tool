@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { businesses } from "@/lib/db/schema";
 import { createTenantRepo } from "@/lib/tenant/repository";
+import { buildApprovedHoursCsv } from "@/lib/timesheet-export";
 
 /**
  * Integration coverage for per-employee pay rates and the approved-hours export
@@ -100,5 +101,16 @@ describe("pay rates + approved-hours export query", () => {
 
     // B's export never sees A's data.
     expect(await repoB.listApprovedEntriesForExport(start, end)).toHaveLength(1);
+
+    // End-to-end: feed the query straight into the CSV builder.
+    const csv = buildApprovedHoursCsv(rows, {
+      timezone: "Australia/Sydney",
+      businessName: "Rates Biz A",
+    });
+    const lines = csv.split("\r\n");
+    expect(lines[1]).toContain("NOT a payroll calculation");
+    // Title + disclaimer + blank + header + exactly one data row.
+    expect(lines).toHaveLength(5);
+    expect(lines[4]).toContain("Kai,kai@a.test");
   });
 });
