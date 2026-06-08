@@ -57,6 +57,9 @@ export default async function OwnerLayout({
           <Link href="/app/leave" className="whitespace-nowrap">
             Leave
           </Link>
+          <Link href="/app/shifts" className="whitespace-nowrap">
+            Shifts
+          </Link>
           <Link href="/app/settings" className="whitespace-nowrap">
             Settings
           </Link>
