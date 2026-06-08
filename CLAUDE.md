@@ -126,6 +126,23 @@ connection, the worker uses the direct connection (pg-boss needs session mode).
 `roster_period`, `shift`, `availability_request`, `availability_response`,
 `roster_assignment`, `published_roster`. All domain tables are business-scoped.
 
+Notable columns / conventions:
+
+- `staff_member.notify_by_default` — pre-checks this person when the owner asks
+  for availability. Owners override per-send on the recipient-selection step.
+- `availability_response` — `request_id` is **nullable**. A response with no
+  request is an owner **manual pre-fill** (`source = 'manual'`); it carries
+  `staff_member_id` directly (staff replies derive theirs via the request).
+  Manual pre-fills create no email and no `availability_request`, and the
+  reminder job skips anyone who has one.
+- `roster_assignment.status` — `'suggested'` (a draft proposed by "Draft from
+  last week") or `'confirmed'`. **Only confirmed assignments are published**
+  (`rosterRows` filters to confirmed), so un-accepted suggestions never leak
+  into the public roster or staff emails.
+- Draft suggestion logic lives in `src/lib/draft.ts` (pure, deterministic — no
+  LLM/external calls). It matches by shift type (template, or label+times if the
+  template was deleted) **and** weekday, suggesting only available staff.
+
 ## Milestones
 
 - [x] M1 — Scaffold, tooling, CI
