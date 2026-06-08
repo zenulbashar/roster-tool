@@ -15,11 +15,16 @@ scheduling software.
 In scope: owner sign-up + business, add staff, shift templates, roster periods,
 availability requests via staff magic links, availability summary, roster
 builder, publish (personal emails + read-only shareable view), one automatic
-reminder before the deadline.
+reminder before the deadline, and staff clock-in (a shared-device kiosk with
+per-staff PINs) feeding owner-facing timesheets.
 
-**Out of scope (post-MVP):** SMS/WhatsApp, payroll, time clocking, free-text
-reply parsing, billing, native apps, shift-swap workflows. If a request drifts
-here, flag it rather than silently building it.
+**Out of scope (post-MVP):** SMS/WhatsApp, payroll, free-text reply parsing,
+billing, native apps, shift-swap workflows. If a request drifts here, flag it
+rather than silently building it.
+
+Note: clock-in/timesheets was added after the original MVP (time clocking used
+to be listed out of scope) at the owner's explicit request. It captures hours +
+owner approval, not payroll export.
 
 ## Stack
 
@@ -41,6 +46,22 @@ here, flag it rather than silently building it.
 - **Availability**: per-shift yes/no (Available / Not available). 1:1 mapping to
   assignments.
 - **Owner auth**: email magic link. First sign-in creates the Business.
+- **Clock-in kiosk**: a shared-device page reached by a per-business capability
+  link (`/kiosk/<token>`), with NO owner session. Like the staff magic link and
+  public roster, the token (then an httpOnly cookie) authenticates the device and
+  yields the `businessId` via `resolveKioskBusiness` in
+  `src/lib/tenant/kiosk-access.ts`; all further work is scoped through
+  `createTenantRepo(businessId)`. The kiosk can only read active staff
+  names + clock state and write clock entries/photos — never owner pages or other
+  tenants. Per-action auth is the staff member's PIN. The owner rotates the link
+  (regenerates the hash) to instantly revoke old links.
+- **Clock-in photos** (`require_clock_in_photo`, off by default): when on, the
+  kiosk captures a webcam still at clock in/out, stored as `bytea` in
+  `clock_photo`. Privacy: a consent line shows on the kiosk; **no facial
+  recognition**; photos live in our Postgres DB and are served only to the owner;
+  deleting a timesheet entry deletes its photos. No auto-retention/purge yet —
+  recommended follow-up. Camera-denied/unavailable falls back to PIN-only; a
+  missing photo never blocks clocking.
 
 ## Non-negotiable conventions
 
@@ -124,12 +145,28 @@ connection, the worker uses the direct connection (pg-boss needs session mode).
 
 `business`, `user` (owner) + Auth.js tables, `staff_member`, `shift_template`,
 `roster_period`, `shift`, `availability_request`, `availability_response`,
-`roster_assignment`, `published_roster`. All domain tables are business-scoped.
+`roster_assignment`, `published_roster`, `timesheet_entry`, `clock_photo`. All
+domain tables are business-scoped.
 
 Notable columns / conventions:
 
 - `staff_member.notify_by_default` — pre-checks this person when the owner asks
   for availability. Owners override per-send on the recipient-selection step.
+- `staff_member.pin_hash` — salted scrypt hash of the kiosk PIN (`scrypt$salt$hash`).
+  `failed_pin_attempts` / `pin_locked_until` back the per-staff brute-force guard
+  (5 wrong PINs → 60s cooldown). Helpers (hash, verify, lockout) are pure in
+  `src/lib/pin.ts`; the PIN itself is never stored or logged.
+- `business.kiosk_token_hash` — SHA-256 hash of the kiosk capability token (only
+  the hash is stored; raw token lives in the link/cookie). `require_clock_in_photo`
+  toggles kiosk photo capture (off by default).
+- `timesheet_entry` — one clock in/out. `clock_out_at` null = currently in; a
+  **partial unique index** on `staff_member_id WHERE clock_out_at IS NULL` makes
+  double clock-in impossible. `shift_id` links a rostered shift when one matches
+  (published + confirmed) on the clock-in's business-local date, else null.
+  `approved` is the owner's payroll sign-off. Clock logic is pure in
+  `src/lib/clock.ts`.
+- `clock_photo` — optional clock in/out still, stored inline as `bytea`, cascaded
+  with its entry. Served only to the owner via `/app/timesheets/photo/[id]`.
 - `availability_response` — `request_id` is **nullable**. A response with no
   request is an owner **manual pre-fill** (`source = 'manual'`); it carries
   `staff_member_id` directly (staff replies derive theirs via the request).
@@ -153,3 +190,4 @@ Notable columns / conventions:
 - [x] M6 — Availability summary + roster builder
 - [x] M7 — Publish + reminders (jobs)
 - [x] M8 — Accessibility + polish
+- [x] M9 — Clock-in kiosk + timesheets (PINs, brute-force guard, optional photos)
