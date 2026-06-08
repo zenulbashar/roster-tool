@@ -1,4 +1,15 @@
-import { and, asc, desc, eq, gte, lt, isNull, inArray, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  lte,
+  lt,
+  isNull,
+  inArray,
+  sql,
+} from "drizzle-orm";
 import { db as defaultDb, type Db } from "@/lib/db";
 import {
   businesses,
@@ -12,7 +23,9 @@ import {
   publishedRosters,
   timesheetEntries,
   clockPhotos,
+  leaveRequests,
 } from "@/lib/db/schema";
+import type { LeaveType } from "@/lib/validation";
 import { photoRetentionCutoff } from "@/lib/retention";
 
 /**
@@ -1085,6 +1098,201 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           .limit(1),
       );
       return row?.shiftId ?? null;
+    },
+
+    /* ----- Leave requests ----- */
+
+    /**
+     * Create a leave request. Forces this business's id and validates the staff
+     * member belongs here first (returns null otherwise), so a foreign or
+     * client-supplied staff id can never create a row. Staff submissions pass
+     * `status: 'pending'` (the default); owner direct-entry passes `'approved'`
+     * with a `decidedAt`.
+     */
+    async createLeaveRequest(input: {
+      staffMemberId: string;
+      leaveType: LeaveType;
+      startDate: string;
+      endDate: string;
+      note?: string | null;
+      status?: "pending" | "approved" | "denied";
+      decidedAt?: Date | null;
+    }) {
+      const member = await first(
+        database
+          .select({ id: staffMembers.id })
+          .from(staffMembers)
+          .where(
+            and(
+              eq(staffMembers.id, input.staffMemberId),
+              eq(staffMembers.businessId, businessId),
+            ),
+          ),
+      );
+      if (!member) return null;
+      const [row] = await database
+        .insert(leaveRequests)
+        .values({
+          businessId,
+          staffMemberId: input.staffMemberId,
+          leaveType: input.leaveType,
+          startDate: input.startDate,
+          endDate: input.endDate,
+          note: input.note ?? null,
+          status: input.status ?? "pending",
+          decidedAt: input.decidedAt ?? null,
+        })
+        .returning();
+      return row ?? null;
+    },
+
+    getLeaveRequest(id: string) {
+      return first(
+        database
+          .select()
+          .from(leaveRequests)
+          .where(
+            and(
+              eq(leaveRequests.id, id),
+              eq(leaveRequests.businessId, businessId),
+            ),
+          ),
+      );
+    },
+
+    /** Leave requests of a given status, with the staff member's name. */
+    listLeaveByStatus(status: "pending" | "approved" | "denied") {
+      return database
+        .select({
+          id: leaveRequests.id,
+          staffMemberId: leaveRequests.staffMemberId,
+          staffName: staffMembers.name,
+          leaveType: leaveRequests.leaveType,
+          startDate: leaveRequests.startDate,
+          endDate: leaveRequests.endDate,
+          note: leaveRequests.note,
+          status: leaveRequests.status,
+          decidedAt: leaveRequests.decidedAt,
+          createdAt: leaveRequests.createdAt,
+        })
+        .from(leaveRequests)
+        .innerJoin(
+          staffMembers,
+          eq(staffMembers.id, leaveRequests.staffMemberId),
+        )
+        .where(
+          and(
+            eq(leaveRequests.businessId, businessId),
+            eq(leaveRequests.status, status),
+          ),
+        )
+        .orderBy(asc(leaveRequests.startDate), asc(staffMembers.name));
+    },
+
+    /**
+     * Approved leave whose range hasn't fully passed as of `fromDate` (a
+     * business-local "YYYY-MM-DD"), for the owner's upcoming list. Includes
+     * leave currently in progress (end date today or later).
+     */
+    listUpcomingApprovedLeave(fromDate: string) {
+      return database
+        .select({
+          id: leaveRequests.id,
+          staffMemberId: leaveRequests.staffMemberId,
+          staffName: staffMembers.name,
+          leaveType: leaveRequests.leaveType,
+          startDate: leaveRequests.startDate,
+          endDate: leaveRequests.endDate,
+          note: leaveRequests.note,
+        })
+        .from(leaveRequests)
+        .innerJoin(
+          staffMembers,
+          eq(staffMembers.id, leaveRequests.staffMemberId),
+        )
+        .where(
+          and(
+            eq(leaveRequests.businessId, businessId),
+            eq(leaveRequests.status, "approved"),
+            gte(leaveRequests.endDate, fromDate),
+          ),
+        )
+        .orderBy(asc(leaveRequests.startDate), asc(staffMembers.name));
+    },
+
+    /**
+     * Approved leave ranges overlapping the inclusive [startDate, endDate]
+     * window, scoped to this business. Powers the roster builder's on-leave
+     * flag and the draft skip. Overlap = leave starts on/before the window ends
+     * AND ends on/after it begins.
+     */
+    listApprovedLeaveBetween(startDate: string, endDate: string) {
+      return database
+        .select({
+          staffMemberId: leaveRequests.staffMemberId,
+          startDate: leaveRequests.startDate,
+          endDate: leaveRequests.endDate,
+        })
+        .from(leaveRequests)
+        .where(
+          and(
+            eq(leaveRequests.businessId, businessId),
+            eq(leaveRequests.status, "approved"),
+            lte(leaveRequests.startDate, endDate),
+            gte(leaveRequests.endDate, startDate),
+          ),
+        );
+    },
+
+    /**
+     * Approve or deny a still-pending request, stamping `decided_at`. Only acts
+     * on a `pending` row (so a double-submit is a no-op and re-deciding can't
+     * silently flip a decision). Returns the updated row, or null if it wasn't
+     * pending / not found / another tenant's.
+     */
+    async decideLeaveRequest(
+      id: string,
+      status: "approved" | "denied",
+      decidedAt: Date = new Date(),
+    ) {
+      const [row] = await database
+        .update(leaveRequests)
+        .set({ status, decidedAt, updatedAt: new Date() })
+        .where(
+          and(
+            eq(leaveRequests.id, id),
+            eq(leaveRequests.businessId, businessId),
+            eq(leaveRequests.status, "pending"),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    /** Mark a request's decision email as sent (idempotency guard). */
+    async markLeaveDecisionNotified(id: string, at: Date = new Date()) {
+      const [row] = await database
+        .update(leaveRequests)
+        .set({ decisionNotifiedAt: at })
+        .where(
+          and(
+            eq(leaveRequests.id, id),
+            eq(leaveRequests.businessId, businessId),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    async deleteLeaveRequest(id: string) {
+      await database
+        .delete(leaveRequests)
+        .where(
+          and(
+            eq(leaveRequests.id, id),
+            eq(leaveRequests.businessId, businessId),
+          ),
+        );
     },
 
     /* ----- Published rosters ----- */
