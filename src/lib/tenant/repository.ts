@@ -74,6 +74,9 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         email: string;
         active: boolean;
         notifyByDefault: boolean;
+        payRateCents: number | null;
+        rateType: "flat" | "award";
+        rateLabel: string | null;
       }>,
     ) {
       const [row] = await database
@@ -745,6 +748,10 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         requireClockInPhoto: boolean;
         photoRetentionDays: number;
         kioskTokenHash: string | null;
+        latitude: number | null;
+        longitude: number | null;
+        geofenceRadiusM: number;
+        personalClockTokenHash: string | null;
       }>,
     ) {
       const [row] = await database
@@ -775,7 +782,14 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
 
     async clockIn(
       staffMemberId: string,
-      opts: { shiftId?: string | null; at?: Date } = {},
+      opts: {
+        shiftId?: string | null;
+        at?: Date;
+        // Captured only on personal-phone clock-in; null for the kiosk.
+        lat?: number | null;
+        lng?: number | null;
+        withinGeofence?: boolean | null;
+      } = {},
     ) {
       const [row] = await database
         .insert(timesheetEntries)
@@ -784,6 +798,9 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           staffMemberId,
           shiftId: opts.shiftId ?? null,
           clockInAt: opts.at ?? new Date(),
+          clockInLat: opts.lat ?? null,
+          clockInLng: opts.lng ?? null,
+          withinGeofence: opts.withinGeofence ?? null,
         })
         .returning();
       return row!;
@@ -900,6 +917,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           clockInAt: timesheetEntries.clockInAt,
           clockOutAt: timesheetEntries.clockOutAt,
           approved: timesheetEntries.approved,
+          withinGeofence: timesheetEntries.withinGeofence,
           shiftId: timesheetEntries.shiftId,
           shiftLabel: shifts.label,
           shiftDate: shifts.date,
@@ -920,6 +938,39 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           ),
         )
         .orderBy(desc(timesheetEntries.clockInAt));
+    },
+
+    /**
+     * Approved timesheet entries whose clock-in falls in [startUtc, endUtc),
+     * with the staff name/email and pay-rate fields, for the CSV export. Filters
+     * to `approved = true`, scoped to this business. Ordered by staff then time.
+     */
+    listApprovedEntriesForExport(startUtc: Date, endUtc: Date) {
+      return database
+        .select({
+          staffName: staffMembers.name,
+          staffEmail: staffMembers.email,
+          clockInAt: timesheetEntries.clockInAt,
+          clockOutAt: timesheetEntries.clockOutAt,
+          withinGeofence: timesheetEntries.withinGeofence,
+          payRateCents: staffMembers.payRateCents,
+          rateType: staffMembers.rateType,
+          rateLabel: staffMembers.rateLabel,
+        })
+        .from(timesheetEntries)
+        .innerJoin(
+          staffMembers,
+          eq(staffMembers.id, timesheetEntries.staffMemberId),
+        )
+        .where(
+          and(
+            eq(timesheetEntries.businessId, businessId),
+            eq(timesheetEntries.approved, true),
+            gte(timesheetEntries.clockInAt, startUtc),
+            lt(timesheetEntries.clockInAt, endUtc),
+          ),
+        )
+        .orderBy(asc(staffMembers.name), asc(timesheetEntries.clockInAt));
     },
 
     /**
