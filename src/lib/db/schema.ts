@@ -3,6 +3,7 @@ import { relations, sql } from "drizzle-orm";
 import {
   pgTable,
   pgEnum,
+  customType,
   text,
   uuid,
   timestamp,
@@ -16,6 +17,17 @@ import {
   index,
 } from "drizzle-orm/pg-core";
 
+/**
+ * Raw binary column (Postgres `bytea`) carried as a Node `Buffer`. Used for the
+ * small clock-in/out photos so we don't need external object storage in the
+ * MVP. Keep payloads small (validated + capped at the call site).
+ */
+const bytea = customType<{ data: Buffer; default: false }>({
+  dataType() {
+    return "bytea";
+  },
+});
+
 /* -------------------------------------------------------------------------- */
 /* Tenancy root                                                               */
 /* -------------------------------------------------------------------------- */
@@ -24,6 +36,14 @@ export const businesses = pgTable("business", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   timezone: text("timezone").notNull().default("Australia/Sydney"),
+  // When on, the kiosk captures a still photo on each clock in/out. Off by
+  // default — owners opt in (see CLAUDE.md "Clock-in photos").
+  requireClockInPhoto: boolean("require_clock_in_photo")
+    .notNull()
+    .default(false),
+  // SHA-256 hash of the kiosk capability token. Only the hash is stored; the
+  // raw token lives in the kiosk link / cookie. Rotating it revokes old links.
+  kioskTokenHash: text("kiosk_token_hash").unique(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -121,6 +141,9 @@ export const assignmentStatus = pgEnum("assignment_status", [
   "confirmed",
 ]);
 
+/** Which side of a timesheet entry a clock photo belongs to. */
+export const clockPhotoKind = pgEnum("clock_photo_kind", ["in", "out"]);
+
 export const staffMembers = pgTable(
   "staff_member",
   {
@@ -134,6 +157,14 @@ export const staffMembers = pgTable(
     // Whether this person is pre-checked when the owner asks for availability.
     // Owners can still override per-send; this is just the default.
     notifyByDefault: boolean("notify_by_default").notNull().default(true),
+    // Salted scrypt hash of the staff member's kiosk PIN ("scrypt$salt$hash").
+    // Null until the owner sets one. Never store or log the PIN itself.
+    pinHash: text("pin_hash"),
+    // Brute-force guard for the public kiosk: count of consecutive wrong PINs
+    // and, once the limit is hit, the instant until which clock-in is locked.
+    // Durable (not in-memory) so the cooldown holds across server instances.
+    failedPinAttempts: integer("failed_pin_attempts").notNull().default(0),
+    pinLockedUntil: timestamp("pin_locked_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -313,6 +344,68 @@ export const publishedRosters = pgTable("published_roster", {
     .defaultNow(),
 });
 
+/**
+ * A clock-in/out record for a staff member. `clockOutAt` null means the person
+ * is currently clocked in. `shiftId` links the entry to a rostered shift when
+ * one matches (published + confirmed) on the clock-in date; it stays null for
+ * unscheduled work. `approved` is the owner's payroll sign-off.
+ */
+export const timesheetEntries = pgTable(
+  "timesheet_entry",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    staffMemberId: uuid("staff_member_id")
+      .notNull()
+      .references(() => staffMembers.id, { onDelete: "cascade" }),
+    shiftId: uuid("shift_id").references(() => shifts.id, {
+      onDelete: "set null",
+    }),
+    clockInAt: timestamp("clock_in_at", { withTimezone: true }).notNull(),
+    clockOutAt: timestamp("clock_out_at", { withTimezone: true }),
+    approved: boolean("approved").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("timesheet_entry_business_staff_idx").on(
+      t.businessId,
+      t.staffMemberId,
+    ),
+    // A staff member can have at most one open (not-yet-clocked-out) entry,
+    // making double clock-in impossible at the database level.
+    uniqueIndex("timesheet_entry_one_open_per_staff")
+      .on(t.staffMemberId)
+      .where(sql`${t.clockOutAt} is null`),
+  ],
+);
+
+/**
+ * Optional photo captured at clock in/out, stored inline as `bytea`. Cascades
+ * away with its timesheet entry. Served only to the owner via a scoped route.
+ */
+export const clockPhotos = pgTable("clock_photo", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  businessId: uuid("business_id")
+    .notNull()
+    .references(() => businesses.id, { onDelete: "cascade" }),
+  timesheetEntryId: uuid("timesheet_entry_id")
+    .notNull()
+    .references(() => timesheetEntries.id, { onDelete: "cascade" }),
+  kind: clockPhotoKind("kind").notNull(),
+  mimeType: text("mime_type").notNull(),
+  imageData: bytea("image_data").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 /* -------------------------------------------------------------------------- */
 /* Relations (for relational queries)                                         */
 /* -------------------------------------------------------------------------- */
@@ -386,5 +479,27 @@ export const staffMembersRelations = relations(staffMembers, ({ one }) => ({
   business: one(businesses, {
     fields: [staffMembers.businessId],
     references: [businesses.id],
+  }),
+}));
+
+export const timesheetEntriesRelations = relations(
+  timesheetEntries,
+  ({ one, many }) => ({
+    staff: one(staffMembers, {
+      fields: [timesheetEntries.staffMemberId],
+      references: [staffMembers.id],
+    }),
+    shift: one(shifts, {
+      fields: [timesheetEntries.shiftId],
+      references: [shifts.id],
+    }),
+    photos: many(clockPhotos),
+  }),
+);
+
+export const clockPhotosRelations = relations(clockPhotos, ({ one }) => ({
+  entry: one(timesheetEntries, {
+    fields: [clockPhotos.timesheetEntryId],
+    references: [timesheetEntries.id],
   }),
 }));

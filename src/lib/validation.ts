@@ -36,6 +36,30 @@ export const periodSchema = z
     path: ["endDate"],
   });
 
+/** A four-digit kiosk PIN. */
+export const pinSchema = z
+  .string()
+  .regex(/^\d{4}$/, "Enter a 4-digit PIN (numbers only)");
+
+/** Cap on a clock-in/out photo once decoded from its data URL. */
+export const MAX_CLOCK_PHOTO_BYTES = 500_000;
+
+/**
+ * A clock photo arrives as a base64 JPEG/PNG data URL from the kiosk camera.
+ * Returns the decoded bytes + mime, or null if it's absent/oversized/malformed
+ * (the photo is best-effort, so callers treat null as "no photo").
+ */
+export function parseClockPhoto(
+  value: FormDataEntryValue | null,
+): { mimeType: string; data: Buffer } | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  const match = /^data:(image\/(?:jpeg|png));base64,(.+)$/.exec(value);
+  if (!match) return null;
+  const data = Buffer.from(match[2]!, "base64");
+  if (data.length === 0 || data.length > MAX_CLOCK_PHOTO_BYTES) return null;
+  return { mimeType: match[1]!, data };
+}
+
 export type StaffInput = z.infer<typeof staffSchema>;
 export type TemplateInput = z.infer<typeof templateSchema>;
 export type PeriodInput = z.infer<typeof periodSchema>;

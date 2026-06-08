@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lt, isNull, inArray, sql } from "drizzle-orm";
 import { db as defaultDb, type Db } from "@/lib/db";
 import {
+  businesses,
   staffMembers,
   shiftTemplates,
   rosterPeriods,
@@ -9,6 +10,8 @@ import {
   availabilityResponses,
   rosterAssignments,
   publishedRosters,
+  timesheetEntries,
+  clockPhotos,
 } from "@/lib/db/schema";
 
 /**
@@ -80,6 +83,45 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         )
         .returning();
       return row ?? null;
+    },
+
+    /** Active staff for the kiosk picker — id + name only, never the PIN hash. */
+    listActiveStaffForKiosk() {
+      return database
+        .select({ id: staffMembers.id, name: staffMembers.name })
+        .from(staffMembers)
+        .where(
+          and(
+            eq(staffMembers.businessId, businessId),
+            eq(staffMembers.active, true),
+          ),
+        )
+        .orderBy(asc(staffMembers.name));
+    },
+
+    /** Set (or reset) a staff member's PIN and clear any lockout. */
+    async setStaffPin(id: string, pinHash: string) {
+      const [row] = await database
+        .update(staffMembers)
+        .set({ pinHash, failedPinAttempts: 0, pinLockedUntil: null })
+        .where(
+          and(eq(staffMembers.id, id), eq(staffMembers.businessId, businessId)),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    /** Persist the brute-force counter / cooldown for a staff member. */
+    async updateStaffLockout(
+      id: string,
+      state: { failedPinAttempts: number; pinLockedUntil: Date | null },
+    ) {
+      await database
+        .update(staffMembers)
+        .set(state)
+        .where(
+          and(eq(staffMembers.id, id), eq(staffMembers.businessId, businessId)),
+        );
     },
 
     /* ----- Shift templates ----- */
@@ -688,6 +730,267 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             eq(rosterAssignments.status, "confirmed"),
           ),
         );
+    },
+
+    /* ----- Business settings ----- */
+    getBusiness() {
+      return first(
+        database.select().from(businesses).where(eq(businesses.id, businessId)),
+      );
+    },
+
+    async updateBusinessSettings(
+      input: Partial<{
+        requireClockInPhoto: boolean;
+        kioskTokenHash: string | null;
+      }>,
+    ) {
+      const [row] = await database
+        .update(businesses)
+        .set(input)
+        .where(eq(businesses.id, businessId))
+        .returning();
+      return row ?? null;
+    },
+
+    /* ----- Timesheets (clock in/out) ----- */
+
+    /** The staff member's currently-open entry (clocked in), if any. */
+    getOpenEntry(staffMemberId: string) {
+      return first(
+        database
+          .select()
+          .from(timesheetEntries)
+          .where(
+            and(
+              eq(timesheetEntries.businessId, businessId),
+              eq(timesheetEntries.staffMemberId, staffMemberId),
+              isNull(timesheetEntries.clockOutAt),
+            ),
+          ),
+      );
+    },
+
+    async clockIn(
+      staffMemberId: string,
+      opts: { shiftId?: string | null; at?: Date } = {},
+    ) {
+      const [row] = await database
+        .insert(timesheetEntries)
+        .values({
+          businessId,
+          staffMemberId,
+          shiftId: opts.shiftId ?? null,
+          clockInAt: opts.at ?? new Date(),
+        })
+        .returning();
+      return row!;
+    },
+
+    async clockOut(entryId: string, at: Date = new Date()) {
+      const [row] = await database
+        .update(timesheetEntries)
+        .set({ clockOutAt: at, updatedAt: new Date() })
+        .where(
+          and(
+            eq(timesheetEntries.id, entryId),
+            eq(timesheetEntries.businessId, businessId),
+            isNull(timesheetEntries.clockOutAt),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    async addClockPhoto(input: {
+      timesheetEntryId: string;
+      kind: "in" | "out";
+      mimeType: string;
+      imageData: Buffer;
+    }) {
+      // Guard: the entry must belong to this business before we attach a photo.
+      const entry = await first(
+        database
+          .select({ id: timesheetEntries.id })
+          .from(timesheetEntries)
+          .where(
+            and(
+              eq(timesheetEntries.id, input.timesheetEntryId),
+              eq(timesheetEntries.businessId, businessId),
+            ),
+          ),
+      );
+      if (!entry) return null;
+      const [row] = await database
+        .insert(clockPhotos)
+        .values({ ...input, businessId })
+        .returning({ id: clockPhotos.id });
+      return row ?? null;
+    },
+
+    /** A single clock photo (bytes + mime) scoped to this business. */
+    getPhoto(id: string) {
+      return first(
+        database
+          .select({
+            mimeType: clockPhotos.mimeType,
+            imageData: clockPhotos.imageData,
+          })
+          .from(clockPhotos)
+          .where(
+            and(eq(clockPhotos.id, id), eq(clockPhotos.businessId, businessId)),
+          ),
+      );
+    },
+
+    /**
+     * Timesheet entries whose clock-in falls in [startUtc, endUtc), newest
+     * first, each with the staff name and the linked rostered shift (if any).
+     * Powers the owner's timesheets view; photos are fetched separately.
+     */
+    listEntriesBetween(startUtc: Date, endUtc: Date) {
+      return database
+        .select({
+          id: timesheetEntries.id,
+          staffMemberId: timesheetEntries.staffMemberId,
+          staffName: staffMembers.name,
+          clockInAt: timesheetEntries.clockInAt,
+          clockOutAt: timesheetEntries.clockOutAt,
+          approved: timesheetEntries.approved,
+          shiftId: timesheetEntries.shiftId,
+          shiftLabel: shifts.label,
+          shiftDate: shifts.date,
+          shiftStartTime: shifts.startTime,
+          shiftEndTime: shifts.endTime,
+        })
+        .from(timesheetEntries)
+        .innerJoin(
+          staffMembers,
+          eq(staffMembers.id, timesheetEntries.staffMemberId),
+        )
+        .leftJoin(shifts, eq(shifts.id, timesheetEntries.shiftId))
+        .where(
+          and(
+            eq(timesheetEntries.businessId, businessId),
+            gte(timesheetEntries.clockInAt, startUtc),
+            lt(timesheetEntries.clockInAt, endUtc),
+          ),
+        )
+        .orderBy(desc(timesheetEntries.clockInAt));
+    },
+
+    /**
+     * Photo metadata (id + kind) for a set of entries, so the owner view can
+     * render thumbnails. Bytes are streamed separately via getPhoto.
+     */
+    listPhotosForEntries(entryIds: string[]) {
+      if (entryIds.length === 0)
+        return Promise.resolve(
+          [] as { id: string; timesheetEntryId: string; kind: "in" | "out" }[],
+        );
+      return database
+        .select({
+          id: clockPhotos.id,
+          timesheetEntryId: clockPhotos.timesheetEntryId,
+          kind: clockPhotos.kind,
+        })
+        .from(clockPhotos)
+        .where(
+          and(
+            eq(clockPhotos.businessId, businessId),
+            inArray(clockPhotos.timesheetEntryId, entryIds),
+          ),
+        )
+        .orderBy(asc(clockPhotos.createdAt));
+    },
+
+    getEntry(id: string) {
+      return first(
+        database
+          .select()
+          .from(timesheetEntries)
+          .where(
+            and(
+              eq(timesheetEntries.id, id),
+              eq(timesheetEntries.businessId, businessId),
+            ),
+          ),
+      );
+    },
+
+    async updateEntry(
+      id: string,
+      input: { clockInAt: Date; clockOutAt: Date | null },
+    ) {
+      const [row] = await database
+        .update(timesheetEntries)
+        .set({ ...input, updatedAt: new Date() })
+        .where(
+          and(
+            eq(timesheetEntries.id, id),
+            eq(timesheetEntries.businessId, businessId),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    async setEntryApproved(id: string, approved: boolean) {
+      const [row] = await database
+        .update(timesheetEntries)
+        .set({ approved, updatedAt: new Date() })
+        .where(
+          and(
+            eq(timesheetEntries.id, id),
+            eq(timesheetEntries.businessId, businessId),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    async deleteEntry(id: string) {
+      await database
+        .delete(timesheetEntries)
+        .where(
+          and(
+            eq(timesheetEntries.id, id),
+            eq(timesheetEntries.businessId, businessId),
+          ),
+        );
+    },
+
+    /**
+     * The id of a rostered shift for this staff member on a business-local date
+     * — but only from a published period (a confirmed assignment in a period
+     * with a published roster). Returns null when there's no scheduled shift;
+     * clock-in never requires one, it just links when a match exists.
+     */
+    async findRosteredShiftForStaffOnDate(
+      staffMemberId: string,
+      dateStr: string,
+    ) {
+      const row = await first(
+        database
+          .select({ shiftId: shifts.id })
+          .from(rosterAssignments)
+          .innerJoin(shifts, eq(rosterAssignments.shiftId, shifts.id))
+          .innerJoin(
+            publishedRosters,
+            eq(publishedRosters.rosterPeriodId, shifts.rosterPeriodId),
+          )
+          .where(
+            and(
+              eq(rosterAssignments.businessId, businessId),
+              eq(rosterAssignments.staffMemberId, staffMemberId),
+              eq(rosterAssignments.status, "confirmed"),
+              eq(shifts.date, dateStr),
+            ),
+          )
+          .orderBy(asc(shifts.startTime))
+          .limit(1),
+      );
+      return row?.shiftId ?? null;
     },
 
     /* ----- Published rosters ----- */
