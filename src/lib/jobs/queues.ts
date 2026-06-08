@@ -4,6 +4,7 @@ export const QUEUES = {
   availabilityRequest: "availability-request",
   availabilityReminder: "availability-reminder",
   publishedRoster: "published-roster",
+  photoRetention: "photo-retention",
 } as const;
 
 /** Sends one staff member their availability magic link. */
@@ -27,3 +28,9 @@ export type PublishedRosterJob = {
   rosterPeriodId: string;
   staffMemberId: string;
 };
+
+/**
+ * Daily sweep that purges clock-in photos past each business's retention
+ * period. Cron-scheduled (no payload); see CLAUDE.md "Clock-in photos".
+ */
+export type PhotoRetentionJob = Record<string, never>;

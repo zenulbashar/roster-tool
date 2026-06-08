@@ -223,3 +223,23 @@ export async function handlePublishedRoster(
 
   await deps.send(email);
 }
+
+/**
+ * Daily sweep: delete clock-in photos past each business's retention period.
+ *
+ * Iterates every business and runs its own tenant-scoped sweep, so each
+ * business's `photoRetentionDays` is respected and deletions never cross
+ * tenants. Only `clock_photo` rows are removed — timesheet entries/hours are
+ * kept. Idempotent, so re-running (or a retry) is safe.
+ */
+export async function handlePhotoRetention(now: Date = new Date()): Promise<void> {
+  const rows = await db.select({ id: businesses.id }).from(businesses);
+  let purged = 0;
+  for (const { id } of rows) {
+    purged += await createTenantRepo(id).deleteExpiredPhotos(now);
+  }
+  logger.info(
+    { businesses: rows.length, photosPurged: purged },
+    "Clock-in photo retention sweep complete",
+  );
+}
