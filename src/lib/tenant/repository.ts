@@ -845,8 +845,8 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
 
     /**
      * Timesheet entries whose clock-in falls in [startUtc, endUtc), newest
-     * first, each with the staff name, the linked rostered shift (if any), and
-     * whether photos are attached. Powers the owner's timesheets view.
+     * first, each with the staff name and the linked rostered shift (if any).
+     * Powers the owner's timesheets view; photos are fetched separately.
      */
     listEntriesBetween(startUtc: Date, endUtc: Date) {
       return database
@@ -862,10 +862,6 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           shiftDate: shifts.date,
           shiftStartTime: shifts.startTime,
           shiftEndTime: shifts.endTime,
-          photoCount: sql<number>`(
-            select count(*)::int from ${clockPhotos}
-            where ${clockPhotos.timesheetEntryId} = ${timesheetEntries.id}
-          )`,
         })
         .from(timesheetEntries)
         .innerJoin(
@@ -881,6 +877,31 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           ),
         )
         .orderBy(desc(timesheetEntries.clockInAt));
+    },
+
+    /**
+     * Photo metadata (id + kind) for a set of entries, so the owner view can
+     * render thumbnails. Bytes are streamed separately via getPhoto.
+     */
+    listPhotosForEntries(entryIds: string[]) {
+      if (entryIds.length === 0)
+        return Promise.resolve(
+          [] as { id: string; timesheetEntryId: string; kind: "in" | "out" }[],
+        );
+      return database
+        .select({
+          id: clockPhotos.id,
+          timesheetEntryId: clockPhotos.timesheetEntryId,
+          kind: clockPhotos.kind,
+        })
+        .from(clockPhotos)
+        .where(
+          and(
+            eq(clockPhotos.businessId, businessId),
+            inArray(clockPhotos.timesheetEntryId, entryIds),
+          ),
+        )
+        .orderBy(asc(clockPhotos.createdAt));
     },
 
     getEntry(id: string) {
