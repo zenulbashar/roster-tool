@@ -18,6 +18,12 @@ import {
   submitStaffLeave,
   type LeaveSubmitResult,
 } from "@/lib/leave-submission";
+import {
+  releaseShiftForStaff,
+  claimShiftForStaff,
+  withdrawOwnOffer,
+  type ShiftActionResult,
+} from "@/lib/shift-offer-submission";
 
 export type ClockResult =
   | { status: "idle" }
@@ -170,4 +176,45 @@ export async function kioskLeaveAction(
     };
   }
   return submitStaffLeave(createTenantRepo(business.businessId), formData);
+}
+
+/** Resolve the kiosk business from the cookie, or null. */
+async function kioskRepo() {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(KIOSK_COOKIE)?.value ?? "";
+  const business = await resolveKioskBusiness(token);
+  return business ? createTenantRepo(business.businessId) : null;
+}
+
+const KIOSK_LINK_GONE =
+  "This kiosk link is no longer active. Ask your manager.";
+
+/** Offer up a shift from the shared kiosk (PIN, no geofence). */
+export async function kioskReleaseAction(
+  _prev: ShiftActionResult,
+  formData: FormData,
+): Promise<ShiftActionResult> {
+  const repo = await kioskRepo();
+  if (!repo) return { status: "error", message: KIOSK_LINK_GONE };
+  return releaseShiftForStaff(repo, formData);
+}
+
+/** Claim an open shift from the shared kiosk. */
+export async function kioskClaimAction(
+  _prev: ShiftActionResult,
+  formData: FormData,
+): Promise<ShiftActionResult> {
+  const repo = await kioskRepo();
+  if (!repo) return { status: "error", message: KIOSK_LINK_GONE };
+  return claimShiftForStaff(repo, formData);
+}
+
+/** Cancel your own still-open offer from the shared kiosk. */
+export async function kioskCancelOfferAction(
+  _prev: ShiftActionResult,
+  formData: FormData,
+): Promise<ShiftActionResult> {
+  const repo = await kioskRepo();
+  if (!repo) return { status: "error", message: KIOSK_LINK_GONE };
+  return withdrawOwnOffer(repo, formData);
 }

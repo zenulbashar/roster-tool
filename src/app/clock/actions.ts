@@ -19,6 +19,12 @@ import {
   submitStaffLeave,
   type LeaveSubmitResult,
 } from "@/lib/leave-submission";
+import {
+  releaseShiftForStaff,
+  claimShiftForStaff,
+  withdrawOwnOffer,
+  type ShiftActionResult,
+} from "@/lib/shift-offer-submission";
 
 export type ClockResult =
   | { status: "idle" }
@@ -205,4 +211,44 @@ export async function personalClockLeaveAction(
     };
   }
   return submitStaffLeave(createTenantRepo(business.businessId), formData);
+}
+
+/** Resolve the personal-clock business from the cookie, or null. */
+async function personalClockRepo() {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(PERSONAL_CLOCK_COOKIE)?.value ?? "";
+  const business = await resolvePersonalClockBusiness(token);
+  return business ? createTenantRepo(business.businessId) : null;
+}
+
+const LINK_GONE = "This clock-in link is no longer active. Ask your manager.";
+
+/** Offer up a shift from a staff member's own phone (PIN, no geofence). */
+export async function personalClockReleaseAction(
+  _prev: ShiftActionResult,
+  formData: FormData,
+): Promise<ShiftActionResult> {
+  const repo = await personalClockRepo();
+  if (!repo) return { status: "error", message: LINK_GONE };
+  return releaseShiftForStaff(repo, formData);
+}
+
+/** Claim an open shift from a staff member's own phone. */
+export async function personalClockClaimAction(
+  _prev: ShiftActionResult,
+  formData: FormData,
+): Promise<ShiftActionResult> {
+  const repo = await personalClockRepo();
+  if (!repo) return { status: "error", message: LINK_GONE };
+  return claimShiftForStaff(repo, formData);
+}
+
+/** Cancel your own still-open offer from a staff member's own phone. */
+export async function personalClockCancelOfferAction(
+  _prev: ShiftActionResult,
+  formData: FormData,
+): Promise<ShiftActionResult> {
+  const repo = await personalClockRepo();
+  if (!repo) return { status: "error", message: LINK_GONE };
+  return withdrawOwnOffer(repo, formData);
 }

@@ -6,14 +6,41 @@ import { PERSONAL_CLOCK_COOKIE } from "@/lib/kiosk-cookie";
 import { Banner, Card } from "@/components/ui";
 import { PersonalClockForm } from "@/components/PersonalClockForm";
 import { LeaveRequestForm } from "@/components/LeaveRequestForm";
-import { personalClockLeaveAction } from "@/app/clock/actions";
+import { PinActionForm } from "@/components/PinActionForm";
+import {
+  MyShiftsList,
+  OpenShiftsList,
+  StaffShiftMenu,
+  StaffShiftBackLinks,
+} from "@/components/StaffShiftLists";
+import {
+  personalClockLeaveAction,
+  personalClockReleaseAction,
+  personalClockClaimAction,
+  personalClockCancelOfferAction,
+} from "@/app/clock/actions";
+import { businessDateOf, formatDateOnly, formatTimeOnly } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
+
+function shiftDetail(s: {
+  date: string;
+  label: string;
+  startTime: string;
+  endTime: string;
+}) {
+  return `${formatDateOnly(s.date)} · ${s.label} · ${formatTimeOnly(s.startTime)} – ${formatTimeOnly(s.endTime)}`;
+}
 
 export default async function PersonalClockPage({
   searchParams,
 }: {
-  searchParams: Promise<{ staff?: string; mode?: string }>;
+  searchParams: Promise<{
+    staff?: string;
+    mode?: string;
+    shift?: string;
+    offer?: string;
+  }>;
 }) {
   const cookieStore = await cookies();
   const token = cookieStore.get(PERSONAL_CLOCK_COOKIE)?.value ?? "";
@@ -36,23 +63,127 @@ export default async function PersonalClockPage({
 
   const repo = createTenantRepo(business.businessId);
   const staff = await repo.listActiveStaffForKiosk();
-  const { staff: selectedId, mode } = await searchParams;
+  const {
+    staff: selectedId,
+    mode,
+    shift: shiftParam,
+    offer: offerParam,
+  } = await searchParams;
   const selected = selectedId
     ? staff.find((s) => s.id === selectedId)
     : undefined;
 
-  if (selected && mode === "leave") {
-    return (
-      <LeaveRequestForm
-        action={personalClockLeaveAction}
-        staffId={selected.id}
-        staffName={selected.name}
-        backHref="/clock"
-      />
-    );
-  }
-
   if (selected) {
+    const myShiftsHref = `/clock?staff=${selected.id}&mode=myshifts`;
+
+    if (mode === "leave") {
+      return (
+        <LeaveRequestForm
+          action={personalClockLeaveAction}
+          staffId={selected.id}
+          staffName={selected.name}
+          backHref="/clock"
+        />
+      );
+    }
+
+    if (mode === "myshifts") {
+      const today = businessDateOf(new Date(), business.timezone);
+      const shifts = await repo.listUpcomingShiftsForStaff(selected.id, today);
+      return (
+        <>
+          <header className="mb-4 text-center">
+            <h1 className="text-2xl font-bold">
+              {selected.name}&apos;s shifts
+            </h1>
+            <p className="mt-1 text-[var(--color-muted)]">
+              Offer up a shift you can&apos;t make. You stay on it until your
+              manager confirms a replacement.
+            </p>
+          </header>
+          <MyShiftsList
+            shifts={shifts}
+            basePath="/clock"
+            staffId={selected.id}
+          />
+          <StaffShiftBackLinks basePath="/clock" staffId={selected.id} />
+        </>
+      );
+    }
+
+    if (mode === "open") {
+      const offers = await repo.listOpenOffers();
+      return (
+        <>
+          <header className="mb-4 text-center">
+            <h1 className="text-2xl font-bold">Open shifts</h1>
+            <p className="mt-1 text-[var(--color-muted)]">
+              Shifts up for grabs. Claim one and your manager will confirm it.
+            </p>
+          </header>
+          <OpenShiftsList
+            offers={offers}
+            basePath="/clock"
+            staffId={selected.id}
+          />
+          <StaffShiftBackLinks basePath="/clock" staffId={selected.id} />
+        </>
+      );
+    }
+
+    if (mode === "release" && shiftParam) {
+      const shift = await repo.getPublishedShift(shiftParam);
+      if (shift) {
+        return (
+          <PinActionForm
+            action={personalClockReleaseAction}
+            heading="Offer up this shift?"
+            details={shiftDetail(shift)}
+            hiddenName="shiftId"
+            hiddenValue={shift.id}
+            submitLabel="Offer it up"
+            backHref={myShiftsHref}
+          />
+        );
+      }
+    }
+
+    if (mode === "claim" && offerParam) {
+      const offer = await repo.getOffer(offerParam);
+      const shift = offer ? await repo.getPublishedShift(offer.shiftId) : null;
+      if (offer && offer.status === "open" && shift) {
+        return (
+          <PinActionForm
+            action={personalClockClaimAction}
+            heading="Claim this shift?"
+            details={shiftDetail(shift)}
+            hiddenName="offerId"
+            hiddenValue={offer.id}
+            submitLabel="Claim it"
+            backHref={`/clock?staff=${selected.id}&mode=open`}
+          />
+        );
+      }
+    }
+
+    if (mode === "cancel" && offerParam) {
+      const offer = await repo.getOffer(offerParam);
+      const shift = offer ? await repo.getPublishedShift(offer.shiftId) : null;
+      if (offer && offer.status === "open" && shift) {
+        return (
+          <PinActionForm
+            action={personalClockCancelOfferAction}
+            heading="Cancel this offer?"
+            details={shiftDetail(shift)}
+            hiddenName="offerId"
+            hiddenValue={offer.id}
+            submitLabel="Cancel offer"
+            backHref={myShiftsHref}
+          />
+        );
+      }
+    }
+
     const open = await repo.getOpenEntry(selected.id);
     return (
       <>
@@ -62,14 +193,7 @@ export default async function PersonalClockPage({
           currentlyIn={open !== null}
           locationConfigured={locationConfigured}
         />
-        <p className="mt-4 text-center">
-          <Link
-            href={`/clock?staff=${selected.id}&mode=leave`}
-            className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
-          >
-            Request leave instead
-          </Link>
-        </p>
+        <StaffShiftMenu basePath="/clock" staffId={selected.id} />
       </>
     );
   }
