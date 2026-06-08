@@ -6,6 +6,7 @@ import { createTenantRepo } from "@/lib/tenant/repository";
 import { generateSlug } from "@/lib/tokens";
 import { enqueuePublishedRoster } from "@/lib/jobs/boss";
 import { buildDraft, draftSummary } from "@/lib/draft";
+import { makeOnLeaveLookup } from "@/lib/leave";
 import { formatDateOnly, formatTimeOnly } from "@/lib/time";
 import { periodStatusLabel, rosterBuildVerb } from "@/lib/labels";
 import { Banner, Button, Card, PageHeader } from "@/components/ui";
@@ -32,7 +33,7 @@ export default async function BuildRosterPage({
   const period = await repo.getPeriod(id);
   if (!period) notFound();
 
-  const [shifts, staff, responses, assignments, requests, published] =
+  const [shifts, staff, responses, assignments, requests, published, leave] =
     await Promise.all([
       repo.listShifts(id),
       repo.listStaff({ activeOnly: true }),
@@ -40,7 +41,12 @@ export default async function BuildRosterPage({
       repo.listAssignments(id),
       repo.listRequests(id),
       repo.getPublished(id),
+      repo.listApprovedLeaveBetween(period.startDate, period.endDate),
     ]);
+
+  // Is this staff member on approved leave on a given day? Used to flag (not
+  // block) on-leave staff in the picker.
+  const onLeave = makeOnLeaveLookup(leave);
 
   // Move the period into "building" the first time the owner opens the builder.
   if (period.status === "collecting") {
@@ -111,11 +117,13 @@ export default async function BuildRosterPage({
       redirect(`/app/periods/${id}/build?drafted=none`);
     }
 
-    const [currentShifts, lastAssignments, responses] = await Promise.all([
-      repo.listShifts(id),
-      repo.assignmentsWithShiftType(last.id),
-      repo.listResponses(id),
-    ]);
+    const [currentShifts, lastAssignments, responses, leave] =
+      await Promise.all([
+        repo.listShifts(id),
+        repo.assignmentsWithShiftType(last.id),
+        repo.listResponses(id),
+        repo.listApprovedLeaveBetween(period.startDate, period.endDate),
+      ]);
 
     // Available = an explicit "yes" response (staff reply or manual pre-fill).
     const availSet = new Set(
@@ -124,10 +132,18 @@ export default async function BuildRosterPage({
         .map((r) => `${r.shiftId}:${r.staffMemberId}`),
     );
 
+    // Don't suggest anyone on approved leave on the shift's day.
+    const onLeave = makeOnLeaveLookup(leave);
+    const shiftDate = new Map(currentShifts.map((s) => [s.id, s.date]));
+
     const { suggestions, counts } = buildDraft({
       currentShifts,
       lastAssignments,
       isAvailable: (shiftId, staffId) => availSet.has(`${shiftId}:${staffId}`),
+      isOnLeave: (shiftId, staffId) => {
+        const date = shiftDate.get(shiftId);
+        return date ? onLeave(staffId, date) : false;
+      },
     });
 
     await repo.createSuggestedAssignments(suggestions);
@@ -234,7 +250,9 @@ export default async function BuildRosterPage({
         {respondedCount} of {requests.length} replied. Tap a name to put them on
         a shift. <span className="text-[var(--color-ok)]">Green</span> = free,{" "}
         <span className="text-[var(--color-danger)]">red</span> = can&rsquo;t,
-        grey = no reply yet.
+        grey = no reply yet,{" "}
+        <span className="text-[var(--color-warn)]">amber</span> = on approved
+        leave (you can still assign them if you need to).
       </p>
 
       {drafted === "none" ? (
@@ -282,10 +300,15 @@ export default async function BuildRosterPage({
               {dayShifts.map((s) => {
                 const confirmedSet = confirmed.get(s.id) ?? new Set<string>();
                 const suggestedSet = suggested.get(s.id) ?? new Set<string>();
-                // Show free + already-assigned + no-reply first; can'ts last.
+                // Show free + already-assigned + no-reply first; can'ts and
+                // on-leave staff last.
                 const ordered = [...staff].sort((a, b) => {
                   const rank = (st: string) =>
-                    availabilityOf(s.id, st) === "no" ? 1 : 0;
+                    onLeave(st, s.date)
+                      ? 2
+                      : availabilityOf(s.id, st) === "no"
+                        ? 1
+                        : 0;
                   return rank(a.id) - rank(b.id);
                 });
                 return (
@@ -305,6 +328,7 @@ export default async function BuildRosterPage({
                         const isPrefilled = prefilled.has(
                           `${s.id}:${member.id}`,
                         );
+                        const isOnLeave = onLeave(member.id, s.date);
                         const marker =
                           a === "yes" ? "✓" : a === "no" ? "✗" : "?";
 
@@ -363,11 +387,13 @@ export default async function BuildRosterPage({
 
                         const tone = isConfirmed
                           ? "bg-[var(--color-brand)] text-white border-[var(--color-brand)]"
-                          : a === "yes"
-                            ? "border-[var(--color-ok)] text-[var(--color-ok)]"
-                            : a === "no"
-                              ? "border-[var(--color-danger)] text-[var(--color-danger)]"
-                              : "border-[var(--color-line)] text-[var(--color-muted)]";
+                          : isOnLeave
+                            ? "border-[var(--color-warn)] text-[var(--color-warn)]"
+                            : a === "yes"
+                              ? "border-[var(--color-ok)] text-[var(--color-ok)]"
+                              : a === "no"
+                                ? "border-[var(--color-danger)] text-[var(--color-danger)]"
+                                : "border-[var(--color-line)] text-[var(--color-muted)]";
                         return (
                           <form key={member.id} action={toggleAssign}>
                             <input type="hidden" name="shiftId" value={s.id} />
@@ -388,6 +414,11 @@ export default async function BuildRosterPage({
                             >
                               {member.name}{" "}
                               <span aria-hidden="true">{marker}</span>
+                              {isOnLeave ? (
+                                <span className="ml-1 rounded bg-[var(--color-warn)] px-1 py-0.5 text-[10px] font-semibold text-white">
+                                  On leave
+                                </span>
+                              ) : null}
                               {isPrefilled && !isConfirmed ? (
                                 <span className="ml-1 rounded bg-[var(--color-ok)] px-1 py-0.5 text-[10px] font-semibold text-white">
                                   Pre-filled
