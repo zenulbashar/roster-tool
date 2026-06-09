@@ -127,7 +127,12 @@ describe("buildImportPreview", () => {
         unit: "each",
         supplierId: "sup-dairy",
       },
-      { name: "Beans 1kg", skuCode: "BN-1", unit: "kg", supplierId: "sup-bean" },
+      {
+        name: "Beans 1kg",
+        skuCode: "BN-1",
+        unit: "kg",
+        supplierId: "sup-bean",
+      },
     ]);
   });
 
