@@ -6,4 +6,5 @@ export {
   leaveDecisionEmail,
   shiftClaimApprovedEmail,
   shiftCoveredEmail,
+  certificationReminderEmail,
 } from "./templates";

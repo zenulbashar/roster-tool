@@ -210,6 +210,55 @@ export function shiftCoveredEmail(input: {
   };
 }
 
+export function certificationReminderEmail(input: {
+  businessName: string;
+  items: Array<{
+    staffName: string;
+    certName: string;
+    /** "expires in 7 days" / "expires today" / "expired 3 days ago" */
+    phrase: string;
+    /** "Mon 09/06" */
+    expiryText: string;
+  }>;
+}): OutgoingEmail {
+  const { businessName, items } = input;
+  const n = items.length;
+  const countText = `${n} certification${n === 1 ? "" : "s"}`;
+
+  const listHtml = `<ul style="padding-left:18px;margin:12px 0;">${items
+    .map(
+      (i) =>
+        `<li style="margin:4px 0;"><strong>${i.staffName}</strong> — ${i.certName} ${i.phrase} (${i.expiryText})</li>`,
+    )
+    .join("")}</ul>`;
+
+  const listText = items
+    .map(
+      (i) => `  • ${i.staffName} — ${i.certName} ${i.phrase} (${i.expiryText})`,
+    )
+    .join("\n");
+
+  return {
+    to: "",
+    subject: `${countText} need attention — ${businessName}`,
+    html: layout({
+      heading: "Certifications to check",
+      bodyHtml: `<p>${countText} for your team ${n === 1 ? "is" : "are"} expiring soon or have expired:</p>${listHtml}<p>Update them in your roster tool under Certifications.</p>`,
+      footer:
+        "You're getting this because you manage this business. We send one reminder per stage (early, final, and on expiry).",
+    }),
+    text: [
+      "Certifications to check",
+      "",
+      `${countText} for your team need attention:`,
+      "",
+      listText,
+      "",
+      "Update them in your roster tool under Certifications.",
+    ].join("\n"),
+  };
+}
+
 export function reminderEmail(input: {
   businessName: string;
   staffName: string;

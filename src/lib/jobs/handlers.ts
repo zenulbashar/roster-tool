@@ -9,6 +9,7 @@ import {
   leaveRequests,
   shiftOffers,
   shifts,
+  users,
 } from "@/lib/db/schema";
 import {
   sendEmail,
@@ -18,6 +19,7 @@ import {
   leaveDecisionEmail,
   shiftClaimApprovedEmail,
   shiftCoveredEmail,
+  certificationReminderEmail,
 } from "@/lib/email";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { publishedRosters } from "@/lib/db/schema";
@@ -27,8 +29,10 @@ import {
   formatDateOnly,
   formatDateRange,
   formatTimeOnly,
+  businessDateOf,
 } from "@/lib/time";
-import { leaveTypeLabel } from "@/lib/labels";
+import { leaveTypeLabel, certDisplayLabel } from "@/lib/labels";
+import { dueReminderStage, daysUntil, expiryPhrase } from "@/lib/certification";
 import { logger } from "@/lib/logger";
 import type {
   AvailabilityRequestJob,
@@ -400,6 +404,88 @@ export async function handleShiftOfferDecision(
   await createTenantRepo(row.businessId).markOfferDecisionNotified(
     payload.shiftOfferId,
   );
+}
+
+/**
+ * Daily sweep: per business, email the OWNER a digest of certifications that
+ * have crossed a reminder threshold (early at the lead time, final at 7 days,
+ * or on/after expiry).
+ *
+ * Idempotent per certification via `last_reminder_stage`: each stage emails at
+ * most once, so re-running the same day (or on consecutive days) doesn't resend.
+ * The send happens BEFORE advancing the cursor, and cursors are advanced
+ * per-business, so a mid-loop failure retries without double-sending earlier
+ * businesses. Only active staff's certs are considered. Tenant-scoped per
+ * business. Returns the number of reminder lines sent (for tests/logging).
+ */
+export async function handleCertificationReminders(
+  now: Date = new Date(),
+  deps: HandlerDeps = defaultDeps,
+): Promise<number> {
+  const bizRows = await db
+    .select({
+      id: businesses.id,
+      name: businesses.name,
+      timezone: businesses.timezone,
+      leadDays: businesses.certReminderLeadDays,
+    })
+    .from(businesses);
+
+  let totalSent = 0;
+  let businessesEmailed = 0;
+
+  for (const biz of bizRows) {
+    const ownerEmails = (
+      await db
+        .select({ email: users.email })
+        .from(users)
+        .where(eq(users.businessId, biz.id))
+    ).map((u) => u.email);
+    if (ownerEmails.length === 0) continue;
+
+    const today = businessDateOf(now, biz.timezone);
+    const repo = createTenantRepo(biz.id);
+    const certs = await repo.listCertifications({ activeOnly: true });
+
+    const due = certs.flatMap((c) => {
+      const stage = dueReminderStage(
+        c.expiryDate,
+        today,
+        biz.leadDays,
+        c.lastReminderStage,
+      );
+      return stage ? [{ cert: c, stage }] : [];
+    });
+    if (due.length === 0) continue;
+
+    const items = due.map(({ cert }) => ({
+      staffName: cert.staffName,
+      certName: certDisplayLabel(cert.certType, cert.certLabel),
+      phrase: expiryPhrase(daysUntil(cert.expiryDate, today)),
+      expiryText: formatDateOnly(cert.expiryDate),
+    }));
+
+    const email = certificationReminderEmail({
+      businessName: biz.name,
+      items,
+    });
+    for (const to of ownerEmails) {
+      await deps.send({ ...email, to });
+    }
+
+    // Advance cursors only after a successful send.
+    for (const { cert, stage } of due) {
+      await repo.updateCertReminderStage(cert.id, stage);
+    }
+    totalSent += due.length;
+    businessesEmailed += 1;
+  }
+
+  logger.info(
+    { businessesEmailed, remindersSent: totalSent },
+    "Certification reminder sweep complete",
+  );
+  return totalSent;
 }
 
 /**

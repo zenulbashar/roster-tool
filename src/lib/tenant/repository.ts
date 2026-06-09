@@ -27,8 +27,10 @@ import {
   clockPhotos,
   leaveRequests,
   shiftOffers,
+  staffCertifications,
 } from "@/lib/db/schema";
-import type { LeaveType } from "@/lib/validation";
+import type { LeaveType, CertTypeInput } from "@/lib/validation";
+import type { ReminderStage } from "@/lib/certification";
 import {
   claimEligibility,
   ACTIVE_OFFER_STATUSES,
@@ -774,6 +776,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         longitude: number | null;
         geofenceRadiusM: number;
         personalClockTokenHash: string | null;
+        certReminderLeadDays: number;
       }>,
     ) {
       const [row] = await database
@@ -1302,6 +1305,152 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             eq(leaveRequests.businessId, businessId),
           ),
         );
+    },
+
+    /* ----- Certifications (expiry tracking; flagged, never enforced) ----- */
+
+    /**
+     * Certifications for the business with the staff member's name + active
+     * flag, soonest expiry first. `activeOnly` (default true) drops certs for
+     * deactivated staff — used by both the owner overview and the reminder job.
+     */
+    listCertifications({ activeOnly = true } = {}) {
+      const conds = [eq(staffCertifications.businessId, businessId)];
+      if (activeOnly) conds.push(eq(staffMembers.active, true));
+      return database
+        .select({
+          id: staffCertifications.id,
+          staffMemberId: staffCertifications.staffMemberId,
+          staffName: staffMembers.name,
+          staffActive: staffMembers.active,
+          certType: staffCertifications.certType,
+          certLabel: staffCertifications.certLabel,
+          referenceNumber: staffCertifications.referenceNumber,
+          expiryDate: staffCertifications.expiryDate,
+          lastReminderStage: staffCertifications.lastReminderStage,
+        })
+        .from(staffCertifications)
+        .innerJoin(
+          staffMembers,
+          eq(staffMembers.id, staffCertifications.staffMemberId),
+        )
+        .where(and(...conds))
+        .orderBy(asc(staffCertifications.expiryDate), asc(staffMembers.name));
+    },
+
+    getCertification(id: string) {
+      return first(
+        database
+          .select()
+          .from(staffCertifications)
+          .where(
+            and(
+              eq(staffCertifications.id, id),
+              eq(staffCertifications.businessId, businessId),
+            ),
+          ),
+      );
+    },
+
+    /**
+     * Add a certification. Validates the staff member belongs to this business
+     * first (returns null otherwise), so a foreign/client-supplied staff id can
+     * never create a row. Forces `business_id`; `last_reminder_stage` starts null.
+     */
+    async addCertification(input: {
+      staffMemberId: string;
+      certType: CertTypeInput;
+      certLabel?: string | null;
+      referenceNumber?: string | null;
+      expiryDate: string;
+    }) {
+      const member = await first(
+        database
+          .select({ id: staffMembers.id })
+          .from(staffMembers)
+          .where(
+            and(
+              eq(staffMembers.id, input.staffMemberId),
+              eq(staffMembers.businessId, businessId),
+            ),
+          ),
+      );
+      if (!member) return null;
+      const [row] = await database
+        .insert(staffCertifications)
+        .values({
+          businessId,
+          staffMemberId: input.staffMemberId,
+          certType: input.certType,
+          certLabel: input.certLabel ?? null,
+          referenceNumber: input.referenceNumber ?? null,
+          expiryDate: input.expiryDate,
+        })
+        .returning();
+      return row ?? null;
+    },
+
+    /**
+     * Update a certification. When the expiry date changes, the reminder cursor
+     * (`last_reminder_stage`) is reset to null so a renewed cert re-arms its
+     * reminders. Scoped to this business.
+     */
+    async updateCertification(
+      id: string,
+      input: {
+        certType: CertTypeInput;
+        certLabel?: string | null;
+        referenceNumber?: string | null;
+        expiryDate: string;
+      },
+    ) {
+      const existing = await this.getCertification(id);
+      if (!existing) return null;
+      const expiryChanged = existing.expiryDate !== input.expiryDate;
+      const [row] = await database
+        .update(staffCertifications)
+        .set({
+          certType: input.certType,
+          certLabel: input.certLabel ?? null,
+          referenceNumber: input.referenceNumber ?? null,
+          expiryDate: input.expiryDate,
+          ...(expiryChanged ? { lastReminderStage: null } : {}),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(staffCertifications.id, id),
+            eq(staffCertifications.businessId, businessId),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    async deleteCertification(id: string) {
+      await database
+        .delete(staffCertifications)
+        .where(
+          and(
+            eq(staffCertifications.id, id),
+            eq(staffCertifications.businessId, businessId),
+          ),
+        );
+    },
+
+    /** Advance a certification's reminder cursor after an email is sent. */
+    async updateCertReminderStage(id: string, stage: ReminderStage) {
+      const [row] = await database
+        .update(staffCertifications)
+        .set({ lastReminderStage: stage, updatedAt: new Date() })
+        .where(
+          and(
+            eq(staffCertifications.id, id),
+            eq(staffCertifications.businessId, businessId),
+          ),
+        )
+        .returning();
+      return row ?? null;
     },
 
     /* ----- Shift offers (release → claim → owner approves) ----- */

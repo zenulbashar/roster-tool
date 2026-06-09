@@ -20,7 +20,8 @@ per-staff PINs **and** a personal-phone GPS-checked mode) feeding owner-facing
 timesheets, per-employee pay rates, a CSV export of approved hours, staff
 **leave requests** with owner approval (record only — see below), and
 **shift swaps / open shifts** (one-directional release → claim → owner
-approves — see below).
+approves — see below), and **certification / qualification tracking** with
+owner expiry reminders (flagged, never enforced — see below).
 
 **Out of scope (post-MVP):** SMS/WhatsApp, **payroll / wage calculation**
 (award interpretation, penalty rates, overtime, loading, super, STP — the app
@@ -30,6 +31,9 @@ estimate), **payroll API integration** (Xero/MYOB — file export only),
 calculation** (leave is request → approve/deny → record only),
 **bilateral A↔B shift swaps** and **auto-approval** of swaps (the owner always
 approves the handover; only one-directional release/claim is built),
+**certificate document upload/storage** and any **hard enforcement** of
+certification expiry (certs are text + dates, flagged and reminded only — they
+never block rostering or clock-in),
 free-text reply parsing, billing, native apps,
 continuous/background location tracking. If a request drifts here, flag it
 rather than silently building it.
@@ -168,6 +172,28 @@ owner approval, not payroll export.
     `decision_notified_at`. Deny/withdraw send no email.
   - **Builder visibility**: shifts with an active offer show an
     **"Offered"**/**"Claimed"** marker; the handover only happens on approval.
+- **Certification / qualification tracking**: each staff member can carry
+  certifications (`rsa`/`rsg`/`food_safety`/`first_aid`/`wwcc`/`other`) with an
+  `expiry_date`, an optional label (required for `other`) and reference number.
+  **Text + dates only — NO document upload/storage.** Expiry is **flagged and
+  reminded only, NEVER enforced** (it never blocks rostering, clock-in or
+  anything else), and there's **no award/compliance interpretation** beyond the
+  expiry date.
+  - **Owner management + overview** live on `/app/certifications` (in the nav):
+    add/edit/delete certs (tenant-scoped `ownerRepo()` actions, zod-validated),
+    a list sorted by soonest expiry with a **Valid / Expiring soon / Expired**
+    badge each, and a 30/60/90 reminder lead-time selector saved on the
+    business. Day-of-expiry counts as **Expired** (badge and the expired alert
+    aligned).
+  - **Daily reminder job** (`cert-reminder`, scheduled 02:00 UTC in the worker
+    boot path beside photo-retention) emails the **owner** a single consolidated
+    digest per business of certs crossing a threshold: an early notice at the
+    lead time (`business.cert_reminder_lead_days`, default 30), a final notice
+    at 7 days, and an alert on/after expiry. **Idempotent per cert via
+    `last_reminder_stage`** — each stage emails at most once; the cursor only
+    advances after a successful send and resets to null when the expiry date
+    changes. Only active staff's certs are considered. Pure status/stage logic
+    is in `src/lib/certification.ts`.
 
 ## Non-negotiable conventions
 
@@ -252,7 +278,8 @@ connection, the worker uses the direct connection (pg-boss needs session mode).
 `business`, `user` (owner) + Auth.js tables, `staff_member`, `shift_template`,
 `roster_period`, `shift`, `availability_request`, `availability_response`,
 `roster_assignment`, `published_roster`, `timesheet_entry`, `clock_photo`,
-`leave_request`, `shift_offer`. All domain tables are business-scoped.
+`leave_request`, `shift_offer`, `staff_certification`. All domain tables are
+business-scoped.
 
 Notable columns / conventions:
 
@@ -331,6 +358,17 @@ Notable columns / conventions:
   `src/lib/shift-offer-submission.ts`; the owner manages it on `/app/shifts`.
   **One-directional only — no bilateral A↔B swaps, no auto-approval, published
   rosters only.**
+- `staff_certification` — a qualification tracked for expiry. `cert_type`
+  (`rsa`/`rsg`/`food_safety`/`first_aid`/`wwcc`/`other`); nullable `cert_label`
+  (required by the UI for `other`) and `reference_number`; NOT-NULL
+  `expiry_date` (calendar date); `last_reminder_stage`
+  (`early`/`final`/`expired`, nullable — the reminder idempotency cursor, reset
+  to null when `expiry_date` changes). Indexed on `business_id`,
+  `staff_member_id`, `expiry_date`. `business.cert_reminder_lead_days` (NOT NULL
+  default 30; owner picks 30/60/90) is how many days before expiry the first
+  reminder fires. **Text + dates only — no documents; flagged/reminded, never
+  enforced.** Pure status/stage maths in `src/lib/certification.ts`; the daily
+  `cert-reminder` job emails the owner (see Key product decisions).
 
 ## Milestones
 
@@ -345,3 +383,4 @@ Notable columns / conventions:
 - [x] M9 — Clock-in kiosk + timesheets (PINs, brute-force guard, optional photos)
 - [x] M10 — Leave requests + owner approvals (PIN submission, decision emails, roster flagging)
 - [x] M11 — Shift swaps / open shifts (release → claim → owner-approved transfer, notifications)
+- [x] M12 — Certification tracking + daily expiry reminders (owner-managed, flagged not enforced)

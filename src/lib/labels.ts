@@ -35,3 +35,33 @@ export const LEAVE_TYPE_LABEL: Record<string, string> = {
 export function leaveTypeLabel(type: string): string {
   return LEAVE_TYPE_LABEL[type] ?? "Leave";
 }
+
+/** Friendly label for a certification type. */
+export const CERT_TYPE_LABEL: Record<string, string> = {
+  rsa: "RSA",
+  rsg: "RSG",
+  food_safety: "Food Safety",
+  first_aid: "First Aid",
+  wwcc: "Working with Children Check",
+  other: "Other",
+};
+
+export function certTypeLabel(type: string): string {
+  return CERT_TYPE_LABEL[type] ?? "Certification";
+}
+
+/**
+ * How a certification reads in the UI/email. For `other` the free label is the
+ * name; otherwise the type name, with the optional label appended.
+ */
+export function certDisplayLabel(
+  type: string,
+  label: string | null | undefined,
+): string {
+  const trimmed = label?.trim();
+  if (type === "other")
+    return trimmed && trimmed.length > 0 ? trimmed : "Other";
+  return trimmed && trimmed.length > 0
+    ? `${certTypeLabel(type)} — ${trimmed}`
+    : certTypeLabel(type);
+}

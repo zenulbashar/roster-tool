@@ -7,6 +7,7 @@ export const QUEUES = {
   photoRetention: "photo-retention",
   leaveDecision: "leave-decision",
   shiftOfferDecision: "shift-offer-decision",
+  certReminder: "cert-reminder",
 } as const;
 
 /** Sends one staff member their availability magic link. */
@@ -55,3 +56,10 @@ export type LeaveDecisionJob = {
 export type ShiftOfferDecisionJob = {
   shiftOfferId: string;
 };
+
+/**
+ * Daily sweep that, per business, emails the owner a digest of certifications
+ * crossing a reminder threshold (early / final / on-expiry). Cron-scheduled (no
+ * payload); idempotent per cert via `last_reminder_stage`.
+ */
+export type CertReminderJob = Record<string, never>;
