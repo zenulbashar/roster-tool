@@ -16,6 +16,13 @@
   --color-warn: #b45309; /* amber-700 */
   --color-danger: #b91c1c; /* red-700 */
 
+  /* Brand header only (Zaleit). Used by the owner-area header/nav — never the
+   * content areas, which stay on the white/canvas tokens above. */
+  --color-header-bg: #0f1115; /* near-black header bar */
+  --color-header-ink: #f3f4f6; /* light nav text — AA on header-bg */
+  --color-header-muted: #cbd5e1; /* secondary header text — AA on header-bg */
+  --color-accent: #76b900; /* Zaleit green — wordmark + active accent */
+
   --font-sans:
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
     Arial, sans-serif;
