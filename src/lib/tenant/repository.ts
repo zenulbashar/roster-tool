@@ -1003,6 +1003,40 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     },
 
     /**
+     * Timesheet entries whose clock-in falls in [startUtc, endUtc), with each
+     * staff member's name + pay-rate fields and the approval flag, for the
+     * hours & labour-cost report. Business-scoped and READ-ONLY; ordered by
+     * staff then time. The window bounds are derived/validated server-side —
+     * never a client-supplied business_id. Feeds the pure `aggregateLabour`.
+     */
+    listEntriesForLabourReport(startUtc: Date, endUtc: Date) {
+      return database
+        .select({
+          staffMemberId: timesheetEntries.staffMemberId,
+          staffName: staffMembers.name,
+          payRateCents: staffMembers.payRateCents,
+          rateType: staffMembers.rateType,
+          rateLabel: staffMembers.rateLabel,
+          clockInAt: timesheetEntries.clockInAt,
+          clockOutAt: timesheetEntries.clockOutAt,
+          approved: timesheetEntries.approved,
+        })
+        .from(timesheetEntries)
+        .innerJoin(
+          staffMembers,
+          eq(staffMembers.id, timesheetEntries.staffMemberId),
+        )
+        .where(
+          and(
+            eq(timesheetEntries.businessId, businessId),
+            gte(timesheetEntries.clockInAt, startUtc),
+            lt(timesheetEntries.clockInAt, endUtc),
+          ),
+        )
+        .orderBy(asc(staffMembers.name), asc(timesheetEntries.clockInAt));
+    },
+
+    /**
      * Photo metadata (id + kind) for a set of entries, so the owner view can
      * render thumbnails. Bytes are streamed separately via getPhoto.
      */
