@@ -259,6 +259,78 @@ export function certificationReminderEmail(input: {
   };
 }
 
+export function orderReminderEmail(input: {
+  businessName: string;
+  suppliers: Array<{
+    supplierName: string;
+    /** "Mon 08/06" — the upcoming delivery this order is for. */
+    deliveryText: string;
+    needsOrder: Array<{ name: string; quantity?: string | null }>;
+    low: Array<{ name: string; quantity?: string | null }>;
+  }>;
+}): OutgoingEmail {
+  const { businessName, suppliers } = input;
+  const n = suppliers.length;
+  const countText = `${n} supplier${n === 1 ? "" : "s"}`;
+
+  const itemText = (i: { name: string; quantity?: string | null }) =>
+    i.quantity ? `${i.name} (${i.quantity} left)` : i.name;
+
+  const blockHtml = suppliers
+    .map((s) => {
+      const lines = [
+        s.needsOrder.length
+          ? `<p style="margin:6px 0;"><strong>Need to order:</strong> ${s.needsOrder
+              .map(itemText)
+              .join(", ")}</p>`
+          : "",
+        s.low.length
+          ? `<p style="margin:6px 0;"><strong>Running low:</strong> ${s.low
+              .map(itemText)
+              .join(", ")}</p>`
+          : "",
+      ].join("");
+      return `<div style="margin:16px 0;padding:12px 14px;border:1px solid #d1d5db;border-radius:8px;">
+        <p style="margin:0 0 4px;font-weight:700;">Order from ${s.supplierName} before ${s.deliveryText}</p>
+        ${lines}
+      </div>`;
+    })
+    .join("");
+
+  const blockText = suppliers
+    .map((s) => {
+      const parts = [`Order from ${s.supplierName} before ${s.deliveryText}`];
+      if (s.needsOrder.length)
+        parts.push(`  Need to order: ${s.needsOrder.map(itemText).join(", ")}`);
+      if (s.low.length)
+        parts.push(`  Running low: ${s.low.map(itemText).join(", ")}`);
+      return parts.join("\n");
+    })
+    .join("\n\n");
+
+  return {
+    to: "",
+    subject: `Order reminder — ${businessName}: ${countText} to order`,
+    html: layout({
+      heading: "Stock to order",
+      bodyHtml: `<p>Based on your latest stock checks, ${countText} ${
+        n === 1 ? "has" : "have"
+      } items to order before their next delivery:</p>${blockHtml}<p>Review and update stock in your roster tool under Stock.</p>`,
+      footer:
+        "You're getting this because you manage this business. We send one reminder per supplier on its order-by day. This is a reminder only — we don't place orders.",
+    }),
+    text: [
+      "Stock to order",
+      "",
+      `${countText} to order before their next delivery:`,
+      "",
+      blockText,
+      "",
+      "Review and update stock in your roster tool under Stock.",
+    ].join("\n"),
+  };
+}
+
 export function reminderEmail(input: {
   businessName: string;
   staffName: string;

@@ -8,6 +8,7 @@ export const QUEUES = {
   leaveDecision: "leave-decision",
   shiftOfferDecision: "shift-offer-decision",
   certReminder: "cert-reminder",
+  orderReminder: "order-reminder",
 } as const;
 
 /** Sends one staff member their availability magic link. */
@@ -63,3 +64,11 @@ export type ShiftOfferDecisionJob = {
  * payload); idempotent per cert via `last_reminder_stage`.
  */
 export type CertReminderJob = Record<string, never>;
+
+/**
+ * Daily sweep that, per business, emails the owner one consolidated digest of
+ * suppliers whose order-by day is today and that have items flagged low /
+ * needs-ordering. Cron-scheduled (no payload); idempotent per supplier via
+ * `supplier.last_order_reminder_date`.
+ */
+export type OrderReminderJob = Record<string, never>;
