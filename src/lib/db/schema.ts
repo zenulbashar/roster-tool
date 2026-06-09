@@ -65,6 +65,23 @@ export const businesses = pgTable("business", {
   certReminderLeadDays: integer("cert_reminder_lead_days")
     .notNull()
     .default(30),
+  // Per-event owner in-app notification preferences. One boolean per
+  // notification type; all ON by default. When off, that event creates no
+  // in-app notification (the existing emails are unaffected). The type set is
+  // fixed (five events), so plain columns are simpler than a side table.
+  notifyLeaveRequested: boolean("notify_leave_requested")
+    .notNull()
+    .default(true),
+  notifyShiftOfferActivity: boolean("notify_shift_offer_activity")
+    .notNull()
+    .default(true),
+  notifyStockNeedsOrder: boolean("notify_stock_needs_order")
+    .notNull()
+    .default(true),
+  notifyCertExpiring: boolean("notify_cert_expiring").notNull().default(true),
+  notifyAvailabilityReply: boolean("notify_availability_reply")
+    .notNull()
+    .default(true),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -778,6 +795,49 @@ export const stockCheckEntries = pgTable(
   ],
 );
 
+/**
+ * Kind of owner-facing in-app notification. One per in-scope event; the set is
+ * fixed (no staff-facing notifications in this build). Each maps to a boolean
+ * preference column on `business` (see `notify_*` below) that gates creation.
+ */
+export const notificationType = pgEnum("notification_type", [
+  "leave_requested",
+  "shift_offer_activity",
+  "stock_needs_order",
+  "cert_expiring",
+  "availability_reply",
+]);
+
+/**
+ * An owner-facing in-app notification. Business-scoped; shown in the header bell
+ * dropdown. Created best-effort at each in-scope event's source, and ONLY when
+ * the business has that event type enabled (the `notify_*` columns on
+ * `business`). `link_path` is where clicking it takes the owner (e.g.
+ * `/app/leave`). These are IN ADDITION to the existing emails — never a
+ * replacement. NO staff-facing notifications (staff have no persistent session).
+ */
+export const notifications = pgTable(
+  "notification",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    type: notificationType("type").notNull(),
+    title: text("title").notNull(),
+    body: text("body"),
+    linkPath: text("link_path"),
+    isRead: boolean("is_read").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("notification_business_read_idx").on(t.businessId, t.isRead),
+    index("notification_business_created_idx").on(t.businessId, t.createdAt),
+  ],
+);
+
 /* -------------------------------------------------------------------------- */
 /* Relations (for relational queries)                                         */
 /* -------------------------------------------------------------------------- */
@@ -938,6 +998,13 @@ export const itemsRelations = relations(items, ({ one, many }) => ({
     references: [suppliers.id],
   }),
   stockChecks: many(stockCheckEntries),
+}));
+
+export const notificationsRelations = relations(notifications, ({ one }) => ({
+  business: one(businesses, {
+    fields: [notifications.businessId],
+    references: [businesses.id],
+  }),
 }));
 
 export const stockCheckEntriesRelations = relations(
