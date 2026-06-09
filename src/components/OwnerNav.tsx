@@ -24,6 +24,7 @@ const GROUPS: NavGroup[] = [
       { label: "Shift types", href: "/app/templates" },
       { label: "Shifts", href: "/app/shifts" },
       { label: "Timesheets", href: "/app/timesheets" },
+      { label: "Reports", href: "/app/reports" },
     ],
   },
   {

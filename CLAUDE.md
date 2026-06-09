@@ -26,7 +26,10 @@ owner expiry reminders (flagged, never enforced — see below), and
 with delivery days (**Part 1**: tracking — see below), plus **staff stock checks**
 (PIN, both clock surfaces) feeding an owner **Stock** view and **daily order
 reminders** before each supplier's delivery (**Part 2**: flagged/reminders only,
-never places orders — see below).
+never places orders — see below), and **hours & labour-cost reporting** — a
+read-only owner report page + dashboard summary over existing timesheets/rates
+(hours and an `hours × rate` **estimate**, never a payroll calculation — see
+below).
 
 **Out of scope (post-MVP):** SMS/WhatsApp, **payroll / wage calculation**
 (award interpretation, penalty rates, overtime, loading, super, STP — the app
@@ -117,6 +120,33 @@ owner approval, not payroll export.
   timezone. The CSV and the UI both state prominently that this is NOT a payroll
   calculation; penalty rates, overtime, super and final pay are the
   owner's/payroll system's job. No Xero/MYOB API — file export only.
+- **Hours & labour-cost reporting**: read-only analytics over data the app
+  already collects (timesheets + the rate the owner typed). An owner **report
+  page** (`/app/reports`, in the Rosters nav group) and a compact current-week
+  **summary on the owner dashboard** (`/app/page.tsx`). Owner-selectable time
+  window — current week (default), last 4 weeks, or a custom from/to range (all
+  query-param driven, business-local weeks, Monday-start). Per staff member it
+  shows worked hours and an **estimated labour cost = hours × the entered
+  hourly rate**, summed to a business total, plus a per-week breakdown
+  (lightweight CSS bars — no chart dependency) for trend visibility.
+  - **Cost is from APPROVED, closed entries only** (the owner's payroll
+    sign-off, mirroring the CSV export). **Hours are split** into APPROVED (the
+    cost basis) and PENDING (unapproved, shown but **not costed**) so a live
+    current week isn't misleadingly empty. **Open entries** (no clock-out) have
+    no defined duration → excluded from hours/cost and surfaced as a note.
+    **Staff with no rate set** contribute hours but a **null cost** (never $0)
+    and are flagged. Per-entry hours are rounded to **2dp before summing**
+    (matching the CSV) so the report and the export agree.
+  - **CRITICAL FRAMING — estimate only**: every cost figure is an ESTIMATE
+    (hours × the entered rate). It is **NOT a payroll calculation** — no penalty
+    rates, overtime, super, loadings or award interpretation (same wording as
+    the CSV export; `LABOUR_COST_DISCLAIMER` is shown wherever cost appears).
+  - **No new data, no writes, no schema change.** The aggregation is a pure,
+    unit-tested function (`src/lib/labour-report.ts`: window resolution, hours,
+    per-entry cost, weekly bucketing) separate from the tenant-scoped, windowed
+    read (`listEntriesForLabourReport`). Tested at week/timezone boundaries
+    (`tests/labour-report.test.ts`) and end-to-end against Postgres
+    (`tests/labour-report-flow.test.ts`).
 - **Leave requests & approvals**: staff request time off, the owner approves or
   denies. **Record only** — NO leave balances, accruals or entitlements, and NO
   NES/award/payroll leave calculation; it's purely request → approve/deny →
@@ -331,7 +361,7 @@ owner approval, not payroll export.
   a Zaleit-branded **dark header** (`--color-header-bg`, green `--color-accent`
   `#76b900` wordmark — header only, content stays white) with the nav grouped into
   four top-level items: **Rosters** (Rosters/`/app/periods`, Shift types/`/app/templates`,
-  Shifts/`/app/shifts`, Timesheets/`/app/timesheets`), **Team** (Staff, Leave,
+  Shifts/`/app/shifts`, Timesheets/`/app/timesheets`, Reports/`/app/reports`), **Team** (Staff, Leave,
   Certifications), **Orders** (Stock levels/`/app/stock`, Items, Suppliers), and a
   standalone **Settings**. `OwnerNav` is a client component using `usePathname` for
   active highlighting (active group + item); click-to-open dropdowns (Escape +
@@ -514,3 +544,4 @@ Notable columns / conventions:
 - [x] M12 — Certification tracking + daily expiry reminders (owner-managed, flagged not enforced)
 - [x] M13 — Inventory foundations Part 1: items (SKUs) + CSV import, suppliers with delivery days (tracking only; stock checks + order reminders are Part 2)
 - [x] M14 — Inventory Part 2: staff stock checks (PIN, both clock surfaces) + owner Stock view + daily order reminders (flagged/reminders only; never places orders)
+- [x] M15 — Hours & labour-cost reporting: owner report page (`/app/reports`) + dashboard summary, read-only over existing timesheets/rates (estimate only — no payroll/award calculation; no schema change)
