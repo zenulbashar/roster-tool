@@ -44,7 +44,9 @@ describe("dueReminderStage", () => {
   });
   it("fires expired on the day of expiry and after, once", () => {
     expect(dueReminderStage("2026-06-09", TODAY, LEAD, null)).toBe("expired");
-    expect(dueReminderStage("2026-06-01", TODAY, LEAD, "final")).toBe("expired");
+    expect(dueReminderStage("2026-06-01", TODAY, LEAD, "final")).toBe(
+      "expired",
+    );
     expect(dueReminderStage("2026-06-01", TODAY, LEAD, "expired")).toBeNull();
   });
   it("does not re-fire early on a later day before the final window", () => {
