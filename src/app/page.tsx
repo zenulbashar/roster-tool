@@ -14,7 +14,7 @@ export default function HomePage() {
       <div className="mt-8">
         <Link
           href="/sign-in"
-          className="inline-block rounded-lg bg-[var(--color-brand)] px-6 py-3 text-base font-semibold text-[var(--color-brand-ink)] hover:opacity-90"
+          className="inline-block rounded-lg bg-[var(--color-button)] px-6 py-3 text-base font-semibold text-[var(--color-button-ink)] hover:opacity-90"
         >
           Get started
         </Link>

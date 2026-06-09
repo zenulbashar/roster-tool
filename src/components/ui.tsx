@@ -12,7 +12,7 @@ const buttonBase =
 
 const variants = {
   primary:
-    "bg-[var(--color-brand)] text-[var(--color-brand-ink)] hover:opacity-90",
+    "bg-[var(--color-button)] text-[var(--color-button-ink)] hover:opacity-90",
   secondary:
     "bg-[var(--color-surface)] text-[var(--color-ink)] border border-[var(--color-line)] hover:bg-[var(--color-canvas)]",
   danger: "bg-[var(--color-danger)] text-white hover:opacity-90",

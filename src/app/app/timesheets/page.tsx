@@ -187,7 +187,7 @@ export default async function TimesheetsPage({
           </div>
           <a
             href={`${PATH}/export?week=${weekStart}`}
-            className="inline-flex min-h-11 items-center justify-center rounded-lg bg-[var(--color-brand)] px-5 py-2.5 text-sm font-semibold text-[var(--color-brand-ink)]"
+            className="inline-flex min-h-11 items-center justify-center rounded-lg bg-[var(--color-button)] px-5 py-2.5 text-sm font-semibold text-[var(--color-button-ink)]"
           >
             Download CSV
           </a>
