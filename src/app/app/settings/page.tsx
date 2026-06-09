@@ -10,6 +10,11 @@ import {
   parseGeofenceRadius,
   GEOFENCE_RADIUS_OPTIONS,
 } from "@/lib/validation";
+import {
+  NOTIFICATION_TYPES,
+  NOTIFICATION_PREFS,
+  type NotificationType,
+} from "@/lib/notifications";
 import { Banner, Button, Card, PageHeader } from "@/components/ui";
 import { ClearFlashCookie } from "@/components/ClearFlashCookie";
 import { UseMyLocationButton } from "@/components/UseMyLocationButton";
@@ -104,6 +109,22 @@ export default async function SettingsPage({
     });
     revalidatePath(PATH);
     redirect(`${PATH}?locationSaved=1`);
+  }
+
+  async function setNotificationPref(formData: FormData) {
+    "use server";
+    const type = formData.get("type");
+    if (
+      typeof type !== "string" ||
+      !(NOTIFICATION_TYPES as readonly string[]).includes(type)
+    ) {
+      return;
+    }
+    const enabled = formData.get("enabled") === "true";
+    const column = NOTIFICATION_PREFS[type as NotificationType].column;
+    const repo = await ownerRepo();
+    await repo.updateNotificationPrefs({ [column]: enabled });
+    revalidatePath(PATH);
   }
 
   async function generateClockLink() {
@@ -360,6 +381,57 @@ export default async function SettingsPage({
             </Button>
           </form>
         </div>
+      </Card>
+
+      <Card className="mt-6">
+        <h2 className="text-lg font-semibold">Notifications</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          Choose which activity shows in the bell at the top of the page. These
+          are in-app only — turning one off doesn&apos;t change any emails you
+          already get.
+        </p>
+        <ul className="mt-4 space-y-3">
+          {NOTIFICATION_TYPES.map((type) => {
+            const meta = NOTIFICATION_PREFS[type];
+            const on = business[meta.column];
+            return (
+              <li key={type}>
+                <form action={setNotificationPref}>
+                  <input type="hidden" name="type" value={type} />
+                  <input type="hidden" name="enabled" value={String(!on)} />
+                  <button
+                    type="submit"
+                    role="switch"
+                    aria-checked={on}
+                    className="flex w-full items-center justify-between gap-3 text-left text-sm font-medium text-[var(--color-ink)]"
+                  >
+                    <span>
+                      <span className="block">{meta.label}</span>
+                      <span className="block text-sm font-normal text-[var(--color-muted)]">
+                        {meta.description}
+                      </span>
+                    </span>
+                    <span className="flex flex-shrink-0 items-center gap-2">
+                      <span
+                        aria-hidden="true"
+                        className={`inline-flex h-5 w-9 items-center rounded-full border px-0.5 transition-colors ${
+                          on
+                            ? "justify-end border-[var(--color-ok)] bg-[var(--color-ok)]"
+                            : "justify-start border-[var(--color-line)] bg-[var(--color-canvas)]"
+                        }`}
+                      >
+                        <span className="h-4 w-4 rounded-full bg-white" />
+                      </span>
+                      <span className="w-7 text-[var(--color-muted)]">
+                        {on ? "On" : "Off"}
+                      </span>
+                    </span>
+                  </button>
+                </form>
+              </li>
+            );
+          })}
+        </ul>
       </Card>
     </>
   );
