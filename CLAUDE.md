@@ -21,7 +21,9 @@ timesheets, per-employee pay rates, a CSV export of approved hours, staff
 **leave requests** with owner approval (record only — see below), and
 **shift swaps / open shifts** (one-directional release → claim → owner
 approves — see below), and **certification / qualification tracking** with
-owner expiry reminders (flagged, never enforced — see below).
+owner expiry reminders (flagged, never enforced — see below), and
+**inventory foundations** — owner-managed **items (SKUs)** with CSV upload and
+**suppliers** with delivery days (**Part 1**: tracking only — see below).
 
 **Out of scope (post-MVP):** SMS/WhatsApp, **payroll / wage calculation**
 (award interpretation, penalty rates, overtime, loading, super, STP — the app
@@ -34,6 +36,12 @@ approves the handover; only one-directional release/claim is built),
 **certificate document upload/storage** and any **hard enforcement** of
 certification expiry (certs are text + dates, flagged and reminded only — they
 never block rostering or clock-in),
+**stock checks / staff stock-marking and order reminders / scheduled ordering
+jobs** (these are inventory **Part 2**, not yet built), any **actual ordering,
+purchasing, supplier-system integration, pricing, invoicing or payments** (the
+inventory feature is tracking + reminders only — it never places orders), and
+**object storage** (inventory CSV is pasted text / parsed in memory, no file
+store),
 free-text reply parsing, billing, native apps,
 continuous/background location tracking. If a request drifts here, flag it
 rather than silently building it.
@@ -194,6 +202,46 @@ owner approval, not payroll export.
     advances after a successful send and resets to null when the expiry date
     changes. Only active staff's certs are considered. Pure status/stage logic
     is in `src/lib/certification.ts`.
+- **Inventory: items (SKUs) + suppliers (Part 1 — tracking only)**: owner-managed
+  stock records. **This build does NOT place orders, integrate with any supplier
+  system, track quantities, price, or invoice — it's record-keeping foundations
+  only.** Stock checks (staff stock-marking) and order reminders (scheduled jobs)
+  are **Part 2**, a planned follow-up, not built here.
+  - **Suppliers** (`/app/suppliers`, in the nav): add/edit/delete a supplier —
+    name, contact, email, phone, the weekdays they deliver (a Mon–Sun
+    multi-select stored as `delivery_days`, **ISO 1–7** to match
+    `shift_template.weekdays`), an `order_cutoff_days_before` number ("order by X
+    days before delivery" — **stored now, used by the Part 2 reminder job; no
+    effect in this build**), and notes. Tenant-scoped `ownerRepo()` actions,
+    zod-validated.
+  - **Items / SKUs** (`/app/items`, in the nav): add/edit/delete/deactivate an
+    item — name (required), `sku_code`, `unit` (free text e.g. "kg"/"box"/"each"),
+    and an optional `supplier` (a select of the business's own suppliers; a
+    foreign/unknown id is coerced to null by `resolveOwnedSupplierId`, never
+    linking another tenant's supplier). `is_active` retires an item without
+    deleting its history.
+  - **CSV import** (`/app/items/import`): the owner **pastes CSV text** (no file
+    upload, no object storage). Two-step **preview → confirm**, both driven by
+    server actions that take only the RAW text and re-parse it server-side under
+    the owner's tenant scope (the client never sends parsed rows). Preview shows
+    per-row status, matched-vs-unmatched suppliers and counts; **confirm
+    re-validates from scratch** and inserts only the valid rows. A downloadable
+    sample template lives at `/app/items/sample`.
+  - **Parsing rules** (pure, in `src/lib/item-import.ts`, hammered by
+    `tests/item-import.test.ts`): RFC-4180-style tokenizer (quoted fields with
+    embedded commas/newlines, doubled-quote escapes, CRLF/LF), trims unquoted
+    cells, **skips blank lines**, and **detects/ignores a header row** (mapping
+    `name`/`sku_code`/`unit`/`supplier_name` and common synonyms; falls back to
+    positional order when there's no recognisable header). Columns: **`name`
+    required**; `sku_code`, `unit`, `supplier_name` optional.
+  - **Supplier matching**: `supplier_name` is matched **case-insensitively** to
+    an existing supplier; a match links it, an unmatched name imports the item
+    **with no supplier** (flagged in the preview, never auto-creating a supplier).
+  - **Dedupe behaviour**: a row is **skipped as a duplicate** when its name OR its
+    `sku_code` (both case-insensitive) already exists for the business, **or** it
+    repeats an earlier row in the same upload (first occurrence wins). A row
+    **missing a name is an error** — reported in the preview, **never silently
+    dropped**. Only `new` rows are inserted (`bulkInsertItems`, business-scoped).
 
 ## Non-negotiable conventions
 
@@ -278,8 +326,8 @@ connection, the worker uses the direct connection (pg-boss needs session mode).
 `business`, `user` (owner) + Auth.js tables, `staff_member`, `shift_template`,
 `roster_period`, `shift`, `availability_request`, `availability_response`,
 `roster_assignment`, `published_roster`, `timesheet_entry`, `clock_photo`,
-`leave_request`, `shift_offer`, `staff_certification`. All domain tables are
-business-scoped.
+`leave_request`, `shift_offer`, `staff_certification`, `supplier`, `item`. All
+domain tables are business-scoped.
 
 Notable columns / conventions:
 
@@ -369,6 +417,21 @@ Notable columns / conventions:
   reminder fires. **Text + dates only — no documents; flagged/reminded, never
   enforced.** Pure status/stage maths in `src/lib/certification.ts`; the daily
   `cert-reminder` job emails the owner (see Key product decisions).
+- `supplier` — a supplier the business orders stock from (inventory Part 1;
+  tracking only). NOT-NULL `name`; nullable `contact_name`/`email`/`phone`/
+  `notes`; `delivery_days` (`integer[]`, NOT NULL default `{}`, **ISO 1–7** like
+  `shift_template.weekdays`); `order_cutoff_days_before` (integer, NOT NULL
+  default 1 — "order by X days before delivery", **stored now for the Part 2
+  reminder job, no effect yet**). Indexed on `business_id`. **The app never
+  places orders or integrates with any supplier system.**
+- `item` — an inventory item / SKU (inventory Part 1; tracking only). NOT-NULL
+  `name`; nullable free-text `sku_code`/`unit`; nullable `supplier_id` →
+  `supplier` **(set null on delete** — the item is kept, just unlinked);
+  `is_active` (NOT NULL default true — retire without deleting). Indexed on
+  `business_id` and `(business_id, supplier_id)`. CSV import parses/validates in
+  `src/lib/item-import.ts` (pure) and writes via `bulkInsertItems`; supplier
+  matching is case-insensitive by name, dedupe is by name-or-sku (see Key product
+  decisions). **No quantities, pricing or ordering — Part 2.**
 
 ## Milestones
 
@@ -384,3 +447,4 @@ Notable columns / conventions:
 - [x] M10 — Leave requests + owner approvals (PIN submission, decision emails, roster flagging)
 - [x] M11 — Shift swaps / open shifts (release → claim → owner-approved transfer, notifications)
 - [x] M12 — Certification tracking + daily expiry reminders (owner-managed, flagged not enforced)
+- [x] M13 — Inventory foundations Part 1: items (SKUs) + CSV import, suppliers with delivery days (tracking only; stock checks + order reminders are Part 2)
