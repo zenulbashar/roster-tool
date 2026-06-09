@@ -31,7 +31,9 @@ import {
   suppliers,
   items,
   stockCheckEntries,
+  notifications,
 } from "@/lib/db/schema";
+import type { NotificationType } from "@/lib/notifications";
 import type { LeaveType, CertTypeInput } from "@/lib/validation";
 import type { StockStatus } from "@/lib/order-reminder";
 import type { ReminderStage } from "@/lib/certification";
@@ -2447,6 +2449,101 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         })
         .returning();
       return row!;
+    },
+
+    /* ----- Owner in-app notifications ----- */
+
+    /**
+     * Insert an owner notification for this business. Prefer `notifyOwner`
+     * (best-effort + preference-gated) at call sites; this is the raw insert.
+     */
+    async createNotification(input: {
+      type: NotificationType;
+      title: string;
+      body?: string | null;
+      linkPath?: string | null;
+    }) {
+      const [row] = await database
+        .insert(notifications)
+        .values({
+          businessId,
+          type: input.type,
+          title: input.title,
+          body: input.body ?? null,
+          linkPath: input.linkPath ?? null,
+        })
+        .returning();
+      return row!;
+    },
+
+    /** Recent notifications for the bell/list, newest first. */
+    listRecentNotifications(limit = 10) {
+      return database
+        .select()
+        .from(notifications)
+        .where(eq(notifications.businessId, businessId))
+        .orderBy(desc(notifications.createdAt))
+        .limit(limit);
+    },
+
+    /** Count of unread notifications for the header badge. */
+    async countUnreadNotifications(): Promise<number> {
+      const [row] = await database
+        .select({ count: sql<number>`count(*)::int` })
+        .from(notifications)
+        .where(
+          and(
+            eq(notifications.businessId, businessId),
+            eq(notifications.isRead, false),
+          ),
+        );
+      return row?.count ?? 0;
+    },
+
+    /** Mark one notification read (tenant-scoped; a foreign id no-ops). */
+    async markNotificationRead(id: string) {
+      const [row] = await database
+        .update(notifications)
+        .set({ isRead: true })
+        .where(
+          and(
+            eq(notifications.id, id),
+            eq(notifications.businessId, businessId),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    /** Mark every unread notification for this business read. */
+    async markAllNotificationsRead() {
+      await database
+        .update(notifications)
+        .set({ isRead: true })
+        .where(
+          and(
+            eq(notifications.businessId, businessId),
+            eq(notifications.isRead, false),
+          ),
+        );
+    },
+
+    /** Update per-event notification preferences for this business. */
+    async updateNotificationPrefs(
+      input: Partial<{
+        notifyLeaveRequested: boolean;
+        notifyShiftOfferActivity: boolean;
+        notifyStockNeedsOrder: boolean;
+        notifyCertExpiring: boolean;
+        notifyAvailabilityReply: boolean;
+      }>,
+    ) {
+      const [row] = await database
+        .update(businesses)
+        .set(input)
+        .where(eq(businesses.id, businessId))
+        .returning();
+      return row ?? null;
     },
   };
 }
