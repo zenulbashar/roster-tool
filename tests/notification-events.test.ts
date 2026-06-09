@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
+import { inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { businesses, users } from "@/lib/db/schema";
 import { createTenantRepo, type TenantRepo } from "@/lib/tenant/repository";
@@ -21,6 +22,7 @@ function form(fields: Record<string, string>): FormData {
 describe("notification event wiring", () => {
   let businessId = "";
   let repo: TenantRepo;
+  const created: string[] = [];
 
   beforeEach(async () => {
     const [b] = await db
@@ -28,10 +30,16 @@ describe("notification event wiring", () => {
       .values({ name: "Event Café" })
       .returning();
     businessId = b!.id;
+    created.push(businessId);
     repo = createTenantRepo(businessId);
   });
 
   afterAll(async () => {
+    // Clean up so re-runs don't collide (owner email is unique) or accumulate.
+    if (created.length > 0) {
+      await db.delete(users).where(inArray(users.businessId, created));
+      await db.delete(businesses).where(inArray(businesses.id, created));
+    }
     await db.$client.end();
   });
 
@@ -104,8 +112,11 @@ describe("notification event wiring", () => {
   });
 
   it("cert reminder job creates a cert_expiring notification when due", async () => {
-    // An owner email recipient is required for the digest to run.
-    await db.insert(users).values({ email: "owner@e.test", businessId });
+    // An owner email recipient is required for the digest to run. Unique email
+    // per run so repeated test runs against the same DB don't collide.
+    await db
+      .insert(users)
+      .values({ email: `owner-${crypto.randomUUID()}@e.test`, businessId });
     const staff = await repo.addStaff({ name: "Cara", email: "cara@e.test" });
     // Expires today → due "expired" stage.
     const now = new Date("2026-06-09T02:00:00Z");
