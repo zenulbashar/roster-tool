@@ -12,6 +12,8 @@
   --color-line: #d1d5db;
   --color-brand: #1d4ed8; /* blue-700, ~6.3:1 on white */
   --color-brand-ink: #ffffff;
+  --color-button: #76b900; /* Zaleit green — primary buttons */
+  --color-button-ink: #111827; /* dark text on green, ~7.4:1 on --color-button */
   --color-ok: #047857; /* green-700 */
   --color-warn: #b45309; /* amber-700 */
   --color-danger: #b91c1c; /* red-700 */

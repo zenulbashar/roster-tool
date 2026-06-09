@@ -42,7 +42,7 @@ export function LeaveRequestForm({
         <p className="text-xl font-bold">{state.message}</p>
         <Link
           href={backHref}
-          className="mt-6 inline-flex min-h-12 items-center justify-center rounded-lg bg-[var(--color-brand)] px-6 py-3 text-base font-semibold text-[var(--color-brand-ink)]"
+          className="mt-6 inline-flex min-h-12 items-center justify-center rounded-lg bg-[var(--color-button)] px-6 py-3 text-base font-semibold text-[var(--color-button-ink)]"
         >
           Done
         </Link>
