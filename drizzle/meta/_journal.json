@@ -64,6 +64,13 @@
       "when": 1780968997363,
       "tag": "0008_glorious_anita_blake",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1780972669581,
+      "tag": "0009_lively_mantis",
+      "breakpoints": true
     }
   ]
 }
