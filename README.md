@@ -201,3 +201,8 @@ tests/            unit + integration tests
 - [x] M6 — Availability summary + roster builder
 - [x] M7 — Publish + reminders (jobs)
 - [x] M8 — Accessibility + polish
+- [x] M9 — Clock-in kiosk + timesheets (PINs, brute-force guard, optional photos)
+- [x] M10 — Leave requests + owner approvals (PIN submission, decision emails, roster flagging)
+- [x] M11 — Shift swaps / open shifts (release → claim → owner-approved transfer, notifications)
+- [x] M12 — Certification tracking + daily expiry reminders (owner-managed, flagged not enforced)
+- [x] M13 — Inventory foundations Part 1: items (SKUs) + CSV import, suppliers with delivery days (tracking only; stock checks + order reminders are Part 2)

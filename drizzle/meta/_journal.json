@@ -57,6 +57,13 @@
       "when": 1780966598947,
       "tag": "0007_loving_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1780968997363,
+      "tag": "0008_glorious_anita_blake",
+      "breakpoints": true
     }
   ]
 }

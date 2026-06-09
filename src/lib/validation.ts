@@ -171,6 +171,57 @@ export function parseClockPhoto(
   return { mimeType: match[1]!, data };
 }
 
+/* ----- Suppliers & items (inventory Part 1; tracking only, no ordering) --- */
+
+/** ISO weekday numbers (1=Mon … 7=Sun), the order shown in the UI. */
+export const WEEKDAY_OPTIONS = [1, 2, 3, 4, 5, 6, 7] as const;
+
+const weekdaySchema = z.coerce.number().int().min(1).max(7);
+
+/**
+ * A supplier's fields. Delivery days are ISO weekday numbers (may be empty).
+ * `orderCutoffDaysBefore` is stored now for the Part 2 reminder job; it has no
+ * effect in this build. Contact/email/phone/notes are optional.
+ */
+export const supplierSchema = z.object({
+  name: z.string().trim().min(1, "Please enter a supplier name").max(120),
+  contactName: z.string().trim().max(120).optional(),
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email("Enter a valid email")
+    .max(200)
+    .optional()
+    .or(z.literal("")),
+  phone: z.string().trim().max(40).optional(),
+  deliveryDays: z.array(weekdaySchema).max(7),
+  orderCutoffDaysBefore: z.coerce
+    .number()
+    .int()
+    .min(0, "Use 0 or more days")
+    .max(30, "That's too many days"),
+  notes: z.string().trim().max(1000).optional(),
+});
+
+export type SupplierInput = z.infer<typeof supplierSchema>;
+
+/**
+ * An item / SKU's fields. Only the name is required; SKU code and unit are free
+ * text. `supplierId` is an existing supplier's id or null (validated against the
+ * business in the repo, never trusted from the client alone). `isActive` lets an
+ * owner retire an item without deleting it.
+ */
+export const itemSchema = z.object({
+  name: z.string().trim().min(1, "Please enter an item name").max(200),
+  skuCode: z.string().trim().max(80).optional(),
+  unit: z.string().trim().max(40).optional(),
+  supplierId: z.string().uuid().nullable().optional(),
+  isActive: z.boolean().optional(),
+});
+
+export type ItemInput = z.infer<typeof itemSchema>;
+
 export type StaffInput = z.infer<typeof staffSchema>;
 export type TemplateInput = z.infer<typeof templateSchema>;
 export type PeriodInput = z.infer<typeof periodSchema>;

@@ -63,6 +63,12 @@ export default async function OwnerLayout({
           <Link href="/app/certifications" className="whitespace-nowrap">
             Certifications
           </Link>
+          <Link href="/app/items" className="whitespace-nowrap">
+            Items
+          </Link>
+          <Link href="/app/suppliers" className="whitespace-nowrap">
+            Suppliers
+          </Link>
           <Link href="/app/settings" className="whitespace-nowrap">
             Settings
           </Link>

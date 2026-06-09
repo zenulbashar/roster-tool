@@ -28,6 +28,8 @@ import {
   leaveRequests,
   shiftOffers,
   staffCertifications,
+  suppliers,
+  items,
 } from "@/lib/db/schema";
 import type { LeaveType, CertTypeInput } from "@/lib/validation";
 import type { ReminderStage } from "@/lib/certification";
@@ -2016,6 +2018,230 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         )
         .returning();
       return row ?? null;
+    },
+
+    /* ----- Suppliers (inventory Part 1; tracking only) ----- */
+
+    listSuppliers() {
+      return database
+        .select()
+        .from(suppliers)
+        .where(eq(suppliers.businessId, businessId))
+        .orderBy(asc(suppliers.name));
+    },
+
+    getSupplier(id: string) {
+      return first(
+        database
+          .select()
+          .from(suppliers)
+          .where(
+            and(eq(suppliers.id, id), eq(suppliers.businessId, businessId)),
+          ),
+      );
+    },
+
+    /** Suppliers reduced to id + name, for CSV import name-matching. */
+    listSuppliersForMatch() {
+      return database
+        .select({ id: suppliers.id, name: suppliers.name })
+        .from(suppliers)
+        .where(eq(suppliers.businessId, businessId))
+        .orderBy(asc(suppliers.name));
+    },
+
+    async addSupplier(input: {
+      name: string;
+      contactName?: string | null;
+      email?: string | null;
+      phone?: string | null;
+      deliveryDays: number[];
+      orderCutoffDaysBefore: number;
+      notes?: string | null;
+    }) {
+      const [row] = await database
+        .insert(suppliers)
+        .values({
+          businessId,
+          name: input.name,
+          contactName: input.contactName ?? null,
+          email: input.email ?? null,
+          phone: input.phone ?? null,
+          deliveryDays: input.deliveryDays,
+          orderCutoffDaysBefore: input.orderCutoffDaysBefore,
+          notes: input.notes ?? null,
+        })
+        .returning();
+      return row!;
+    },
+
+    async updateSupplier(
+      id: string,
+      input: {
+        name: string;
+        contactName?: string | null;
+        email?: string | null;
+        phone?: string | null;
+        deliveryDays: number[];
+        orderCutoffDaysBefore: number;
+        notes?: string | null;
+      },
+    ) {
+      const [row] = await database
+        .update(suppliers)
+        .set({
+          name: input.name,
+          contactName: input.contactName ?? null,
+          email: input.email ?? null,
+          phone: input.phone ?? null,
+          deliveryDays: input.deliveryDays,
+          orderCutoffDaysBefore: input.orderCutoffDaysBefore,
+          notes: input.notes ?? null,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(suppliers.id, id), eq(suppliers.businessId, businessId)))
+        .returning();
+      return row ?? null;
+    },
+
+    async deleteSupplier(id: string) {
+      await database
+        .delete(suppliers)
+        .where(and(eq(suppliers.id, id), eq(suppliers.businessId, businessId)));
+    },
+
+    /* ----- Items / SKUs (inventory Part 1; tracking only) ----- */
+
+    /**
+     * Items for the business with their supplier's name (if linked), name-sorted.
+     * `activeOnly` (default false) drops retired items.
+     */
+    listItems({ activeOnly = false } = {}) {
+      const conds = [eq(items.businessId, businessId)];
+      if (activeOnly) conds.push(eq(items.isActive, true));
+      return database
+        .select({
+          id: items.id,
+          name: items.name,
+          skuCode: items.skuCode,
+          unit: items.unit,
+          supplierId: items.supplierId,
+          supplierName: suppliers.name,
+          isActive: items.isActive,
+        })
+        .from(items)
+        .leftJoin(suppliers, eq(suppliers.id, items.supplierId))
+        .where(and(...conds))
+        .orderBy(asc(items.name));
+    },
+
+    getItem(id: string) {
+      return first(
+        database
+          .select()
+          .from(items)
+          .where(and(eq(items.id, id), eq(items.businessId, businessId))),
+      );
+    },
+
+    /** Item name + sku for dedupe during CSV import (all items, any status). */
+    listItemKeysForDedupe() {
+      return database
+        .select({ name: items.name, skuCode: items.skuCode })
+        .from(items)
+        .where(eq(items.businessId, businessId));
+    },
+
+    /**
+     * Resolve a client-supplied supplier id to one that belongs to THIS
+     * business, or null. Guards against linking another tenant's supplier.
+     */
+    async resolveOwnedSupplierId(supplierId: string | null | undefined) {
+      if (!supplierId) return null;
+      const owned = await this.getSupplier(supplierId);
+      return owned ? owned.id : null;
+    },
+
+    async addItem(input: {
+      name: string;
+      skuCode?: string | null;
+      unit?: string | null;
+      supplierId?: string | null;
+    }) {
+      const supplierId = await this.resolveOwnedSupplierId(input.supplierId);
+      const [row] = await database
+        .insert(items)
+        .values({
+          businessId,
+          name: input.name,
+          skuCode: input.skuCode ?? null,
+          unit: input.unit ?? null,
+          supplierId,
+        })
+        .returning();
+      return row!;
+    },
+
+    async updateItem(
+      id: string,
+      input: {
+        name: string;
+        skuCode?: string | null;
+        unit?: string | null;
+        supplierId?: string | null;
+        isActive?: boolean;
+      },
+    ) {
+      const supplierId = await this.resolveOwnedSupplierId(input.supplierId);
+      const [row] = await database
+        .update(items)
+        .set({
+          name: input.name,
+          skuCode: input.skuCode ?? null,
+          unit: input.unit ?? null,
+          supplierId,
+          ...(input.isActive === undefined ? {} : { isActive: input.isActive }),
+          updatedAt: new Date(),
+        })
+        .where(and(eq(items.id, id), eq(items.businessId, businessId)))
+        .returning();
+      return row ?? null;
+    },
+
+    async setItemActive(id: string, isActive: boolean) {
+      const [row] = await database
+        .update(items)
+        .set({ isActive, updatedAt: new Date() })
+        .where(and(eq(items.id, id), eq(items.businessId, businessId)))
+        .returning();
+      return row ?? null;
+    },
+
+    async deleteItem(id: string) {
+      await database
+        .delete(items)
+        .where(and(eq(items.id, id), eq(items.businessId, businessId)));
+    },
+
+    /**
+     * Insert many items in one statement, forcing this business's id on every
+     * row. Used by the CSV import commit step; supplier ids must already have
+     * been resolved against this business (the importer matches by name against
+     * `listSuppliersForMatch`). Returns the inserted rows.
+     */
+    async bulkInsertItems(
+      rows: Array<{
+        name: string;
+        skuCode: string | null;
+        unit: string | null;
+        supplierId: string | null;
+      }>,
+    ) {
+      if (rows.length === 0) return [];
+      return database
+        .insert(items)
+        .values(rows.map((r) => ({ ...r, businessId })))
+        .returning();
     },
 
     /* ----- Published rosters ----- */

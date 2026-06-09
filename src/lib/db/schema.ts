@@ -653,6 +653,75 @@ export const staffCertifications = pgTable(
   ],
 );
 
+/**
+ * A supplier the business orders stock from. Part 1 of the inventory feature:
+ * record-keeping only — the app NEVER places orders or integrates with any
+ * supplier system. `delivery_days` holds the ISO weekday numbers (1=Mon … 7=Sun)
+ * the supplier delivers on, stored as an integer array to match
+ * `shift_template.weekdays`. `order_cutoff_days_before` is how many days before a
+ * delivery day the owner wants an order-by reminder — stored now, used by the
+ * Part 2 reminder job (this build sends no reminders).
+ */
+export const suppliers = pgTable(
+  "supplier",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    contactName: text("contact_name"),
+    email: text("email"),
+    phone: text("phone"),
+    deliveryDays: integer("delivery_days").array().notNull().default([]),
+    orderCutoffDaysBefore: integer("order_cutoff_days_before")
+      .notNull()
+      .default(1),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("supplier_business_idx").on(t.businessId)],
+);
+
+/**
+ * An inventory item / SKU the business tracks. Part 1: record-keeping only (no
+ * stock counts, no ordering — those are Part 2). `sku_code`/`unit` are free text.
+ * `supplier_id` links a supplier when known; on supplier delete it's set null
+ * (the item is kept, just unlinked). `is_active` lets owners retire an item
+ * without deleting its history.
+ */
+export const items = pgTable(
+  "item",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    skuCode: text("sku_code"),
+    unit: text("unit"),
+    supplierId: uuid("supplier_id").references(() => suppliers.id, {
+      onDelete: "set null",
+    }),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("item_business_idx").on(t.businessId),
+    index("item_business_supplier_idx").on(t.businessId, t.supplierId),
+  ],
+);
+
 /* -------------------------------------------------------------------------- */
 /* Relations (for relational queries)                                         */
 /* -------------------------------------------------------------------------- */
@@ -794,3 +863,22 @@ export const staffCertificationsRelations = relations(
     }),
   }),
 );
+
+export const suppliersRelations = relations(suppliers, ({ one, many }) => ({
+  business: one(businesses, {
+    fields: [suppliers.businessId],
+    references: [businesses.id],
+  }),
+  items: many(items),
+}));
+
+export const itemsRelations = relations(items, ({ one }) => ({
+  business: one(businesses, {
+    fields: [items.businessId],
+    references: [businesses.id],
+  }),
+  supplier: one(suppliers, {
+    fields: [items.supplierId],
+    references: [suppliers.id],
+  }),
+}));
