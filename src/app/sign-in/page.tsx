@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
-import { auth, signIn, EMAIL_PROVIDER_ID } from "@/lib/auth";
+import { signIn, EMAIL_PROVIDER_ID } from "@/lib/auth";
+import { redirectIfAuthenticated } from "@/lib/auth/context";
 import { signInErrorMessage } from "@/lib/auth/sign-in-error";
 import { Banner, Button, Card, Field, TextInput } from "@/components/ui";
 
@@ -8,9 +8,8 @@ export default async function SignInPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
-  // Already signed in? Skip straight through.
-  const session = await auth();
-  if (session?.user) redirect("/app");
+  // Already signed in? Skip straight through to the dashboard.
+  await redirectIfAuthenticated();
 
   // Auth.js redirects failures (e.g. an expired/used link) here with `?error=`.
   const { error } = await searchParams;
@@ -18,6 +17,10 @@ export default async function SignInPage({
 
   async function sendLink(formData: FormData) {
     "use server";
+    // Re-check server-side: a logged-out render of this form can be replayed to
+    // an owner who is now signed in (router cache / bfcache / stale tab). Never
+    // send a magic link to an authenticated owner — redirect them instead.
+    await redirectIfAuthenticated();
     const email = String(formData.get("email") ?? "")
       .trim()
       .toLowerCase();
