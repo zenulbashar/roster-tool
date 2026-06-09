@@ -1,14 +1,31 @@
 import Link from "next/link";
-import { requireOwner } from "@/lib/auth/context";
+import { ownerRepo } from "@/lib/auth/context";
 import { signOut } from "@/lib/auth";
 import { OwnerNav } from "@/components/OwnerNav";
+import { NotificationBell } from "@/components/NotificationBell";
+import { relativeTime } from "@/lib/notifications";
 
 export default async function OwnerLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  await requireOwner();
+  // Tenant-scoped via the session. The unread count + recent list are read per
+  // request (owner pages are dynamic), so they refresh on navigation/refresh.
+  const repo = await ownerRepo();
+  const [unreadCount, recent] = await Promise.all([
+    repo.countUnreadNotifications(),
+    repo.listRecentNotifications(10),
+  ]);
+  const now = new Date();
+  const bellItems = recent.map((n) => ({
+    id: n.id,
+    title: n.title,
+    body: n.body,
+    linkPath: n.linkPath,
+    timeText: relativeTime(n.createdAt, now),
+    isRead: n.isRead,
+  }));
 
   async function doSignOut() {
     "use server";
@@ -25,14 +42,17 @@ export default async function OwnerLayout({
           >
             Zale<span className="text-[var(--color-accent)]">IT</span>
           </Link>
-          <form action={doSignOut}>
-            <button
-              type="submit"
-              className="rounded-md px-2 py-1 text-sm font-medium text-[var(--color-header-muted)] underline underline-offset-2 hover:text-[var(--color-header-ink)]"
-            >
-              Sign out
-            </button>
-          </form>
+          <div className="flex items-center gap-2">
+            <NotificationBell unreadCount={unreadCount} items={bellItems} />
+            <form action={doSignOut}>
+              <button
+                type="submit"
+                className="rounded-md px-2 py-1 text-sm font-medium text-[var(--color-header-muted)] underline underline-offset-2 hover:text-[var(--color-header-ink)]"
+              >
+                Sign out
+              </button>
+            </form>
+          </div>
         </div>
         <OwnerNav />
       </header>
