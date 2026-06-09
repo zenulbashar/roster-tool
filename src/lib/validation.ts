@@ -113,6 +113,45 @@ export const leaveRequestSchema = z
 
 export type LeaveRequestInput = z.infer<typeof leaveRequestSchema>;
 
+/* ----- Certifications (text + dates only; flagged, never enforced) ----- */
+
+export const certTypeSchema = z.enum([
+  "rsa",
+  "rsg",
+  "food_safety",
+  "first_aid",
+  "wwcc",
+  "other",
+]);
+export type CertTypeInput = z.infer<typeof certTypeSchema>;
+
+/**
+ * A certification's fields. A label is REQUIRED when the type is `other`
+ * (otherwise optional). Expiry is a calendar date; no document is uploaded.
+ */
+export const certificationSchema = z
+  .object({
+    certType: certTypeSchema,
+    certLabel: z.string().trim().max(120).optional(),
+    referenceNumber: z.string().trim().max(120).optional(),
+    expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick an expiry date"),
+  })
+  .refine(
+    (c) => c.certType !== "other" || !!(c.certLabel && c.certLabel.length > 0),
+    { message: "Enter a name for this certification", path: ["certLabel"] },
+  );
+
+export type CertificationInput = z.infer<typeof certificationSchema>;
+
+/** Allowed reminder lead times (days before expiry) the owner can pick. */
+export const CERT_LEAD_DAYS_OPTIONS = [30, 60, 90] as const;
+export const DEFAULT_CERT_LEAD_DAYS = 30;
+
+export function parseCertLeadDays(value: unknown): number | null {
+  const n = Number(value);
+  return (CERT_LEAD_DAYS_OPTIONS as readonly number[]).includes(n) ? n : null;
+}
+
 /** Cap on a clock-in/out photo once decoded from its data URL. */
 export const MAX_CLOCK_PHOTO_BYTES = 500_000;
 
