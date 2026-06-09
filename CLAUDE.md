@@ -327,6 +327,17 @@ owner approval, not payroll export.
 
 - Semantic HTML, keyboard navigable, visible focus, WCAG AA contrast.
 - Mobile-first. Minimal component set; no heavy UI kit.
+- **Owner-area header/nav** (`src/app/app/layout.tsx` + `src/components/OwnerNav.tsx`):
+  a Zaleit-branded **dark header** (`--color-header-bg`, green `--color-accent`
+  `#76b900` wordmark — header only, content stays white) with the nav grouped into
+  four top-level items: **Rosters** (Rosters/`/app/periods`, Shift types/`/app/templates`,
+  Shifts/`/app/shifts`, Timesheets/`/app/timesheets`), **Team** (Staff, Leave,
+  Certifications), **Orders** (Stock levels/`/app/stock`, Items, Suppliers), and a
+  standalone **Settings**. `OwnerNav` is a client component using `usePathname` for
+  active highlighting (active group + item); click-to-open dropdowns (Escape +
+  outside-click close) on desktop, a hamburger panel on mobile. **Nav labels +
+  grouping only** — every page keeps its current URL (`/app/stock`'s label is
+  "Stock levels" but its path is unchanged).
 
 ## Running things
 
