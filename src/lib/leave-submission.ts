@@ -9,6 +9,7 @@ import {
 import { pinSchema, leaveRequestSchema } from "@/lib/validation";
 import { leaveTypeLabel } from "@/lib/labels";
 import { formatDateRange } from "@/lib/time";
+import { notifyOwner } from "@/lib/notifications";
 
 /**
  * Result of a staff leave submission, shaped like the clock actions so the
@@ -111,6 +112,14 @@ export async function submitStaffLeave(
       message: "Couldn't send your request. Try again.",
     };
   }
+
+  // Best-effort owner notification (in addition to the in-app review on /app/leave).
+  await notifyOwner(repo, {
+    type: "leave_requested",
+    title: `${staff.name} requested leave`,
+    body: `${leaveTypeLabel(leaveType)} · ${formatDateRange(startDate, endDate)}`,
+    linkPath: "/app/leave",
+  });
 
   return {
     status: "success",

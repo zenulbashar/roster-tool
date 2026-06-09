@@ -39,6 +39,7 @@ import {
   type ItemStatusForReminder,
 } from "@/lib/order-reminder";
 import { logger } from "@/lib/logger";
+import { notifyOwner } from "@/lib/notifications";
 import type {
   AvailabilityRequestJob,
   AvailabilityReminderJob,
@@ -482,6 +483,21 @@ export async function handleCertificationReminders(
     for (const { cert, stage } of due) {
       await repo.updateCertReminderStage(cert.id, stage);
     }
+
+    // Best-effort in-app notification mirroring the digest (email unchanged).
+    await notifyOwner(repo, {
+      type: "cert_expiring",
+      title:
+        due.length === 1
+          ? `${items[0]!.staffName}'s ${items[0]!.certName} ${items[0]!.phrase}`
+          : `${due.length} certifications need attention`,
+      body:
+        due.length === 1
+          ? `Expires ${items[0]!.expiryText}`
+          : "Some are expiring soon or have expired.",
+      linkPath: "/app/certifications",
+    });
+
     totalSent += due.length;
     businessesEmailed += 1;
   }

@@ -6,6 +6,7 @@ import { businesses } from "@/lib/db/schema";
 import { findRequestByToken } from "@/lib/tenant/public-access";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { formatDateOnly, formatTimeOnly, formatDateTime } from "@/lib/time";
+import { notifyOwner } from "@/lib/notifications";
 import { Banner, Button, Card } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -83,6 +84,19 @@ export default async function AvailabilityPage({
 
     await repo.saveResponses(req.id, entries);
     await repo.markRequestResponded(req.id);
+
+    // Best-effort owner notification that this person has replied.
+    const [staff, period] = await Promise.all([
+      repo.getStaff(req.staffMemberId),
+      repo.getPeriod(req.rosterPeriodId),
+    ]);
+    await notifyOwner(repo, {
+      type: "availability_reply",
+      title: `${staff?.name ?? "A staff member"} sent their availability`,
+      body: period ? period.label : null,
+      linkPath: `/app/periods/${req.rosterPeriodId}`,
+    });
+
     revalidatePath(`/a/${token}`);
     redirect(`/a/${token}?saved=1`);
   }

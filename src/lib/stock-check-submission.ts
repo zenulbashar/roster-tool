@@ -8,6 +8,7 @@ import {
 } from "@/lib/pin";
 import { pinSchema, stockStatusSchema } from "@/lib/validation";
 import type { StockStatus } from "@/lib/order-reminder";
+import { notifyOwner } from "@/lib/notifications";
 
 /**
  * Result of a staff stock check, shaped like the other PIN flows so the shared
@@ -116,6 +117,17 @@ export async function submitStockCheck(
   });
   if (recorded === 0) {
     return { status: "error", message: "Couldn't save. Try again." };
+  }
+
+  // Best-effort owner notification when this check flags anything to order.
+  const needsOrder = entries.filter((e) => e.status === "needs_order").length;
+  if (needsOrder > 0) {
+    await notifyOwner(repo, {
+      type: "stock_needs_order",
+      title: `${staff.name} flagged stock to order`,
+      body: `${needsOrder} item${needsOrder === 1 ? "" : "s"} need${needsOrder === 1 ? "s" : ""} ordering.`,
+      linkPath: "/app/stock",
+    });
   }
 
   return {
