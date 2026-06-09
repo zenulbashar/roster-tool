@@ -47,6 +47,12 @@ export function StaffShiftMenu({
       >
         Open shifts
       </Link>
+      <Link
+        href={`${basePath}?staff=${staffId}&mode=stock`}
+        className={menuLink}
+      >
+        Stock check
+      </Link>
     </nav>
   );
 }

@@ -6,6 +6,7 @@ import { KIOSK_COOKIE } from "@/lib/kiosk-cookie";
 import { Card } from "@/components/ui";
 import { KioskClockForm } from "@/components/KioskClockForm";
 import { LeaveRequestForm } from "@/components/LeaveRequestForm";
+import { StockCheckForm } from "@/components/StockCheckForm";
 import { PinActionForm } from "@/components/PinActionForm";
 import {
   MyShiftsList,
@@ -18,6 +19,7 @@ import {
   kioskReleaseAction,
   kioskClaimAction,
   kioskCancelOfferAction,
+  kioskStockCheckAction,
 } from "@/app/kiosk/actions";
 import { businessDateOf, formatDateOnly, formatTimeOnly } from "@/lib/time";
 
@@ -80,6 +82,19 @@ export default async function KioskPage({
           staffId={selected.id}
           staffName={selected.name}
           backHref="/kiosk"
+        />
+      );
+    }
+
+    if (mode === "stock") {
+      const items = await repo.listActiveItemsForStockCheck();
+      return (
+        <StockCheckForm
+          action={kioskStockCheckAction}
+          staffId={selected.id}
+          staffName={selected.name}
+          items={items}
+          backHref={`/kiosk?staff=${selected.id}`}
         />
       );
     }
