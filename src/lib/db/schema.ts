@@ -60,6 +60,11 @@ export const businesses = pgTable("business", {
   // Distinct from the kiosk token so staff on their own phones only get the
   // GPS-checked route (no no-location bypass). Rotating it revokes old links.
   personalClockTokenHash: text("personal_clock_token_hash").unique(),
+  // How many days before a certification's expiry the FIRST reminder email
+  // fires (the final 7-day notice is fixed in code). Owner picks 30/60/90.
+  certReminderLeadDays: integer("cert_reminder_lead_days")
+    .notNull()
+    .default(30),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -204,6 +209,31 @@ export const shiftOfferStatus = pgEnum("shift_offer_status", [
   "approved",
   "denied",
   "withdrawn",
+]);
+
+/**
+ * Kind of certification / qualification tracked for a staff member. `other`
+ * carries a free `cert_label`. These are plain expiry-tracked records — the app
+ * does no award/compliance interpretation beyond the expiry date.
+ */
+export const certType = pgEnum("cert_type", [
+  "rsa",
+  "rsg",
+  "food_safety",
+  "first_aid",
+  "wwcc",
+  "other",
+]);
+
+/**
+ * Which reminder email has already been sent for a certification, newest stage
+ * wins (early → final → expired). Null = none sent yet. Used to make the daily
+ * reminder job idempotent: each stage emails at most once.
+ */
+export const certReminderStage = pgEnum("cert_reminder_stage", [
+  "early",
+  "final",
+  "expired",
 ]);
 
 export const staffMembers = pgTable(
@@ -584,6 +614,45 @@ export const shiftOffers = pgTable(
   ],
 );
 
+/**
+ * A certification / qualification a staff member holds, tracked for expiry. Text
+ * + dates only — NO document upload/storage in this build. `cert_label` is a
+ * free label (required by the UI when `cert_type = 'other'`). `expiry_date` is a
+ * calendar date ("YYYY-MM-DD"), timezone-free like shift dates.
+ * `last_reminder_stage` records the most recent reminder email sent so the daily
+ * job is idempotent (each stage at most once); it's reset to null when the
+ * expiry date changes (a renewed cert re-arms its reminders). Expiry is FLAGGED
+ * and reminded only — never enforced anywhere.
+ */
+export const staffCertifications = pgTable(
+  "staff_certification",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    staffMemberId: uuid("staff_member_id")
+      .notNull()
+      .references(() => staffMembers.id, { onDelete: "cascade" }),
+    certType: certType("cert_type").notNull(),
+    certLabel: text("cert_label"),
+    referenceNumber: text("reference_number"),
+    expiryDate: date("expiry_date").notNull(),
+    lastReminderStage: certReminderStage("last_reminder_stage"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("staff_certification_business_idx").on(t.businessId),
+    index("staff_certification_staff_idx").on(t.staffMemberId),
+    index("staff_certification_expiry_idx").on(t.expiryDate),
+  ],
+);
+
 /* -------------------------------------------------------------------------- */
 /* Relations (for relational queries)                                         */
 /* -------------------------------------------------------------------------- */
@@ -711,3 +780,17 @@ export const shiftOffersRelations = relations(shiftOffers, ({ one }) => ({
     references: [staffMembers.id],
   }),
 }));
+
+export const staffCertificationsRelations = relations(
+  staffCertifications,
+  ({ one }) => ({
+    business: one(businesses, {
+      fields: [staffCertifications.businessId],
+      references: [businesses.id],
+    }),
+    staff: one(staffMembers, {
+      fields: [staffCertifications.staffMemberId],
+      references: [staffMembers.id],
+    }),
+  }),
+);
