@@ -222,6 +222,23 @@ export const itemSchema = z.object({
 
 export type ItemInput = z.infer<typeof itemSchema>;
 
+/* ----- Stock checks (inventory Part 2; flagged/reminders only) ----- */
+
+/**
+ * An item's stock status. A `safeParse` failure is how the staff form's "leave
+ * unchanged" (empty) option and any bad value are skipped, so keep this a plain
+ * enum with no coercion.
+ */
+export const stockStatusSchema = z.enum(["available", "low", "needs_order"]);
+export type StockStatusInput = z.infer<typeof stockStatusSchema>;
+
+/** Owner manual stock override: an item id plus a status (quantity optional). */
+export const stockOverrideSchema = z.object({
+  itemId: z.string().uuid(),
+  status: stockStatusSchema,
+  quantity: z.string().trim().max(40).optional(),
+});
+
 export type StaffInput = z.infer<typeof staffSchema>;
 export type TemplateInput = z.infer<typeof templateSchema>;
 export type PeriodInput = z.infer<typeof periodSchema>;

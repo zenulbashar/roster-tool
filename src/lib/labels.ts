@@ -59,6 +59,18 @@ export function weekdaysLabel(days: number[]): string {
     .join(", ");
 }
 
+/** Friendly labels for an item's stock status (owner UI + staff form). */
+export const STOCK_STATUS_LABEL: Record<string, string> = {
+  available: "In stock",
+  low: "Running low",
+  needs_order: "Needs ordering",
+};
+
+export function stockStatusLabel(status: string | null | undefined): string {
+  if (!status) return "Not checked yet";
+  return STOCK_STATUS_LABEL[status] ?? status;
+}
+
 /** Friendly label for a certification type. */
 export const CERT_TYPE_LABEL: Record<string, string> = {
   rsa: "RSA",
