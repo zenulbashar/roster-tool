@@ -10,6 +10,7 @@ import {
   type LeaveDecisionJob,
   type ShiftOfferDecisionJob,
   type CertReminderJob,
+  type OrderReminderJob,
 } from "./queues";
 import {
   handleAvailabilityRequest,
@@ -19,6 +20,7 @@ import {
   handleLeaveDecision,
   handleShiftOfferDecision,
   handleCertificationReminders,
+  handleOrderReminders,
 } from "./handlers";
 
 /** Cron for the daily clock-in photo retention sweep: 03:00 UTC every day. */
@@ -26,6 +28,9 @@ const PHOTO_RETENTION_CRON = "0 3 * * *";
 
 /** Cron for the daily certification expiry reminder sweep: 02:00 UTC. */
 const CERT_REMINDER_CRON = "0 2 * * *";
+
+/** Cron for the daily stock order-reminder sweep: 06:00 UTC. */
+const ORDER_REMINDER_CRON = "0 6 * * *";
 
 /**
  * pg-boss singleton. One instance per process (Next dev hot-reload safe via
@@ -179,6 +184,15 @@ export async function registerWorkers(): Promise<void> {
     },
   );
 
+  await boss.work<OrderReminderJob>(
+    QUEUES.orderReminder,
+    async (jobs: Job<OrderReminderJob>[]) => {
+      for (const _job of jobs) {
+        await handleOrderReminders();
+      }
+    },
+  );
+
   // Daily cron sweep of expired clock-in photos. Re-scheduling with the same
   // queue name is idempotent (pg-boss upserts the schedule), so booting the
   // worker repeatedly is safe. singletonKey collapses any overlapping runs.
@@ -195,6 +209,14 @@ export async function registerWorkers(): Promise<void> {
     CERT_REMINDER_CRON,
     {},
     { ...RETRY, tz: "UTC", singletonKey: QUEUES.certReminder },
+  );
+
+  // Daily stock order reminders (06:00 UTC). Idempotent reschedule.
+  await boss.schedule(
+    QUEUES.orderReminder,
+    ORDER_REMINDER_CRON,
+    {},
+    { ...RETRY, tz: "UTC", singletonKey: QUEUES.orderReminder },
   );
 
   logger.info("Workers registered");

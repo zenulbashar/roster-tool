@@ -20,6 +20,7 @@ import {
   shiftClaimApprovedEmail,
   shiftCoveredEmail,
   certificationReminderEmail,
+  orderReminderEmail,
 } from "@/lib/email";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { publishedRosters } from "@/lib/db/schema";
@@ -33,6 +34,10 @@ import {
 } from "@/lib/time";
 import { leaveTypeLabel, certDisplayLabel } from "@/lib/labels";
 import { dueReminderStage, daysUntil, expiryPhrase } from "@/lib/certification";
+import {
+  selectOrderReminders,
+  type ItemStatusForReminder,
+} from "@/lib/order-reminder";
 import { logger } from "@/lib/logger";
 import type {
   AvailabilityRequestJob,
@@ -486,6 +491,91 @@ export async function handleCertificationReminders(
     "Certification reminder sweep complete",
   );
   return totalSent;
+}
+
+/**
+ * Daily sweep: per business, email the OWNER one consolidated digest of
+ * suppliers whose order-by day is today (delivery date == today + cutoff) and
+ * that have items flagged `low` / `needs_order` (from the latest stock check).
+ *
+ * Idempotent per supplier via `last_order_reminder_date`: we only remind once
+ * per delivery cycle, advancing the cursor to the delivery date AFTER a
+ * successful send — so a re-run the same day is a no-op and the next cycle's
+ * different date re-arms it. Cursors advance per-business after that business's
+ * single email, so a mid-loop failure retries without double-emailing earlier
+ * businesses. Owner-less businesses are skipped. Tenant-scoped per business.
+ * Returns the number of supplier reminders sent (for tests/logging).
+ */
+export async function handleOrderReminders(
+  now: Date = new Date(),
+  deps: HandlerDeps = defaultDeps,
+): Promise<number> {
+  const bizRows = await db
+    .select({
+      id: businesses.id,
+      name: businesses.name,
+      timezone: businesses.timezone,
+    })
+    .from(businesses);
+
+  let totalSuppliers = 0;
+  let businessesEmailed = 0;
+
+  for (const biz of bizRows) {
+    const ownerEmails = (
+      await db
+        .select({ email: users.email })
+        .from(users)
+        .where(eq(users.businessId, biz.id))
+    ).map((u) => u.email);
+    if (ownerEmails.length === 0) continue;
+
+    const today = businessDateOf(now, biz.timezone);
+    const repo = createTenantRepo(biz.id);
+    const [suppliers, statuses] = await Promise.all([
+      repo.listSuppliersForReminder(),
+      repo.itemsWithCurrentStatus(),
+    ]);
+
+    const items: ItemStatusForReminder[] = statuses
+      .filter((s) => s.status !== null)
+      .map((s) => ({
+        itemId: s.itemId,
+        name: s.name,
+        supplierId: s.supplierId,
+        status: s.status!,
+        quantity: s.quantity,
+      }));
+
+    const due = selectOrderReminders(suppliers, items, today);
+    if (due.length === 0) continue;
+
+    const email = orderReminderEmail({
+      businessName: biz.name,
+      suppliers: due.map((d) => ({
+        supplierName: d.supplierName,
+        deliveryText: formatDateOnly(d.deliveryDate),
+        needsOrder: d.needsOrder,
+        low: d.low,
+      })),
+    });
+    for (const to of ownerEmails) {
+      await deps.send({ ...email, to });
+    }
+
+    // Advance cursors only after a successful send.
+    for (const d of due) {
+      await repo.markSupplierOrderReminded(d.supplierId, d.deliveryDate);
+    }
+    totalSuppliers += due.length;
+    businessesEmailed += 1;
+  }
+
+  logger.info(
+    { businessesEmailed, suppliersReminded: totalSuppliers },
+    "Order reminder sweep complete",
+  );
+  return totalSuppliers;
 }
 
 /**

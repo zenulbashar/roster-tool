@@ -30,8 +30,10 @@ import {
   staffCertifications,
   suppliers,
   items,
+  stockCheckEntries,
 } from "@/lib/db/schema";
 import type { LeaveType, CertTypeInput } from "@/lib/validation";
+import type { StockStatus } from "@/lib/order-reminder";
 import type { ReminderStage } from "@/lib/certification";
 import {
   claimEligibility,
@@ -2242,6 +2244,148 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .insert(items)
         .values(rows.map((r) => ({ ...r, businessId })))
         .returning();
+    },
+
+    /* ----- Stock checks (inventory Part 2; tracking + reminders only) ----- */
+
+    /**
+     * Active items for a stock check, supplier-then-name ordered (the staff
+     * check screen and owner Stock view group by supplier). No status here —
+     * statuses come from `itemsWithCurrentStatus`.
+     */
+    listActiveItemsForStockCheck() {
+      return database
+        .select({
+          id: items.id,
+          name: items.name,
+          unit: items.unit,
+          supplierId: items.supplierId,
+          supplierName: suppliers.name,
+        })
+        .from(items)
+        .leftJoin(suppliers, eq(suppliers.id, items.supplierId))
+        .where(and(eq(items.businessId, businessId), eq(items.isActive, true)))
+        .orderBy(asc(suppliers.name), asc(items.name));
+    },
+
+    /**
+     * Record stock checks for one or more items. Every item id is validated to
+     * belong to THIS business AND be active (others are silently dropped, never
+     * inserted), and `business_id` is forced — so a foreign or client-supplied
+     * item id can never create a row. `checkedByStaffId` is the authenticated
+     * staff member (staff flow) or null (owner manual override). Returns the
+     * number of entries actually written.
+     */
+    async recordStockCheck(
+      entries: Array<{
+        itemId: string;
+        status: StockStatus;
+        quantity?: string | null;
+      }>,
+      opts: { checkedByStaffId?: string | null; checkedAt?: Date } = {},
+    ): Promise<number> {
+      if (entries.length === 0) return 0;
+      const ids = [...new Set(entries.map((e) => e.itemId))];
+      const owned = await database
+        .select({ id: items.id })
+        .from(items)
+        .where(
+          and(
+            eq(items.businessId, businessId),
+            eq(items.isActive, true),
+            inArray(items.id, ids),
+          ),
+        );
+      const valid = new Set(owned.map((r) => r.id));
+      const checkedAt = opts.checkedAt ?? new Date();
+      const rows = entries
+        .filter((e) => valid.has(e.itemId))
+        .map((e) => ({
+          businessId,
+          itemId: e.itemId,
+          status: e.status,
+          quantity: e.quantity ?? null,
+          checkedByStaffId: opts.checkedByStaffId ?? null,
+          checkedAt,
+        }));
+      if (rows.length === 0) return 0;
+      await database.insert(stockCheckEntries).values(rows);
+      return rows.length;
+    },
+
+    /**
+     * Every (active) item with its CURRENT stock status — the most recent
+     * `stock_check_entry` per item (latest `checked_at`), or null when never
+     * checked. Includes the checker's name (null = owner-set). Powers the owner
+     * Stock view and the daily order-reminder job. Scoped to this business.
+     */
+    itemsWithCurrentStatus() {
+      const latest = database
+        .selectDistinctOn([stockCheckEntries.itemId], {
+          itemId: stockCheckEntries.itemId,
+          status: stockCheckEntries.status,
+          quantity: stockCheckEntries.quantity,
+          checkedAt: stockCheckEntries.checkedAt,
+          checkedByStaffId: stockCheckEntries.checkedByStaffId,
+        })
+        .from(stockCheckEntries)
+        .where(eq(stockCheckEntries.businessId, businessId))
+        .orderBy(stockCheckEntries.itemId, desc(stockCheckEntries.checkedAt))
+        .as("latest");
+
+      const checker = alias(staffMembers, "stock_checker");
+      return database
+        .select({
+          itemId: items.id,
+          name: items.name,
+          unit: items.unit,
+          supplierId: items.supplierId,
+          supplierName: suppliers.name,
+          status: latest.status,
+          quantity: latest.quantity,
+          checkedAt: latest.checkedAt,
+          checkedByStaffId: latest.checkedByStaffId,
+          checkedByName: checker.name,
+        })
+        .from(items)
+        .leftJoin(latest, eq(latest.itemId, items.id))
+        .leftJoin(suppliers, eq(suppliers.id, items.supplierId))
+        .leftJoin(checker, eq(checker.id, latest.checkedByStaffId))
+        .where(and(eq(items.businessId, businessId), eq(items.isActive, true)))
+        .orderBy(asc(suppliers.name), asc(items.name));
+    },
+
+    /** Suppliers with the fields the order-reminder job needs. */
+    listSuppliersForReminder() {
+      return database
+        .select({
+          id: suppliers.id,
+          name: suppliers.name,
+          deliveryDays: suppliers.deliveryDays,
+          orderCutoffDaysBefore: suppliers.orderCutoffDaysBefore,
+          lastOrderReminderDate: suppliers.lastOrderReminderDate,
+        })
+        .from(suppliers)
+        .where(eq(suppliers.businessId, businessId));
+    },
+
+    /**
+     * Advance a supplier's order-reminder cursor to the delivery date just
+     * reminded for (idempotency: a re-run the same day is then a no-op, and the
+     * next cycle's different date re-arms it). Scoped to this business.
+     */
+    async markSupplierOrderReminded(supplierId: string, deliveryDate: string) {
+      const [row] = await database
+        .update(suppliers)
+        .set({ lastOrderReminderDate: deliveryDate, updatedAt: new Date() })
+        .where(
+          and(
+            eq(suppliers.id, supplierId),
+            eq(suppliers.businessId, businessId),
+          ),
+        )
+        .returning();
+      return row ?? null;
     },
 
     /* ----- Published rosters ----- */

@@ -659,8 +659,10 @@ export const staffCertifications = pgTable(
  * supplier system. `delivery_days` holds the ISO weekday numbers (1=Mon … 7=Sun)
  * the supplier delivers on, stored as an integer array to match
  * `shift_template.weekdays`. `order_cutoff_days_before` is how many days before a
- * delivery day the owner wants an order-by reminder — stored now, used by the
- * Part 2 reminder job (this build sends no reminders).
+ * delivery day the owner wants an order-by reminder. `last_order_reminder_date`
+ * is the idempotency cursor for the daily order-reminder job (Part 2): the
+ * delivery date we last reminded for, set after a successful send so the job
+ * doesn't resend the same day and re-arms for the next delivery cycle.
  */
 export const suppliers = pgTable(
   "supplier",
@@ -678,6 +680,9 @@ export const suppliers = pgTable(
       .notNull()
       .default(1),
     notes: text("notes"),
+    // Part 2 order-reminder idempotency cursor (the delivery date last reminded
+    // for). Null until the first reminder fires for this supplier.
+    lastOrderReminderDate: date("last_order_reminder_date"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -719,6 +724,57 @@ export const items = pgTable(
   (t) => [
     index("item_business_idx").on(t.businessId),
     index("item_business_supplier_idx").on(t.businessId, t.supplierId),
+  ],
+);
+
+/**
+ * Where an item's stock currently sits, as set by a staff stock check or the
+ * owner. `available` = fine; `low` = running low; `needs_order` = order it. This
+ * is FLAGGED only — it never blocks anything; it just feeds the owner's Stock
+ * view and the daily order reminder.
+ */
+export const stockCheckStatus = pgEnum("stock_check_status", [
+  "available",
+  "low",
+  "needs_order",
+]);
+
+/**
+ * One stock check on one item (inventory Part 2; tracking + reminders only). The
+ * CURRENT status of an item is its most recent entry (latest `checked_at`).
+ * `checked_by_staff_id` is the staff member who recorded it via the PIN flow, or
+ * NULL when the OWNER set it manually (also nulled if that staff member is later
+ * deleted — the history row is kept). `quantity` is optional free text ("2
+ * boxes") — record-only, never parsed. The app records status and reminds the
+ * owner; it NEVER places orders.
+ */
+export const stockCheckEntries = pgTable(
+  "stock_check_entry",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    status: stockCheckStatus("status").notNull(),
+    quantity: text("quantity"),
+    checkedByStaffId: uuid("checked_by_staff_id").references(
+      () => staffMembers.id,
+      { onDelete: "set null" },
+    ),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("stock_check_entry_business_item_idx").on(t.businessId, t.itemId),
+    index("stock_check_entry_business_checked_idx").on(
+      t.businessId,
+      t.checkedAt,
+    ),
   ],
 );
 
@@ -872,7 +928,7 @@ export const suppliersRelations = relations(suppliers, ({ one, many }) => ({
   items: many(items),
 }));
 
-export const itemsRelations = relations(items, ({ one }) => ({
+export const itemsRelations = relations(items, ({ one, many }) => ({
   business: one(businesses, {
     fields: [items.businessId],
     references: [businesses.id],
@@ -881,4 +937,23 @@ export const itemsRelations = relations(items, ({ one }) => ({
     fields: [items.supplierId],
     references: [suppliers.id],
   }),
+  stockChecks: many(stockCheckEntries),
 }));
+
+export const stockCheckEntriesRelations = relations(
+  stockCheckEntries,
+  ({ one }) => ({
+    business: one(businesses, {
+      fields: [stockCheckEntries.businessId],
+      references: [businesses.id],
+    }),
+    item: one(items, {
+      fields: [stockCheckEntries.itemId],
+      references: [items.id],
+    }),
+    checkedBy: one(staffMembers, {
+      fields: [stockCheckEntries.checkedByStaffId],
+      references: [staffMembers.id],
+    }),
+  }),
+);

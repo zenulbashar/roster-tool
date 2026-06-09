@@ -6,6 +6,7 @@ import { PERSONAL_CLOCK_COOKIE } from "@/lib/kiosk-cookie";
 import { Banner, Card } from "@/components/ui";
 import { PersonalClockForm } from "@/components/PersonalClockForm";
 import { LeaveRequestForm } from "@/components/LeaveRequestForm";
+import { StockCheckForm } from "@/components/StockCheckForm";
 import { PinActionForm } from "@/components/PinActionForm";
 import {
   MyShiftsList,
@@ -18,6 +19,7 @@ import {
   personalClockReleaseAction,
   personalClockClaimAction,
   personalClockCancelOfferAction,
+  personalClockStockCheckAction,
 } from "@/app/clock/actions";
 import { businessDateOf, formatDateOnly, formatTimeOnly } from "@/lib/time";
 
@@ -83,6 +85,19 @@ export default async function PersonalClockPage({
           staffId={selected.id}
           staffName={selected.name}
           backHref="/clock"
+        />
+      );
+    }
+
+    if (mode === "stock") {
+      const items = await repo.listActiveItemsForStockCheck();
+      return (
+        <StockCheckForm
+          action={personalClockStockCheckAction}
+          staffId={selected.id}
+          staffName={selected.name}
+          items={items}
+          backHref={`/clock?staff=${selected.id}`}
         />
       );
     }

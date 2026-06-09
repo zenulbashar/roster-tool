@@ -22,8 +22,11 @@ timesheets, per-employee pay rates, a CSV export of approved hours, staff
 **shift swaps / open shifts** (one-directional release → claim → owner
 approves — see below), and **certification / qualification tracking** with
 owner expiry reminders (flagged, never enforced — see below), and
-**inventory foundations** — owner-managed **items (SKUs)** with CSV upload and
-**suppliers** with delivery days (**Part 1**: tracking only — see below).
+**inventory** — owner-managed **items (SKUs)** with CSV upload and **suppliers**
+with delivery days (**Part 1**: tracking — see below), plus **staff stock checks**
+(PIN, both clock surfaces) feeding an owner **Stock** view and **daily order
+reminders** before each supplier's delivery (**Part 2**: flagged/reminders only,
+never places orders — see below).
 
 **Out of scope (post-MVP):** SMS/WhatsApp, **payroll / wage calculation**
 (award interpretation, penalty rates, overtime, loading, super, STP — the app
@@ -36,12 +39,12 @@ approves the handover; only one-directional release/claim is built),
 **certificate document upload/storage** and any **hard enforcement** of
 certification expiry (certs are text + dates, flagged and reminded only — they
 never block rostering or clock-in),
-**stock checks / staff stock-marking and order reminders / scheduled ordering
-jobs** (these are inventory **Part 2**, not yet built), any **actual ordering,
-purchasing, supplier-system integration, pricing, invoicing or payments** (the
-inventory feature is tracking + reminders only — it never places orders), and
-**object storage** (inventory CSV is pasted text / parsed in memory, no file
-store),
+any **actual ordering, purchasing, supplier-system integration, pricing,
+invoicing or payments** (the inventory feature is tracking + reminders only — it
+never places orders), **reorder thresholds / par levels** (stock status is
+staff/owner-set, never auto-computed from a threshold — a possible future
+option), and **object storage** (inventory CSV is pasted text / parsed in
+memory, no file store),
 free-text reply parsing, billing, native apps,
 continuous/background location tracking. If a request drifts here, flag it
 rather than silently building it.
@@ -242,6 +245,44 @@ owner approval, not payroll export.
     repeats an earlier row in the same upload (first occurrence wins). A row
     **missing a name is an error** — reported in the preview, **never silently
     dropped**. Only `new` rows are inserted (`bulkInsertItems`, business-scoped).
+- **Inventory: stock checks + order reminders (Part 2 — flagged/reminders only)**:
+  staff record what's running low; the owner sees it and gets a reminder email
+  before each supplier's delivery. **This NEVER places orders, integrates with any
+  supplier system, or prices/invoices anything**, and there are **no reorder
+  thresholds / par levels** (status is staff/owner-set, not auto-computed).
+  - **Stock status**: an item's CURRENT status is its most recent
+    `stock_check_entry` (`available`/`low`/`needs_order`); each check also carries
+    an optional free-text `quantity` ("2 boxes" — record-only, never parsed).
+  - **Staff stock check** reuses the per-staff PIN auth (same lockout, **no
+    geofence** — not a clock action) in BOTH the personal-phone (`/clock`) and
+    shared kiosk (`/kiosk`) flows: a **"Stock check"** option (mode=stock) lists
+    the business's ACTIVE items grouped by supplier, each with a status choice
+    (leave unchanged / in stock / running low / needs ordering) and an optional
+    quantity. Items left unchanged aren't recorded (their previous status stands).
+    The shared core is `submitStockCheck` in `src/lib/stock-check-submission.ts`;
+    the business always comes from the flow's capability token, and the item ids
+    come from the repo (`listActiveItemsForStockCheck`) — the client only supplies
+    statuses, never ids.
+  - **Owner Stock page** (`/app/stock`, in the nav): items grouped by supplier
+    with their current status, who last checked (staff name, or "Manager" when
+    owner-set) and when, low/needs-ordering highlighted. The owner can **manually
+    set** an item's status (records an entry with `checked_by = NULL`), so
+    reminders don't depend on staff checking.
+  - **Order-by date**: a supplier is due to be ordered today when its delivery
+    date is exactly `today + order_cutoff_days_before` and that weekday is one of
+    its `delivery_days` (ISO 1–7). Equivalent to "order-by date == today", and
+    correct for multiple delivery days and cutoffs spanning a week boundary; a
+    cutoff of 0 reminds on the delivery day. Pure logic in
+    `src/lib/order-reminder.ts` (`orderByDeliveryDate`, `selectOrderReminders`).
+  - **Daily order-reminder job** (`order-reminder`, scheduled **06:00 UTC** in the
+    worker boot path beside photo-retention and cert-reminders) emails the
+    **owner** ONE consolidated digest per business of suppliers due today that have
+    items flagged `needs_order`/`low` ("Order from [supplier] before [delivery
+    date] — Need to order: …; Running low: …"). "Today" is computed per business
+    via `businessDateOf`. **Idempotent per supplier via
+    `supplier.last_order_reminder_date`** — set to the delivery date after a
+    successful send, so a re-run the same day is a no-op and the next cycle's
+    different date re-arms it. Owner-less businesses are skipped.
 
 ## Non-negotiable conventions
 
@@ -326,8 +367,8 @@ connection, the worker uses the direct connection (pg-boss needs session mode).
 `business`, `user` (owner) + Auth.js tables, `staff_member`, `shift_template`,
 `roster_period`, `shift`, `availability_request`, `availability_response`,
 `roster_assignment`, `published_roster`, `timesheet_entry`, `clock_photo`,
-`leave_request`, `shift_offer`, `staff_certification`, `supplier`, `item`. All
-domain tables are business-scoped.
+`leave_request`, `shift_offer`, `staff_certification`, `supplier`, `item`,
+`stock_check_entry`. All domain tables are business-scoped.
 
 Notable columns / conventions:
 
@@ -417,21 +458,34 @@ Notable columns / conventions:
   reminder fires. **Text + dates only — no documents; flagged/reminded, never
   enforced.** Pure status/stage maths in `src/lib/certification.ts`; the daily
   `cert-reminder` job emails the owner (see Key product decisions).
-- `supplier` — a supplier the business orders stock from (inventory Part 1;
-  tracking only). NOT-NULL `name`; nullable `contact_name`/`email`/`phone`/
-  `notes`; `delivery_days` (`integer[]`, NOT NULL default `{}`, **ISO 1–7** like
-  `shift_template.weekdays`); `order_cutoff_days_before` (integer, NOT NULL
-  default 1 — "order by X days before delivery", **stored now for the Part 2
-  reminder job, no effect yet**). Indexed on `business_id`. **The app never
-  places orders or integrates with any supplier system.**
-- `item` — an inventory item / SKU (inventory Part 1; tracking only). NOT-NULL
-  `name`; nullable free-text `sku_code`/`unit`; nullable `supplier_id` →
-  `supplier` **(set null on delete** — the item is kept, just unlinked);
-  `is_active` (NOT NULL default true — retire without deleting). Indexed on
-  `business_id` and `(business_id, supplier_id)`. CSV import parses/validates in
+- `supplier` — a supplier the business orders stock from (inventory). NOT-NULL
+  `name`; nullable `contact_name`/`email`/`phone`/`notes`; `delivery_days`
+  (`integer[]`, NOT NULL default `{}`, **ISO 1–7** like `shift_template.weekdays`);
+  `order_cutoff_days_before` (integer, NOT NULL default 1 — "order by X days
+  before delivery", used by the Part 2 reminder job); `last_order_reminder_date`
+  (date, nullable — the order-reminder idempotency cursor: the delivery date last
+  reminded for, set after a successful send). Indexed on `business_id`. **The app
+  never places orders or integrates with any supplier system.**
+- `item` — an inventory item / SKU (inventory; tracking only). NOT-NULL `name`;
+  nullable free-text `sku_code`/`unit`; nullable `supplier_id` → `supplier` **(set
+  null on delete** — the item is kept, just unlinked); `is_active` (NOT NULL
+  default true — retire without deleting). Indexed on `business_id` and
+  `(business_id, supplier_id)`. CSV import parses/validates in
   `src/lib/item-import.ts` (pure) and writes via `bulkInsertItems`; supplier
   matching is case-insensitive by name, dedupe is by name-or-sku (see Key product
-  decisions). **No quantities, pricing or ordering — Part 2.**
+  decisions).
+- `stock_check_entry` — one stock check on one item (inventory Part 2; tracking +
+  reminders only). NOT-NULL `item_id` → `item` (cascade); `status`
+  (`available`/`low`/`needs_order`); nullable free-text `quantity` (record-only,
+  never parsed); `checked_by_staff_id` → `staff_member` **(set null** — NULL means
+  the OWNER set it, and a deleted staff member's history rows null out);
+  NOT-NULL `checked_at`. Indexed on `(business_id, item_id)` and
+  `(business_id, checked_at)`. An item's CURRENT status is its latest entry
+  (`itemsWithCurrentStatus`, DISTINCT ON). Pure order-by/selection logic in
+  `src/lib/order-reminder.ts`; staff PIN-gated core in
+  `src/lib/stock-check-submission.ts`; the owner manages it on `/app/stock` and
+  the daily `order-reminder` job emails the owner (see Key product decisions).
+  **Flagged/reminders only — never enforced; the app never places orders.**
 
 ## Milestones
 
@@ -448,3 +502,4 @@ Notable columns / conventions:
 - [x] M11 — Shift swaps / open shifts (release → claim → owner-approved transfer, notifications)
 - [x] M12 — Certification tracking + daily expiry reminders (owner-managed, flagged not enforced)
 - [x] M13 — Inventory foundations Part 1: items (SKUs) + CSV import, suppliers with delivery days (tracking only; stock checks + order reminders are Part 2)
+- [x] M14 — Inventory Part 2: staff stock checks (PIN, both clock surfaces) + owner Stock view + daily order reminders (flagged/reminders only; never places orders)

@@ -24,6 +24,10 @@ import {
   withdrawOwnOffer,
   type ShiftActionResult,
 } from "@/lib/shift-offer-submission";
+import {
+  submitStockCheck,
+  type StockCheckResult,
+} from "@/lib/stock-check-submission";
 
 export type ClockResult =
   | { status: "idle" }
@@ -217,4 +221,14 @@ export async function kioskCancelOfferAction(
   const repo = await kioskRepo();
   if (!repo) return { status: "error", message: KIOSK_LINK_GONE };
   return withdrawOwnOffer(repo, formData);
+}
+
+/** Submit a stock check from the shared kiosk (PIN, no geofence). */
+export async function kioskStockCheckAction(
+  _prev: StockCheckResult,
+  formData: FormData,
+): Promise<StockCheckResult> {
+  const repo = await kioskRepo();
+  if (!repo) return { status: "error", message: KIOSK_LINK_GONE };
+  return submitStockCheck(repo, formData);
 }

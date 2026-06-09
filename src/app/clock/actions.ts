@@ -25,6 +25,10 @@ import {
   withdrawOwnOffer,
   type ShiftActionResult,
 } from "@/lib/shift-offer-submission";
+import {
+  submitStockCheck,
+  type StockCheckResult,
+} from "@/lib/stock-check-submission";
 
 export type ClockResult =
   | { status: "idle" }
@@ -251,4 +255,14 @@ export async function personalClockCancelOfferAction(
   const repo = await personalClockRepo();
   if (!repo) return { status: "error", message: LINK_GONE };
   return withdrawOwnOffer(repo, formData);
+}
+
+/** Submit a stock check from a staff member's own phone (PIN, no geofence). */
+export async function personalClockStockCheckAction(
+  _prev: StockCheckResult,
+  formData: FormData,
+): Promise<StockCheckResult> {
+  const repo = await personalClockRepo();
+  if (!repo) return { status: "error", message: LINK_GONE };
+  return submitStockCheck(repo, formData);
 }

@@ -206,3 +206,4 @@ tests/            unit + integration tests
 - [x] M11 — Shift swaps / open shifts (release → claim → owner-approved transfer, notifications)
 - [x] M12 — Certification tracking + daily expiry reminders (owner-managed, flagged not enforced)
 - [x] M13 — Inventory foundations Part 1: items (SKUs) + CSV import, suppliers with delivery days (tracking only; stock checks + order reminders are Part 2)
+- [x] M14 — Inventory Part 2: staff stock checks (PIN, both clock surfaces) + owner Stock view + daily order reminders (flagged/reminders only; never places orders)

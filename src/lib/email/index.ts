@@ -7,4 +7,5 @@ export {
   shiftClaimApprovedEmail,
   shiftCoveredEmail,
   certificationReminderEmail,
+  orderReminderEmail,
 } from "./templates";
