@@ -36,6 +36,29 @@ export function leaveTypeLabel(type: string): string {
   return LEAVE_TYPE_LABEL[type] ?? "Leave";
 }
 
+/**
+ * Short labels for ISO weekday numbers (1=Mon … 7=Sun), the convention used by
+ * `shift_template.weekdays` and `supplier.delivery_days`.
+ */
+export const WEEKDAY_SHORT_LABEL: Record<number, string> = {
+  1: "Mon",
+  2: "Tue",
+  3: "Wed",
+  4: "Thu",
+  5: "Fri",
+  6: "Sat",
+  7: "Sun",
+};
+
+/** A sorted "Mon, Wed, Fri" summary of ISO weekday numbers (empty → "—"). */
+export function weekdaysLabel(days: number[]): string {
+  if (!days || days.length === 0) return "—";
+  return [...days]
+    .sort((a, b) => a - b)
+    .map((d) => WEEKDAY_SHORT_LABEL[d] ?? String(d))
+    .join(", ");
+}
+
 /** Friendly label for a certification type. */
 export const CERT_TYPE_LABEL: Record<string, string> = {
   rsa: "RSA",
