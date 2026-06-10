@@ -1,9 +1,6 @@
 import Link from "next/link";
 import { Card } from "@/components/ui";
-import type {
-  GettingStarted,
-  GettingStartedStep,
-} from "@/lib/getting-started";
+import type { GettingStarted, GettingStartedStep } from "@/lib/getting-started";
 
 /**
  * The owner dashboard "Getting started" checklist. Purely presentational —
@@ -66,8 +63,8 @@ export function GettingStartedCard({ data }: { data: GettingStarted }) {
         </p>
       </div>
       <p className="mt-1 text-sm text-[var(--color-muted)]">
-        Welcome! A few quick steps and your roster is up and running. This
-        list ticks itself off as you go, and disappears when you’re set up.
+        Welcome! A few quick steps and your roster is up and running. This list
+        ticks itself off as you go, and disappears when you’re set up.
       </p>
       <ul className="mt-3 divide-y divide-[var(--color-line)]">
         {data.coreSteps.map((s) => (
