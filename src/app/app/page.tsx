@@ -11,6 +11,8 @@ import {
   resolveWindow,
 } from "@/lib/labour-report";
 import { PageHeader, Card } from "@/components/ui";
+import { buildGettingStarted } from "@/lib/getting-started";
+import { GettingStartedCard } from "@/components/GettingStartedCard";
 
 const links = [
   {
@@ -34,6 +36,8 @@ export default async function DashboardPage() {
   // Compact current-week labour summary (read-only) for the home page.
   const repo = await ownerRepo();
   const business = await repo.getBusiness();
+  // Setup checklist, derived from existing data; hidden once core steps done.
+  const gettingStarted = buildGettingStarted(await repo.getSetupFlags());
   const tz = business?.timezone ?? DEFAULT_TIMEZONE;
   const today = businessDateOf(new Date(), tz);
   const window = resolveWindow("current", { today });
@@ -56,6 +60,10 @@ export default async function DashboardPage() {
   return (
     <>
       <PageHeader title="Welcome" subtitle="What would you like to do?" />
+
+      {gettingStarted.showChecklist ? (
+        <GettingStartedCard data={gettingStarted} />
+      ) : null}
 
       <Card className="mb-6">
         <div className="flex items-baseline justify-between gap-3">
