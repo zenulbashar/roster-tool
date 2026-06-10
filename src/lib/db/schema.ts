@@ -82,6 +82,12 @@ export const businesses = pgTable("business", {
   notifyAvailabilityReply: boolean("notify_availability_reply")
     .notNull()
     .default(true),
+  // Whether the daily IN-APP shift reminder ("you work tomorrow") is created
+  // for this business's staff. Business-level (staff have no settings surface);
+  // on by default. In-app only — this never sends email.
+  staffShiftRemindersEnabled: boolean("staff_shift_reminders_enabled")
+    .notNull()
+    .default(true),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -280,6 +286,12 @@ export const staffMembers = pgTable(
     payRateCents: integer("pay_rate_cents"),
     rateType: rateType("rate_type").notNull().default("flat"),
     rateLabel: text("rate_label"),
+    // SHA-256 hash of this staff member's PRIVATE notices capability token
+    // (the /me/<token> link). Mirrors business.kiosk_token_hash: only the hash
+    // is stored, the raw token lives in the link/cookie, rotating revokes old
+    // links. Null = no link generated yet. The link identifies WHO; their PIN
+    // proves it's them before anything personal is shown.
+    noticesTokenHash: text("notices_token_hash").unique(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -835,6 +847,51 @@ export const notifications = pgTable(
   (t) => [
     index("notification_business_read_idx").on(t.businessId, t.isRead),
     index("notification_business_created_idx").on(t.businessId, t.createdAt),
+  ],
+);
+
+export const staffNotificationType = pgEnum("staff_notification_type", [
+  "leave_decided",
+  "shift_swap_approved",
+  "rostered",
+  "shift_reminder",
+]);
+
+/**
+ * A STAFF-facing in-app notification ("notice"), keyed to one staff member.
+ * Shown only on that person's PIN-gated /me page (capability link). Created
+ * best-effort via `notifyStaff` at the event source, IN ADDITION to the
+ * existing staff emails — never a replacement. `dedupe_key` is the daily
+ * shift-reminder's idempotency handle: a unique index + ON CONFLICT DO NOTHING
+ * makes re-running the job a no-op (event notices leave it NULL; Postgres
+ * unique indexes allow multiple NULLs).
+ */
+export const staffNotifications = pgTable(
+  "staff_notification",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    staffMemberId: uuid("staff_member_id")
+      .notNull()
+      .references(() => staffMembers.id, { onDelete: "cascade" }),
+    type: staffNotificationType("type").notNull(),
+    title: text("title").notNull(),
+    body: text("body"),
+    isRead: boolean("is_read").notNull().default(false),
+    dedupeKey: text("dedupe_key"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("staff_notification_staff_read_idx").on(t.staffMemberId, t.isRead),
+    index("staff_notification_business_created_idx").on(
+      t.businessId,
+      t.createdAt,
+    ),
+    uniqueIndex("staff_notification_dedupe_key_idx").on(t.dedupeKey),
   ],
 );
 
