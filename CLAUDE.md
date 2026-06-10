@@ -31,7 +31,11 @@ read-only owner report page + dashboard summary over existing timesheets/rates
 (hours and an `hours × rate` **estimate**, never a payroll calculation — see
 below), and **owner in-app notifications** — a header bell (unread count +
 dropdown) fed by the existing events, with per-event on/off preferences
-(**owner only**; staff-facing notifications are out of scope — see below).
+(see below), and **staff in-app notices** — a per-staff PRIVATE notices page
+(`/me/<token>` capability link, PIN-gated) fed by leave decisions, swap
+approvals and roster publishes, plus a daily **in-app-only shift reminder**
+("you work tomorrow" — never an email), all IN ADDITION to the existing staff
+emails (see below).
 
 **Out of scope (post-MVP):** SMS/WhatsApp, **payroll / wage calculation**
 (award interpretation, penalty rates, overtime, loading, super, STP — the app
@@ -39,10 +43,11 @@ only records hours and a rate the owner typed, and shows an `hours × rate`
 estimate), **payroll API integration** (Xero/MYOB — file export only),
 **leave balances / accruals / entitlements** and any **NES/award leave
 calculation** (leave is request → approve/deny → record only),
-**staff-facing in-app notifications** (notifications are OWNER-only — staff have
-no persistent session, authing per action via PIN, so that needs a separate
-mechanism and a later decision; not built here) and any **real-time/websocket
-push** for notifications (the bell is server-driven, refreshing on
+**persistent staff logins/accounts** (staff notices use a per-staff capability
+link + PIN with a SHORT-LIVED signed proof, never a session or account),
+**email for the daily shift reminder** (it is in-app ONLY, protecting the email
+send limit) and any **real-time/websocket push** for notifications (the owner
+bell and the staff notices page are server-driven, refreshing on
 navigation/refresh),
 **bilateral A↔B shift swaps** and **auto-approval** of swaps (the owner always
 approves the handover; only one-directional release/claim is built),
@@ -157,9 +162,9 @@ owner approval, not payroll export.
 - **Owner in-app notifications**: a header **bell** with an unread count + a
   dropdown of recent notifications, plus a full list at `/app/notifications`
   (reached from the bell, **not** in the nav) and per-event on/off **preferences**
-  in Settings. **Owner only** — staff have no persistent session, so staff-facing
-  notifications are out of scope (a later, separate mechanism). These are **IN
-  ADDITION to the existing emails**, never a replacement.
+  in Settings. **Owner only** — the staff analog is the separate staff notices
+  system (`/me`, see "Staff in-app notices" below). These are **IN ADDITION to
+  the existing emails**, never a replacement.
   - **Five event types** (`notification_type`): `leave_requested`,
     `shift_offer_activity` (released or claimed), `stock_needs_order`,
     `cert_expiring`, `availability_reply`. The set is fixed.
@@ -187,6 +192,52 @@ owner approval, not payroll export.
     navigates (tenant-scoped `markNotificationRead`, foreign id no-ops; redirect
     restricted to internal `/…` paths); "mark all as read" clears the rest. All
     reads/writes are scoped via `ownerRepo()`.
+- **Staff in-app notices**: a per-staff PRIVATE notifications page at `/me`,
+  plus a daily in-app shift reminder. **IN ADDITION to the existing staff
+  emails (leave decisions, swap approvals, published rosters) — never a
+  replacement; no email is removed or changed.** Still NO persistent staff
+  login: the page uses a capability link + PIN.
+  - **The /me capability link is PER STAFF MEMBER** (`staff_member.
+    notices_token_hash`, generated/rotated by the owner on the Staff page,
+    raw link shown once — exactly the kiosk-link pattern). `/me/<token>`
+    validates, drops the token into an httpOnly cookie scoped to `/me`
+    (`resolveNoticesStaff` in `src/lib/tenant/notices-access.ts` — inactive
+    staff and rotated tokens don't resolve), and redirects clean. The link
+    identifies WHO; because the page shows personal info it then **requires
+    that staff member's PIN** (same verify + per-staff lockout as the clock
+    surfaces) before anything is shown.
+  - **The PIN check is kept alive by a SHORT-LIVED signed proof, not a
+    session**: a correct PIN sets a second httpOnly cookie (`staffId.expiry.
+    hmac`, AUTH_SECRET-signed, 15 min — `src/lib/notices-verification.ts`,
+    unit-tested for expiry/tamper/identity). Every render AND every action
+    re-checks both cookies and that the proof is bound to the SAME staff
+    member the token resolved to. Nothing stored server-side; it expires and
+    the PIN is re-entered.
+  - **Strict per-staff scoping**: all reads/writes go through repo methods
+    that filter by `business_id` AND `staff_member_id` (foreign ids no-op);
+    the staff member is always derived from the token hash, never client
+    input. No path from /me into /app or another person's data.
+  - **Four notice types** (`staff_notification_type`): `leave_decided` (owner
+    approves/denies a request — beside the decision-email enqueue),
+    `shift_swap_approved` (offer approval — the claimer, and the releaser if
+    any, beside the approval emails), `rostered` (publish — each
+    confirmed-assignment staff member, beside the roster emails), and
+    `shift_reminder` (the daily job). The first three are created in the
+    owner server actions via **best-effort `notifyStaff`**
+    (`src/lib/staff-notifications.ts`) — a notice failure never breaks the
+    decision/publish.
+  - **Daily shift reminder job** (`staff-shift-reminder`, 07:00 UTC ≈ 5–6 pm
+    Sydney, beside the other daily crons): per business, one "you work
+    tomorrow" notice per staff member with a confirmed assignment on
+    tomorrow's business-local date in a PUBLISHED roster (inactive staff and
+    suggested assignments excluded). **IN-APP ONLY — the handler never touches
+    the mailer.** Idempotent per staff per date via `dedupe_key`
+    (`shift_reminder:<staffId>:<date>`, unique index + ON CONFLICT DO
+    NOTHING), so re-runs/retries are no-ops; inserts are NOT best-effort in
+    the job so real failures throw and pg-boss retries. Pure grouping/message
+    logic in `src/lib/staff-shift-reminder.ts`. Owner can turn the reminder
+    off per business (`staff_shift_reminders_enabled`, Settings → "Team
+    notices", default on).
 - **Owner getting-started checklist**: a "Getting started" card at the top of
   the owner dashboard (`/app`) walking a new owner through setup. **Step state
   is DERIVED from existing data — never a manual checkbox**: four CORE steps
@@ -470,7 +521,8 @@ connection, the worker uses the direct connection (pg-boss needs session mode).
 `roster_period`, `shift`, `availability_request`, `availability_response`,
 `roster_assignment`, `published_roster`, `timesheet_entry`, `clock_photo`,
 `leave_request`, `shift_offer`, `staff_certification`, `supplier`, `item`,
-`stock_check_entry`, `notification`. All domain tables are business-scoped.
+`stock_check_entry`, `notification`, `staff_notification`. All domain tables
+are business-scoped.
 
 Notable columns / conventions:
 
@@ -597,7 +649,23 @@ Notable columns / conventions:
   and **preference-gated** via `notifyOwner` (`src/lib/notifications.ts`) at each
   event source; **IN ADDITION to the existing emails**. Per-event preferences are
   five `notify_*` boolean columns on `business` (all NOT NULL default true).
-  **Owner only — no staff-facing notifications.**
+  **Owner only — the staff analog is `staff_notification` below.**
+- `staff_notification` — a STAFF-facing in-app notice, keyed to ONE staff
+  member (`staff_member_id`, cascade) and shown only on their PIN-gated `/me`
+  page. NOT-NULL `type` (`staff_notification_type`: `leave_decided`/
+  `shift_swap_approved`/`rostered`/`shift_reminder`), NOT-NULL `title`,
+  nullable `body`, `is_read` (NOT NULL default false), nullable `dedupe_key`
+  (**unique index** — the daily shift reminder's idempotency:
+  `shift_reminder:<staffId>:<date>` inserted ON CONFLICT DO NOTHING; event
+  notices leave it NULL), `created_at`. Indexed on
+  `(staff_member_id, is_read)` and `(business_id, created_at)`. Created
+  best-effort via `notifyStaff` (`src/lib/staff-notifications.ts`) at the
+  event sources, or directly (NOT best-effort) by the `staff-shift-reminder`
+  job. **IN ADDITION to the existing staff emails — never a replacement.**
+  Related columns: `staff_member.notices_token_hash` (nullable, unique — the
+  SHA-256 hash of that person's `/me` capability token; rotate to revoke) and
+  `business.staff_shift_reminders_enabled` (NOT NULL default true — the
+  business-level toggle for the daily in-app reminder).
 
 ## Milestones
 
@@ -618,3 +686,4 @@ Notable columns / conventions:
 - [x] M15 — Hours & labour-cost reporting: owner report page (`/app/reports`) + dashboard summary, read-only over existing timesheets/rates (estimate only — no payroll/award calculation; no schema change)
 - [x] M16 — Owner in-app notifications: header bell (unread count + dropdown) + `/app/notifications` + per-event preferences, fed best-effort from the five existing events (owner only; emails unchanged; no realtime)
 - [x] M17 — Owner getting-started checklist on the dashboard: step state derived from existing data (no manual ticking), core steps gate visibility (auto-hides when all four are done; optional inventory steps never keep it alive); read-only, no schema change
+- [x] M18 — Staff in-app notices: per-staff PIN-gated `/me` page (capability link + short-lived signed proof), notices at leave decisions / swap approvals / publishes (additive to emails), and a daily IN-APP-ONLY shift reminder (idempotent via dedupe key; business-level toggle)
