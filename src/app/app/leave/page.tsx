@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ownerRepo } from "@/lib/auth/context";
 import { enqueueLeaveDecision } from "@/lib/jobs/boss";
+import { notifyStaff } from "@/lib/staff-notifications";
 import { leaveRequestSchema } from "@/lib/validation";
 import { leaveTypeLabel } from "@/lib/labels";
 import { businessDateOf, formatDateRange } from "@/lib/time";
@@ -50,7 +51,16 @@ export default async function LeavePage({
     const repo = await ownerRepo();
     const id = String(formData.get("id"));
     const decided = await repo.decideLeaveRequest(id, "approved");
-    if (decided) await enqueueLeaveDecision({ leaveRequestId: id });
+    if (decided) {
+      await enqueueLeaveDecision({ leaveRequestId: id });
+      // In-app notice for the requester, in addition to the decision email.
+      await notifyStaff(repo, {
+        staffMemberId: decided.staffMemberId,
+        type: "leave_decided",
+        title: "Your leave was approved",
+        body: `${leaveTypeLabel(decided.leaveType)} · ${formatDateRange(decided.startDate, decided.endDate)}`,
+      });
+    }
     revalidatePath(PATH);
     redirect(`${PATH}?approved=1`);
   }
@@ -60,7 +70,15 @@ export default async function LeavePage({
     const repo = await ownerRepo();
     const id = String(formData.get("id"));
     const decided = await repo.decideLeaveRequest(id, "denied");
-    if (decided) await enqueueLeaveDecision({ leaveRequestId: id });
+    if (decided) {
+      await enqueueLeaveDecision({ leaveRequestId: id });
+      await notifyStaff(repo, {
+        staffMemberId: decided.staffMemberId,
+        type: "leave_decided",
+        title: "Your leave request was declined",
+        body: `${leaveTypeLabel(decided.leaveType)} · ${formatDateRange(decided.startDate, decided.endDate)}`,
+      });
+    }
     revalidatePath(PATH);
     redirect(`${PATH}?denied=1`);
   }

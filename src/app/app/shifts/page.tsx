@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ownerRepo } from "@/lib/auth/context";
 import { enqueueShiftOfferDecision } from "@/lib/jobs/boss";
+import { notifyStaff } from "@/lib/staff-notifications";
 import { timesOverlap } from "@/lib/shift-offer";
 import { businessDateOf, formatDateOnly, formatTimeOnly } from "@/lib/time";
 import { Banner, Button, Card, PageHeader } from "@/components/ui";
@@ -61,6 +62,29 @@ export default async function ShiftsPage({
       redirect(`${PATH}?error=${encodeURIComponent(res.reason)}`);
     }
     await enqueueShiftOfferDecision({ shiftOfferId: offerId });
+
+    // In-app notices for the people in the handover, in addition to the
+    // approval emails the job above sends.
+    const { offer } = res;
+    const shift = await repo.getPublishedShift(offer.shiftId);
+    if (shift && offer.claimedByStaffId) {
+      const when = `${formatDateOnly(shift.date)} · ${shift.label} · ${formatTimeOnly(shift.startTime)} – ${formatTimeOnly(shift.endTime)}`;
+      await notifyStaff(repo, {
+        staffMemberId: offer.claimedByStaffId,
+        type: "shift_swap_approved",
+        title: "You got the shift",
+        body: when,
+      });
+      if (offer.offeredByStaffId) {
+        const claimer = await repo.getStaff(offer.claimedByStaffId);
+        await notifyStaff(repo, {
+          staffMemberId: offer.offeredByStaffId,
+          type: "shift_swap_approved",
+          title: "Your shift is covered",
+          body: claimer ? `${claimer.name} will work ${when}` : when,
+        });
+      }
+    }
     revalidatePath(PATH);
     redirect(`${PATH}?approved=1`);
   }
