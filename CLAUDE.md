@@ -198,7 +198,7 @@ owner approval, not payroll export.
   replacement; no email is removed or changed.** Still NO persistent staff
   login: the page uses a capability link + PIN.
   - **The /me capability link is PER STAFF MEMBER** (`staff_member.
-    notices_token_hash`, generated/rotated by the owner on the Staff page,
+notices_token_hash`, generated/rotated by the owner on the Staff page,
     raw link shown once — exactly the kiosk-link pattern). `/me/<token>`
     validates, drops the token into an httpOnly cookie scoped to `/me`
     (`resolveNoticesStaff` in `src/lib/tenant/notices-access.ts` — inactive
@@ -208,7 +208,7 @@ owner approval, not payroll export.
     surfaces) before anything is shown.
   - **The PIN check is kept alive by a SHORT-LIVED signed proof, not a
     session**: a correct PIN sets a second httpOnly cookie (`staffId.expiry.
-    hmac`, AUTH_SECRET-signed, 15 min — `src/lib/notices-verification.ts`,
+hmac`, AUTH_SECRET-signed, 15 min — `src/lib/notices-verification.ts`,
     unit-tested for expiry/tamper/identity). Every render AND every action
     re-checks both cookies and that the proof is bound to the SAME staff
     member the token resolved to. Nothing stored server-side; it expires and
