@@ -9,6 +9,7 @@ import {
 import { pinSchema } from "@/lib/validation";
 import { timesOverlap } from "@/lib/shift-offer";
 import { formatDateOnly, formatTimeOnly } from "@/lib/time";
+import { notifyOwner } from "@/lib/notifications";
 
 /**
  * Shared cores for staff releasing / claiming / cancelling shift offers from
@@ -95,6 +96,14 @@ export async function releaseShiftForStaff(
   const res = await repo.releaseOwnShift(auth.staff.id, shiftId);
   if (!res.ok) return { status: "error", message: res.reason };
 
+  // Best-effort owner notification; the owner manages offers on /app/shifts.
+  await notifyOwner(repo, {
+    type: "shift_offer_activity",
+    title: `${auth.staff.name} offered up a shift`,
+    body: "Someone can now claim it, then you approve the handover.",
+    linkPath: "/app/shifts",
+  });
+
   return {
     status: "success",
     message: `Thanks ${auth.staff.name}, your shift is now offered up. You stay on it until your manager confirms a replacement.`,
@@ -138,6 +147,14 @@ export async function claimShiftForStaff(
         " Heads up: this overlaps another shift you're on that day — your manager will see that.";
     }
   }
+
+  // Best-effort owner notification: a claim needs the owner to approve it.
+  await notifyOwner(repo, {
+    type: "shift_offer_activity",
+    title: `${auth.staff.name} claimed an open shift`,
+    body: when ? `Claimed${when}. Approve to confirm.` : "Approve to confirm.",
+    linkPath: "/app/shifts",
+  });
 
   return {
     status: "success",

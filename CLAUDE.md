@@ -29,7 +29,9 @@ reminders** before each supplier's delivery (**Part 2**: flagged/reminders only,
 never places orders — see below), and **hours & labour-cost reporting** — a
 read-only owner report page + dashboard summary over existing timesheets/rates
 (hours and an `hours × rate` **estimate**, never a payroll calculation — see
-below).
+below), and **owner in-app notifications** — a header bell (unread count +
+dropdown) fed by the existing events, with per-event on/off preferences
+(**owner only**; staff-facing notifications are out of scope — see below).
 
 **Out of scope (post-MVP):** SMS/WhatsApp, **payroll / wage calculation**
 (award interpretation, penalty rates, overtime, loading, super, STP — the app
@@ -37,6 +39,11 @@ only records hours and a rate the owner typed, and shows an `hours × rate`
 estimate), **payroll API integration** (Xero/MYOB — file export only),
 **leave balances / accruals / entitlements** and any **NES/award leave
 calculation** (leave is request → approve/deny → record only),
+**staff-facing in-app notifications** (notifications are OWNER-only — staff have
+no persistent session, authing per action via PIN, so that needs a separate
+mechanism and a later decision; not built here) and any **real-time/websocket
+push** for notifications (the bell is server-driven, refreshing on
+navigation/refresh),
 **bilateral A↔B shift swaps** and **auto-approval** of swaps (the owner always
 approves the handover; only one-directional release/claim is built),
 **certificate document upload/storage** and any **hard enforcement** of
@@ -147,6 +154,39 @@ owner approval, not payroll export.
     read (`listEntriesForLabourReport`). Tested at week/timezone boundaries
     (`tests/labour-report.test.ts`) and end-to-end against Postgres
     (`tests/labour-report-flow.test.ts`).
+- **Owner in-app notifications**: a header **bell** with an unread count + a
+  dropdown of recent notifications, plus a full list at `/app/notifications`
+  (reached from the bell, **not** in the nav) and per-event on/off **preferences**
+  in Settings. **Owner only** — staff have no persistent session, so staff-facing
+  notifications are out of scope (a later, separate mechanism). These are **IN
+  ADDITION to the existing emails**, never a replacement.
+  - **Five event types** (`notification_type`): `leave_requested`,
+    `shift_offer_activity` (released or claimed), `stock_needs_order`,
+    `cert_expiring`, `availability_reply`. The set is fixed.
+  - **Creation is best-effort + preference-gated.** `notifyOwner(repo, {...})`
+    in `src/lib/notifications.ts` reads the business's prefs, **skips** if the
+    type is off, else inserts — all wrapped in try/catch that logs and **never
+    throws**, so a notification failure can't break the underlying action
+    (leave/stock/clock/availability still succeed). Pure `prefEnabled` /
+    `relativeTime` are unit-tested.
+  - **Where they're created** (after the successful write, tenant-scoped, the
+    `businessId` from the event's own server context — never client input):
+    `submitStaffLeave`, `releaseShiftForStaff`/`claimShiftForStaff`,
+    `submitStockCheck` (only when an item is flagged `needs_order`) — all in the
+    **shared submission cores**, so BOTH the kiosk and personal-phone surfaces
+    are covered in one place — plus the `/a/[token]` availability reply action
+    and the worker's `cert-reminder` job (mirrors the digest; the **email is
+    unchanged**, only the extra in-app row is pref-gated).
+  - **Preferences are five boolean columns on `business`** (`notify_*`, all
+    default true) — a fixed five-event set makes columns simpler than a side
+    table (no row-existence/default ambiguity). Toggled in Settings via a
+    tenant-scoped action.
+  - **The bell is server-driven** (no websockets): the owner layout reads the
+    unread count + recent list per request (owner pages are dynamic), so it
+    refreshes on navigation/refresh. Clicking an item marks it read and
+    navigates (tenant-scoped `markNotificationRead`, foreign id no-ops; redirect
+    restricted to internal `/…` paths); "mark all as read" clears the rest. All
+    reads/writes are scoped via `ownerRepo()`.
 - **Leave requests & approvals**: staff request time off, the owner approves or
   denies. **Record only** — NO leave balances, accruals or entitlements, and NO
   NES/award/payroll leave calculation; it's purely request → approve/deny →
@@ -363,7 +403,10 @@ owner approval, not payroll export.
   four top-level items: **Rosters** (Rosters/`/app/periods`, Shift types/`/app/templates`,
   Shifts/`/app/shifts`, Timesheets/`/app/timesheets`, Reports/`/app/reports`), **Team** (Staff, Leave,
   Certifications), **Orders** (Stock levels/`/app/stock`, Items, Suppliers), and a
-  standalone **Settings**. `OwnerNav` is a client component using `usePathname` for
+  standalone **Settings**. The header also carries a **notification bell**
+  (`NotificationBell`, right of "Sign out") with an unread count + dropdown; the
+  owner layout reads the count/list per request via `ownerRepo`. `OwnerNav` is a
+  client component using `usePathname` for
   active highlighting (active group + item); click-to-open dropdowns (Escape +
   outside-click close) on desktop, a hamburger panel on mobile. **Nav labels +
   grouping only** — every page keeps its current URL (`/app/stock`'s label is
@@ -409,7 +452,7 @@ connection, the worker uses the direct connection (pg-boss needs session mode).
 `roster_period`, `shift`, `availability_request`, `availability_response`,
 `roster_assignment`, `published_roster`, `timesheet_entry`, `clock_photo`,
 `leave_request`, `shift_offer`, `staff_certification`, `supplier`, `item`,
-`stock_check_entry`. All domain tables are business-scoped.
+`stock_check_entry`, `notification`. All domain tables are business-scoped.
 
 Notable columns / conventions:
 
@@ -527,6 +570,16 @@ Notable columns / conventions:
   `src/lib/stock-check-submission.ts`; the owner manages it on `/app/stock` and
   the daily `order-reminder` job emails the owner (see Key product decisions).
   **Flagged/reminders only — never enforced; the app never places orders.**
+- `notification` — an owner-facing in-app notification (the header bell). NOT-NULL
+  `type` (`notification_type`: `leave_requested`/`shift_offer_activity`/
+  `stock_needs_order`/`cert_expiring`/`availability_reply`), NOT-NULL `title`,
+  nullable `body`/`link_path` (where clicking it goes, e.g. `/app/leave`),
+  `is_read` (NOT NULL default false), `created_at`. Indexed on
+  `(business_id, is_read)` and `(business_id, created_at)`. Created best-effort
+  and **preference-gated** via `notifyOwner` (`src/lib/notifications.ts`) at each
+  event source; **IN ADDITION to the existing emails**. Per-event preferences are
+  five `notify_*` boolean columns on `business` (all NOT NULL default true).
+  **Owner only — no staff-facing notifications.**
 
 ## Milestones
 
@@ -545,3 +598,4 @@ Notable columns / conventions:
 - [x] M13 — Inventory foundations Part 1: items (SKUs) + CSV import, suppliers with delivery days (tracking only; stock checks + order reminders are Part 2)
 - [x] M14 — Inventory Part 2: staff stock checks (PIN, both clock surfaces) + owner Stock view + daily order reminders (flagged/reminders only; never places orders)
 - [x] M15 — Hours & labour-cost reporting: owner report page (`/app/reports`) + dashboard summary, read-only over existing timesheets/rates (estimate only — no payroll/award calculation; no schema change)
+- [x] M16 — Owner in-app notifications: header bell (unread count + dropdown) + `/app/notifications` + per-event preferences, fed best-effort from the five existing events (owner only; emails unchanged; no realtime)
