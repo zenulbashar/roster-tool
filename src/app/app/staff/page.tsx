@@ -1,8 +1,12 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { ownerRepo } from "@/lib/auth/context";
+import { env } from "@/lib/env";
 import { staffSchema, pinSchema, payRateSchema } from "@/lib/validation";
 import { hashPin } from "@/lib/pin";
+import { generateToken } from "@/lib/tokens";
+import { ClearFlashCookie } from "@/components/ClearFlashCookie";
 import {
   Banner,
   Button,
@@ -13,6 +17,13 @@ import {
 } from "@/components/ui";
 
 const PATH = "/app/staff";
+
+/**
+ * Once-only flash cookie for a freshly generated notices link, carrying
+ * "<staffId>:<token>" so the link renders beside the right person. Same
+ * pattern as the kiosk link in Settings; only the hash is ever stored.
+ */
+const NOTICES_LINK_COOKIE = "notices_link_once";
 
 function isUniqueViolation(err: unknown): boolean {
   return (
@@ -36,6 +47,18 @@ export default async function StaffPage({
   const sp = await searchParams;
   const repo = await ownerRepo();
   const staff = await repo.listStaff();
+
+  // A just-generated notices link, shown exactly once (we store only the hash).
+  const cookieStore = await cookies();
+  const freshRaw = cookieStore.get(NOTICES_LINK_COOKIE)?.value ?? "";
+  const sep = freshRaw.indexOf(":");
+  const freshNoticesLink =
+    sep > 0
+      ? {
+          staffId: freshRaw.slice(0, sep),
+          link: `${env.APP_URL}/me/${freshRaw.slice(sep + 1)}`,
+        }
+      : null;
 
   async function addStaff(formData: FormData) {
     "use server";
@@ -96,6 +119,28 @@ export default async function StaffPage({
       redirect(`${PATH}?error=${encodeURIComponent("Staff member not found")}`);
     revalidatePath(PATH);
     redirect(`${PATH}?pin=1`);
+  }
+
+  async function generateNoticesLink(formData: FormData) {
+    "use server";
+    const repo = await ownerRepo();
+    const id = String(formData.get("id"));
+    const { token, tokenHash } = generateToken();
+    // Store only the hash; a new link instantly revokes the old one.
+    const updated = await repo.setStaffNoticesTokenHash(id, tokenHash);
+    if (!updated)
+      redirect(`${PATH}?error=${encodeURIComponent("Staff member not found")}`);
+    // Flash the raw token so the next render shows the link once.
+    const cookieStore = await cookies();
+    cookieStore.set(NOTICES_LINK_COOKIE, `${id}:${token}`, {
+      path: PATH,
+      maxAge: 300,
+      httpOnly: false,
+      sameSite: "lax",
+      secure: env.NODE_ENV === "production",
+    });
+    revalidatePath(PATH);
+    redirect(PATH);
   }
 
   async function setRate(formData: FormData) {
@@ -296,6 +341,42 @@ export default async function StaffPage({
                       app doesn&apos;t calculate pay — no penalty rates,
                       overtime or super.
                     </p>
+                    <div className="mt-3">
+                      <span className="block text-sm font-semibold">
+                        Notices link
+                        <span className="ml-2 font-normal text-[var(--color-muted)]">
+                          {s.noticesTokenHash ? "Active" : "Not set"}
+                        </span>
+                      </span>
+                      {freshNoticesLink?.staffId === s.id ? (
+                        <div className="mt-2">
+                          <ClearFlashCookie
+                            name={NOTICES_LINK_COOKIE}
+                            path={PATH}
+                          />
+                          <Banner tone="success">
+                            Share this private link with {s.name}. Copy it now —
+                            for security we won&apos;t show it again.
+                          </Banner>
+                          <p className="mt-2 break-all rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 font-mono text-sm">
+                            {freshNoticesLink.link}
+                          </p>
+                        </div>
+                      ) : null}
+                      <form action={generateNoticesLink} className="mt-2">
+                        <input type="hidden" name="id" value={s.id} />
+                        <Button type="submit" variant="secondary">
+                          {s.noticesTokenHash
+                            ? "Replace notices link"
+                            : "Create notices link"}
+                        </Button>
+                      </form>
+                      <p className="mt-1 text-xs text-[var(--color-muted)]">
+                        {s.name}&apos;s private page for roster updates, leave
+                        decisions and shift reminders — it opens with their PIN.
+                        A new link replaces the old one.
+                      </p>
+                    </div>
                   </div>
                   <form action={toggleActive}>
                     <input type="hidden" name="id" value={s.id} />

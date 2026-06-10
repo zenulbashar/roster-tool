@@ -110,7 +110,9 @@ export default async function NoticesPage() {
                         />
                       ) : null}
                       {n.title}
-                      {!n.isRead ? <span className="sr-only"> (new)</span> : null}
+                      {!n.isRead ? (
+                        <span className="sr-only"> (new)</span>
+                      ) : null}
                     </p>
                     {n.body ? (
                       <p className="mt-0.5 text-sm text-[var(--color-muted)]">

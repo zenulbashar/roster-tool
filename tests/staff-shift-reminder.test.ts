@@ -31,10 +31,7 @@ describe("buildShiftReminders", () => {
 
   it("groups multiple same-day shifts into ONE reminder", () => {
     const out = buildShiftReminders(
-      [
-        row(),
-        row({ label: "Evening", startTime: "17:00", endTime: "21:00" }),
-      ],
+      [row(), row({ label: "Evening", startTime: "17:00", endTime: "21:00" })],
       "2026-06-11",
     );
     expect(out).toHaveLength(1);
@@ -43,7 +40,10 @@ describe("buildShiftReminders", () => {
   });
 
   it("skips inactive staff", () => {
-    const out = buildShiftReminders([row({ staffActive: false })], "2026-06-11");
+    const out = buildShiftReminders(
+      [row({ staffActive: false })],
+      "2026-06-11",
+    );
     expect(out).toEqual([]);
   });
 

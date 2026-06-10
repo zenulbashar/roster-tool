@@ -39,7 +39,12 @@ describe("notices verification proof", () => {
   it("is bound to ONE staff member", () => {
     const v = makeNoticesVerification(STAFF, SECRET, NOW);
     expect(
-      checkNoticesVerification(v, "99999999-aaaa-bbbb-cccc-dddddddddddd", SECRET, NOW),
+      checkNoticesVerification(
+        v,
+        "99999999-aaaa-bbbb-cccc-dddddddddddd",
+        SECRET,
+        NOW,
+      ),
     ).toBe(false);
   });
 
@@ -56,9 +61,16 @@ describe("notices verification proof", () => {
       ),
     ).toBe(false);
     // Bit-flip the signature.
-    const flipped = mac.endsWith("A") ? `${mac.slice(0, -1)}B` : `${mac.slice(0, -1)}A`;
+    const flipped = mac.endsWith("A")
+      ? `${mac.slice(0, -1)}B`
+      : `${mac.slice(0, -1)}A`;
     expect(
-      checkNoticesVerification(`${id}.${expiry}.${flipped}`, STAFF, SECRET, NOW),
+      checkNoticesVerification(
+        `${id}.${expiry}.${flipped}`,
+        STAFF,
+        SECRET,
+        NOW,
+      ),
     ).toBe(false);
   });
 
@@ -72,6 +84,8 @@ describe("notices verification proof", () => {
     expect(checkNoticesVerification("", STAFF, SECRET, NOW)).toBe(false);
     expect(checkNoticesVerification("a.b", STAFF, SECRET, NOW)).toBe(false);
     expect(checkNoticesVerification("a.b.c.d", STAFF, SECRET, NOW)).toBe(false);
-    expect(checkNoticesVerification(`${STAFF}.notanumber.xx`, STAFF, SECRET, NOW)).toBe(false);
+    expect(
+      checkNoticesVerification(`${STAFF}.notanumber.xx`, STAFF, SECRET, NOW),
+    ).toBe(false);
   });
 });

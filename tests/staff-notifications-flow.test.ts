@@ -91,9 +91,9 @@ describe("staff notifications flow", () => {
     expect(still.find((n) => n.id === mine!.id)?.isRead).toBe(false);
 
     // The owner of the notice can.
-    expect(
-      (await repoA.markStaffNotificationRead(mine!.id, ava))?.isRead,
-    ).toBe(true);
+    expect((await repoA.markStaffNotificationRead(mine!.id, ava))?.isRead).toBe(
+      true,
+    );
   });
 
   it("mark-all-read clears only that staff member's notices", async () => {

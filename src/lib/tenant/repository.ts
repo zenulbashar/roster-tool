@@ -801,6 +801,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         geofenceRadiusM: number;
         personalClockTokenHash: string | null;
         certReminderLeadDays: number;
+        staffShiftRemindersEnabled: boolean;
       }>,
     ) {
       const [row] = await database
@@ -2642,7 +2643,9 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     },
 
     /** Unread count for one staff member. */
-    async countUnreadStaffNotifications(staffMemberId: string): Promise<number> {
+    async countUnreadStaffNotifications(
+      staffMemberId: string,
+    ): Promise<number> {
       const [row] = await database
         .select({ count: sql<number>`count(*)::int` })
         .from(staffNotifications)
