@@ -187,6 +187,24 @@ owner approval, not payroll export.
     navigates (tenant-scoped `markNotificationRead`, foreign id no-ops; redirect
     restricted to internal `/…` paths); "mark all as read" clears the rest. All
     reads/writes are scoped via `ownerRepo()`.
+- **Owner getting-started checklist**: a "Getting started" card at the top of
+  the owner dashboard (`/app`) walking a new owner through setup. **Step state
+  is DERIVED from existing data — never a manual checkbox**: four CORE steps
+  (add staff → `staff_member` exists; create a shift type → `shift_template`
+  exists; build a roster → `roster_period` exists, any status; set up clock-in
+  → `kiosk_token_hash` OR `personal_clock_token_hash` is set) plus two
+  clearly-labelled OPTIONAL inventory steps (a `supplier` / an `item` exists)
+  that are bonus nudges only. Each incomplete step links to the page where the
+  owner does it; progress reads "N of 4 done". **The card auto-hides once all
+  four core steps are complete** — optional steps never keep it visible — and
+  there is NO stored dismiss flag (visibility is purely derived; no schema
+  change, read-only). Flags come from one tenant-scoped round trip of scalar
+  EXISTS subqueries (`getSetupFlags` on the repo); the pure step/visibility
+  logic is `buildGettingStarted` in `src/lib/getting-started.ts`
+  (unit-tested in `tests/getting-started.test.ts`, tenant isolation in
+  `tests/getting-started-flow.test.ts`); the card is
+  `src/components/GettingStartedCard.tsx`. **NOT employee onboarding** — owner
+  setup only.
 - **Leave requests & approvals**: staff request time off, the owner approves or
   denies. **Record only** — NO leave balances, accruals or entitlements, and NO
   NES/award/payroll leave calculation; it's purely request → approve/deny →
@@ -599,3 +617,4 @@ Notable columns / conventions:
 - [x] M14 — Inventory Part 2: staff stock checks (PIN, both clock surfaces) + owner Stock view + daily order reminders (flagged/reminders only; never places orders)
 - [x] M15 — Hours & labour-cost reporting: owner report page (`/app/reports`) + dashboard summary, read-only over existing timesheets/rates (estimate only — no payroll/award calculation; no schema change)
 - [x] M16 — Owner in-app notifications: header bell (unread count + dropdown) + `/app/notifications` + per-event preferences, fed best-effort from the five existing events (owner only; emails unchanged; no realtime)
+- [x] M17 — Owner getting-started checklist on the dashboard: step state derived from existing data (no manual ticking), core steps gate visibility (auto-hides when all four are done; optional inventory steps never keep it alive); read-only, no schema change

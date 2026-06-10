@@ -37,6 +37,7 @@ import type { NotificationType } from "@/lib/notifications";
 import type { LeaveType, CertTypeInput } from "@/lib/validation";
 import type { StockStatus } from "@/lib/order-reminder";
 import type { ReminderStage } from "@/lib/certification";
+import type { SetupFlags } from "@/lib/getting-started";
 import {
   claimEligibility,
   ACTIVE_OFFER_STATUSES,
@@ -791,6 +792,38 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .where(eq(businesses.id, businessId))
         .returning();
       return row ?? null;
+    },
+
+    /**
+     * Existence flags for the dashboard "Getting started" checklist — one
+     * round trip of scalar EXISTS subqueries off the business row; no domain
+     * rows are loaded. Clock-in counts when EITHER capability link (kiosk or
+     * personal-phone) has been generated.
+     */
+    async getSetupFlags(): Promise<SetupFlags> {
+      const flags = await first(
+        database
+          .select({
+            hasStaff: sql<boolean>`exists(select 1 from ${staffMembers} where ${staffMembers.businessId} = ${businessId})`,
+            hasShiftTemplate: sql<boolean>`exists(select 1 from ${shiftTemplates} where ${shiftTemplates.businessId} = ${businessId})`,
+            hasRosterPeriod: sql<boolean>`exists(select 1 from ${rosterPeriods} where ${rosterPeriods.businessId} = ${businessId})`,
+            hasClockInLink: sql<boolean>`(${businesses.kioskTokenHash} is not null or ${businesses.personalClockTokenHash} is not null)`,
+            hasSupplier: sql<boolean>`exists(select 1 from ${suppliers} where ${suppliers.businessId} = ${businessId})`,
+            hasItem: sql<boolean>`exists(select 1 from ${items} where ${items.businessId} = ${businessId})`,
+          })
+          .from(businesses)
+          .where(eq(businesses.id, businessId)),
+      );
+      return (
+        flags ?? {
+          hasStaff: false,
+          hasShiftTemplate: false,
+          hasRosterPeriod: false,
+          hasClockInLink: false,
+          hasSupplier: false,
+          hasItem: false,
+        }
+      );
     },
 
     /* ----- Timesheets (clock in/out) ----- */
