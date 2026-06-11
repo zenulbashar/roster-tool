@@ -127,6 +127,14 @@ export default async function SettingsPage({
     revalidatePath(PATH);
   }
 
+  async function setStaffShiftReminders(formData: FormData) {
+    "use server";
+    const staffShiftRemindersEnabled = formData.get("enabled") === "true";
+    const repo = await ownerRepo();
+    await repo.updateBusinessSettings({ staffShiftRemindersEnabled });
+    revalidatePath(PATH);
+  }
+
   async function generateClockLink() {
     "use server";
     const repo = await ownerRepo();
@@ -432,6 +440,50 @@ export default async function SettingsPage({
             );
           })}
         </ul>
+      </Card>
+
+      <Card className="mt-6">
+        <h2 className="text-lg font-semibold">Team notices</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          Each team member can have a private notices page (you share their link
+          from the Staff page). The night before a shift we add a &quot;you work
+          tomorrow&quot; reminder there — in-app only, never an email.
+        </p>
+        <form action={setStaffShiftReminders} className="mt-4">
+          <input
+            type="hidden"
+            name="enabled"
+            value={String(!business.staffShiftRemindersEnabled)}
+          />
+          <button
+            type="submit"
+            role="switch"
+            aria-checked={business.staffShiftRemindersEnabled}
+            className="flex w-full items-center justify-between gap-3 text-left text-sm font-medium text-[var(--color-ink)]"
+          >
+            <span>
+              <span className="block">Daily shift reminders</span>
+              <span className="block text-sm font-normal text-[var(--color-muted)]">
+                A notice the evening before each rostered shift.
+              </span>
+            </span>
+            <span className="flex flex-shrink-0 items-center gap-2">
+              <span
+                aria-hidden="true"
+                className={`inline-flex h-5 w-9 items-center rounded-full border px-0.5 transition-colors ${
+                  business.staffShiftRemindersEnabled
+                    ? "justify-end border-[var(--color-ok)] bg-[var(--color-ok)]"
+                    : "justify-start border-[var(--color-line)] bg-[var(--color-canvas)]"
+                }`}
+              >
+                <span className="h-4 w-4 rounded-full bg-white" />
+              </span>
+              <span className="w-7 text-[var(--color-muted)]">
+                {business.staffShiftRemindersEnabled ? "On" : "Off"}
+              </span>
+            </span>
+          </button>
+        </form>
       </Card>
     </>
   );

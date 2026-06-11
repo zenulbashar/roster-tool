@@ -9,6 +9,7 @@ export const QUEUES = {
   shiftOfferDecision: "shift-offer-decision",
   certReminder: "cert-reminder",
   orderReminder: "order-reminder",
+  staffShiftReminder: "staff-shift-reminder",
 } as const;
 
 /** Sends one staff member their availability magic link. */
@@ -72,3 +73,11 @@ export type CertReminderJob = Record<string, never>;
  * `supplier.last_order_reminder_date`.
  */
 export type OrderReminderJob = Record<string, never>;
+
+/**
+ * Daily sweep that, per business, creates an IN-APP-ONLY shift reminder for
+ * each staff member confirmed on tomorrow's published roster. NEVER sends
+ * email. Cron-scheduled (no payload); idempotent per staff member per date via
+ * `staff_notification.dedupe_key`.
+ */
+export type StaffShiftReminderJob = Record<string, never>;

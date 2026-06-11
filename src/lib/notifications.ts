@@ -8,9 +8,9 @@
  * is also preference-gated — a business that has turned an event type off
  * produces no notification for it.
  *
- * Scope note: OWNER notifications only. Staff have no persistent session (they
- * authenticate per action via PIN), so staff-facing notifications need a
- * separate mechanism and are intentionally OUT OF SCOPE here.
+ * Scope note: OWNER notifications only. The staff analog — per-staff notices
+ * on the PIN-gated /me page — is the separate `notifyStaff` mechanism in
+ * src/lib/staff-notifications.ts.
  */
 import { logger } from "@/lib/logger";
 import type { TenantRepo } from "@/lib/tenant/repository";

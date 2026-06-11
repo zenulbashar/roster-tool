@@ -36,8 +36,10 @@ import { leaveTypeLabel, certDisplayLabel } from "@/lib/labels";
 import { dueReminderStage, daysUntil, expiryPhrase } from "@/lib/certification";
 import {
   selectOrderReminders,
+  addDays,
   type ItemStatusForReminder,
 } from "@/lib/order-reminder";
+import { buildShiftReminders } from "@/lib/staff-shift-reminder";
 import { logger } from "@/lib/logger";
 import { notifyOwner } from "@/lib/notifications";
 import type {
@@ -614,4 +616,51 @@ export async function handlePhotoRetention(
     { businesses: rows.length, photosPurged: purged },
     "Clock-in photo retention sweep complete",
   );
+}
+
+/**
+ * Daily sweep: per business, create an IN-APP shift reminder for each staff
+ * member with a confirmed assignment on TOMORROW's business-local date in a
+ * published roster ("you work tomorrow"). One notice per staff member per day.
+ *
+ * Deliberately sends NO email (it never touches the mailer), so it can't eat
+ * into the send limit. Idempotent via the per-staff-per-date dedupe key (a
+ * unique index makes a repeat insert a no-op), so re-runs and pg-boss retries
+ * are safe; inserts go straight through the repo (NOT best-effort notifyStaff)
+ * so a real failure throws and the job retries. Businesses that turned the
+ * reminder off are skipped. Returns the number of reminders created.
+ */
+export async function handleStaffShiftReminders(
+  now: Date = new Date(),
+): Promise<number> {
+  const bizRows = await db
+    .select({
+      id: businesses.id,
+      timezone: businesses.timezone,
+      enabled: businesses.staffShiftRemindersEnabled,
+    })
+    .from(businesses);
+
+  let created = 0;
+  for (const biz of bizRows) {
+    if (!biz.enabled) continue;
+    const tomorrow = addDays(businessDateOf(now, biz.timezone), 1);
+    const repo = createTenantRepo(biz.id);
+    const rows = await repo.listConfirmedShiftsOnDate(tomorrow);
+    for (const reminder of buildShiftReminders(rows, tomorrow)) {
+      const inserted = await repo.createStaffNotification({
+        staffMemberId: reminder.staffMemberId,
+        type: "shift_reminder",
+        title: reminder.title,
+        body: reminder.body,
+        dedupeKey: reminder.dedupeKey,
+      });
+      if (inserted) created++;
+    }
+  }
+  logger.info(
+    { businesses: bizRows.length, remindersCreated: created },
+    "Staff shift reminder sweep complete",
+  );
+  return created;
 }

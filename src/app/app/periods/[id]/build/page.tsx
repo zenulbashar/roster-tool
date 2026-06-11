@@ -5,6 +5,7 @@ import { requireOwner } from "@/lib/auth/context";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { generateSlug } from "@/lib/tokens";
 import { enqueuePublishedRoster } from "@/lib/jobs/boss";
+import { notifyStaff } from "@/lib/staff-notifications";
 import { buildDraft, draftSummary } from "@/lib/draft";
 import { makeOnLeaveLookup } from "@/lib/leave";
 import { formatDateOnly, formatTimeOnly } from "@/lib/time";
@@ -236,6 +237,17 @@ export default async function BuildRosterPage({
         : (await repo.listStaff({ activeOnly: true })).map((s) => s.id);
     for (const staffMemberId of new Set(targets)) {
       await enqueuePublishedRoster({ rosterPeriodId: id, staffMemberId });
+    }
+
+    // In-app notice for everyone with a confirmed shift, in addition to the
+    // roster email above. One per affected staff member per publish.
+    for (const staffMemberId of new Set(assignedStaff)) {
+      await notifyStaff(repo, {
+        staffMemberId,
+        type: "rostered",
+        title: "You've been rostered",
+        body: `${period.label} — week of ${formatDateOnly(period.startDate)}. Your shifts are in your email.`,
+      });
     }
 
     redirect(`/app/periods/${id}?published=1`);

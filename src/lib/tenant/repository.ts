@@ -32,8 +32,10 @@ import {
   items,
   stockCheckEntries,
   notifications,
+  staffNotifications,
 } from "@/lib/db/schema";
 import type { NotificationType } from "@/lib/notifications";
+import type { StaffNotificationType } from "@/lib/staff-notifications";
 import type { LeaveType, CertTypeInput } from "@/lib/validation";
 import type { StockStatus } from "@/lib/order-reminder";
 import type { ReminderStage } from "@/lib/certification";
@@ -139,6 +141,21 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       const [row] = await database
         .update(staffMembers)
         .set({ pinHash, failedPinAttempts: 0, pinLockedUntil: null })
+        .where(
+          and(eq(staffMembers.id, id), eq(staffMembers.businessId, businessId)),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    /**
+     * Set (or rotate) the hash of a staff member's private notices link
+     * (/me/<token>). Rotating instantly revokes the old link.
+     */
+    async setStaffNoticesTokenHash(id: string, noticesTokenHash: string) {
+      const [row] = await database
+        .update(staffMembers)
+        .set({ noticesTokenHash })
         .where(
           and(eq(staffMembers.id, id), eq(staffMembers.businessId, businessId)),
         )
@@ -784,6 +801,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         geofenceRadiusM: number;
         personalClockTokenHash: string | null;
         certReminderLeadDays: number;
+        staffShiftRemindersEnabled: boolean;
       }>,
     ) {
       const [row] = await database
@@ -2577,6 +2595,137 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .where(eq(businesses.id, businessId))
         .returning();
       return row ?? null;
+    },
+
+    /* ----- Staff in-app notifications (notices) ----- */
+
+    /**
+     * Insert a staff notice. Prefer `notifyStaff` (best-effort) at call sites;
+     * this is the raw insert. A repeated `dedupeKey` is a silent no-op (the
+     * unique index + ON CONFLICT DO NOTHING), which is the daily shift
+     * reminder's idempotency.
+     */
+    async createStaffNotification(input: {
+      staffMemberId: string;
+      type: StaffNotificationType;
+      title: string;
+      body?: string | null;
+      dedupeKey?: string | null;
+    }) {
+      const [row] = await database
+        .insert(staffNotifications)
+        .values({
+          businessId,
+          staffMemberId: input.staffMemberId,
+          type: input.type,
+          title: input.title,
+          body: input.body ?? null,
+          dedupeKey: input.dedupeKey ?? null,
+        })
+        .onConflictDoNothing({ target: staffNotifications.dedupeKey })
+        .returning();
+      return row ?? null;
+    },
+
+    /** One staff member's notices, newest first. Scoped to business AND staff. */
+    listStaffNotifications(staffMemberId: string, limit = 50) {
+      return database
+        .select()
+        .from(staffNotifications)
+        .where(
+          and(
+            eq(staffNotifications.businessId, businessId),
+            eq(staffNotifications.staffMemberId, staffMemberId),
+          ),
+        )
+        .orderBy(desc(staffNotifications.createdAt))
+        .limit(limit);
+    },
+
+    /** Unread count for one staff member. */
+    async countUnreadStaffNotifications(
+      staffMemberId: string,
+    ): Promise<number> {
+      const [row] = await database
+        .select({ count: sql<number>`count(*)::int` })
+        .from(staffNotifications)
+        .where(
+          and(
+            eq(staffNotifications.businessId, businessId),
+            eq(staffNotifications.staffMemberId, staffMemberId),
+            eq(staffNotifications.isRead, false),
+          ),
+        );
+      return row?.count ?? 0;
+    },
+
+    /**
+     * Mark one notice read — scoped to business AND the given staff member, so
+     * a foreign id (another person's notice, another tenant's) no-ops.
+     */
+    async markStaffNotificationRead(id: string, staffMemberId: string) {
+      const [row] = await database
+        .update(staffNotifications)
+        .set({ isRead: true })
+        .where(
+          and(
+            eq(staffNotifications.id, id),
+            eq(staffNotifications.businessId, businessId),
+            eq(staffNotifications.staffMemberId, staffMemberId),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    /** Mark all of one staff member's unread notices read. */
+    async markAllStaffNotificationsRead(staffMemberId: string) {
+      await database
+        .update(staffNotifications)
+        .set({ isRead: true })
+        .where(
+          and(
+            eq(staffNotifications.businessId, businessId),
+            eq(staffNotifications.staffMemberId, staffMemberId),
+            eq(staffNotifications.isRead, false),
+          ),
+        );
+    },
+
+    /**
+     * Confirmed assignments on one calendar date in PUBLISHED periods, with the
+     * staff member's active flag — the daily shift reminder's input. Same join
+     * shape as `listUpcomingShiftsForStaff` (publishing is what makes a shift
+     * real to staff).
+     */
+    listConfirmedShiftsOnDate(date: string) {
+      return database
+        .select({
+          staffMemberId: rosterAssignments.staffMemberId,
+          staffActive: staffMembers.active,
+          label: shifts.label,
+          startTime: shifts.startTime,
+          endTime: shifts.endTime,
+          date: shifts.date,
+        })
+        .from(rosterAssignments)
+        .innerJoin(shifts, eq(rosterAssignments.shiftId, shifts.id))
+        .innerJoin(
+          publishedRosters,
+          eq(publishedRosters.rosterPeriodId, shifts.rosterPeriodId),
+        )
+        .innerJoin(
+          staffMembers,
+          eq(rosterAssignments.staffMemberId, staffMembers.id),
+        )
+        .where(
+          and(
+            eq(rosterAssignments.businessId, businessId),
+            eq(rosterAssignments.status, "confirmed"),
+            eq(shifts.date, date),
+          ),
+        )
+        .orderBy(asc(shifts.startTime));
     },
   };
 }
