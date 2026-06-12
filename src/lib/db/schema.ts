@@ -99,18 +99,30 @@ export const businesses = pgTable("business", {
 /* `businessId` is our own addition, set when the owner's business is created.*/
 /* -------------------------------------------------------------------------- */
 
-export const users = pgTable("user", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  name: text("name"),
-  email: text("email").notNull().unique(),
-  emailVerified: timestamp("emailVerified", { mode: "date" }),
-  image: text("image"),
-  businessId: uuid("businessId").references(() => businesses.id, {
-    onDelete: "set null",
-  }),
-});
+export const users = pgTable(
+  "user",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    name: text("name"),
+    email: text("email").notNull().unique(),
+    emailVerified: timestamp("emailVerified", { mode: "date" }),
+    image: text("image"),
+    businessId: uuid("businessId").references(() => businesses.id, {
+      onDelete: "set null",
+    }),
+  },
+  (t) => [
+    // Guard, not a behaviour change: the sign-in form and Auth.js's email
+    // normalizer both lowercase before any lookup or insert, so the app can
+    // only create lowercase rows. This stops any out-of-band or future code
+    // path from creating case-variant duplicate accounts (one owner, two
+    // "user" rows, business looks lost). Kept alongside the case-sensitive
+    // unique constraint the adapter's equality lookups rely on.
+    uniqueIndex("user_email_lower_unique").on(sql`lower(${t.email})`),
+  ],
+);
 
 export const accounts = pgTable(
   "account",
