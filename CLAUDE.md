@@ -88,6 +88,19 @@ owner approval, not payroll export.
 - **Availability**: per-shift yes/no (Available / Not available). 1:1 mapping to
   assignments.
 - **Owner auth**: email magic link. First sign-in creates the Business.
+- **Account clarity** (after an incident where owners signed in with a
+  different email than they realised and thought their data was lost): the
+  onboarding page shows "You're signed in as <email>" + a hint that an
+  existing owner may have used another address, with a Sign out button
+  (redirecting to `/sign-in`; the header's sign-out keeps going to `/`);
+  Settings has an **Account** card (signed-in email + business name —
+  display only, NO email change/management). The shared block is
+  `src/components/AccountIdentity.tsx`; the email always comes from the
+  server-side session, and a null email renders nothing. A **unique index on
+  `lower(email)`** on the `user` table guards against case-variant duplicate
+  accounts at the DB level — a pure guard, not a behaviour change, since the
+  sign-in form and Auth.js's normalizer already lowercase every address
+  (automatic business relinking is deliberately NOT built).
 - **Clock-in kiosk**: a shared-device page reached by a per-business capability
   link (`/kiosk/<token>`), with NO owner session. Like the staff magic link and
   public roster, the token (then an httpOnly cookie) authenticates the device and
@@ -526,6 +539,10 @@ are business-scoped.
 
 Notable columns / conventions:
 
+- `user.email` — unique both case-sensitively (the Auth.js adapter's equality
+  lookups) and via `user_email_lower_unique` on `lower(email)` (guard against
+  case-variant duplicate accounts; every sign-in path already lowercases, so
+  the index can only reject rows the app itself could never create).
 - `staff_member.notify_by_default` — pre-checks this person when the owner asks
   for availability. Owners override per-send on the recipient-selection step.
 - `staff_member.pin_hash` — salted scrypt hash of the kiosk PIN (`scrypt$salt$hash`).
