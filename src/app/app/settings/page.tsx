@@ -1,7 +1,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
-import { ownerRepo } from "@/lib/auth/context";
+import { ownerRepo, requireOwner } from "@/lib/auth/context";
+import { createTenantRepo } from "@/lib/tenant/repository";
 import { env } from "@/lib/env";
 import { generateToken } from "@/lib/tokens";
 import { PHOTO_RETENTION_DAYS, parsePhotoRetentionDays } from "@/lib/retention";
@@ -15,6 +16,7 @@ import {
   NOTIFICATION_PREFS,
   type NotificationType,
 } from "@/lib/notifications";
+import { AccountIdentity } from "@/components/AccountIdentity";
 import { Banner, Button, Card, PageHeader } from "@/components/ui";
 import { ClearFlashCookie } from "@/components/ClearFlashCookie";
 import { UseMyLocationButton } from "@/components/UseMyLocationButton";
@@ -29,7 +31,10 @@ export default async function SettingsPage({
   searchParams: Promise<{ error?: string; locationSaved?: string }>;
 }) {
   const sp = await searchParams;
-  const repo = await ownerRepo();
+  // One session read for both the account email and the tenant scope (the
+  // inline actions below keep using ownerRepo(), which re-validates).
+  const owner = await requireOwner();
+  const repo = createTenantRepo(owner.businessId);
   const business = await repo.getBusiness();
   if (!business) redirect("/onboarding");
 
@@ -156,7 +161,7 @@ export default async function SettingsPage({
     <>
       <PageHeader
         title="Settings"
-        subtitle="Clock-in kiosk and timesheet options."
+        subtitle="Your account, clock-in kiosk and timesheet options."
       />
 
       {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
@@ -165,6 +170,17 @@ export default async function SettingsPage({
       ) : null}
 
       <Card className="mt-4">
+        <h2 className="text-lg font-semibold">Account</h2>
+        <div className="mt-3">
+          <AccountIdentity email={owner.email} businessName={business.name} />
+        </div>
+        <p className="mt-2 text-sm text-[var(--color-muted)]">
+          This is the email your sign-in links go to. It can&apos;t be changed
+          in the app yet.
+        </p>
+      </Card>
+
+      <Card className="mt-6">
         <h2 className="text-lg font-semibold">Clock-in kiosk</h2>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
           Open this link on a shared device (a tablet by the door, say). Staff
