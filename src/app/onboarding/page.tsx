@@ -1,9 +1,11 @@
 import { redirect } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { signOut } from "@/lib/auth";
 import { requireSession } from "@/lib/auth/context";
 import { db } from "@/lib/db";
 import { businesses, users } from "@/lib/db/schema";
+import { AccountIdentity } from "@/components/AccountIdentity";
 import { Button, Card, Field, TextInput } from "@/components/ui";
 
 const AU_TIMEZONES = [
@@ -52,6 +54,14 @@ export default async function OnboardingPage() {
     redirect("/app");
   }
 
+  // For someone who signed in with the wrong address, the next step is
+  // requesting a fresh link — so this lands on the sign-in form (the header's
+  // sign-out elsewhere keeps going to "/").
+  async function signOutToSignIn() {
+    "use server";
+    await signOut({ redirectTo: "/sign-in" });
+  }
+
   return (
     <main id="main" className="mx-auto max-w-md px-5 py-16">
       <h1 className="text-2xl font-bold tracking-tight">
@@ -60,6 +70,19 @@ export default async function OnboardingPage() {
       <p className="mt-2 text-[var(--color-muted)]">
         Just one quick step before you start building rosters.
       </p>
+      <div className="mt-6">
+        <AccountIdentity
+          email={session.user.email ?? null}
+          lead="You're signed in as"
+          hint="Setting up a new business? If you've used Roster before, you might have signed in with a different email address. Sign out and request a sign-in link using the address you used originally."
+        >
+          <form action={signOutToSignIn}>
+            <Button type="submit" variant="secondary">
+              Sign out
+            </Button>
+          </form>
+        </AccountIdentity>
+      </div>
       <Card className="mt-6">
         <form action={createBusiness} className="space-y-4">
           <Field label="Business name">
