@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import QRCode from "qrcode";
@@ -52,6 +53,7 @@ export default async function FormEditorPage({
     );
   }
 
+  const responseCount = await repo.countResponses(id);
   const status = data.form.status;
   const isPublished = status === "published";
   const publicUrl =
@@ -156,6 +158,17 @@ export default async function FormEditorPage({
                     ? "Closed"
                     : "Draft"}
               </span>
+              {responseCount > 0 ? (
+                <>
+                  {" · "}
+                  <Link
+                    href={`${PATH}/${id}/responses`}
+                    className="font-medium text-[var(--color-brand)] underline underline-offset-2"
+                  >
+                    {responseCount} response{responseCount === 1 ? "" : "s"}
+                  </Link>
+                </>
+              ) : null}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -202,9 +215,9 @@ export default async function FormEditorPage({
 
         {isPublished ? (
           <p className="mt-4 text-sm text-[var(--color-muted)]">
-            This form is published, so its fields are locked. Unpublish to
-            change them — the link and QR code stay the same when you
-            re-publish.
+            This form is published, so its fields are locked. Unpublishing only
+            stops new responses — your collected responses are kept, and the
+            link and QR code stay the same when you re-publish.
           </p>
         ) : null}
       </Card>
