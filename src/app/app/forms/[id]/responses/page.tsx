@@ -9,7 +9,8 @@ import {
   type LiveField,
   type FieldSummary,
 } from "@/lib/form-report";
-import { Card, PageHeader } from "@/components/ui";
+import { EXPORT_CAP } from "@/lib/form-export";
+import { ButtonLink, Card, PageHeader } from "@/components/ui";
 
 const PATH = "/app/forms";
 const PAGE_SIZE = 25;
@@ -216,9 +217,22 @@ export default async function FormResponsesPage({
           </section>
 
           <section className="mt-8" aria-label="Responses">
-            <h2 className="mb-3 text-lg font-semibold">
-              All responses ({total})
-            </h2>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-lg font-semibold">All responses ({total})</h2>
+              <div className="flex flex-col items-end">
+                <ButtonLink
+                  href={`${PATH}/${id}/responses/export`}
+                  variant="secondary"
+                >
+                  Export CSV
+                </ButtonLink>
+                {total > EXPORT_CAP ? (
+                  <span className="mt-1 text-xs text-[var(--color-muted)]">
+                    Exports the newest {EXPORT_CAP.toLocaleString()}.
+                  </span>
+                ) : null}
+              </div>
+            </div>
             <ul className="space-y-2">
               {responses.map((r) => {
                 const detail = buildResponseDetail(liveFields, r.answers);
