@@ -2751,12 +2751,20 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           status: forms.status,
           createdAt: forms.createdAt,
           updatedAt: forms.updatedAt,
-          fieldCount: sql<number>`count(${formFields.id})`.mapWith(Number),
+          // CORRELATED SCALAR SUBQUERIES, not joins. Joining form_field AND
+          // form_response in one query would fan out (rows = fields ×
+          // responses) and multiply BOTH counts; independent subqueries can't.
+          fieldCount:
+            sql<number>`(select count(*) from ${formFields} where ${formFields.formId} = ${forms.id} and ${formFields.businessId} = ${businessId})`.mapWith(
+              Number,
+            ),
+          responseCount:
+            sql<number>`(select count(*) from ${formResponses} where ${formResponses.formId} = ${forms.id} and ${formResponses.businessId} = ${businessId})`.mapWith(
+              Number,
+            ),
         })
         .from(forms)
-        .leftJoin(formFields, eq(formFields.formId, forms.id))
         .where(eq(forms.businessId, businessId))
-        .groupBy(forms.id)
         .orderBy(desc(forms.createdAt));
     },
 
@@ -3055,7 +3063,20 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
      * Tenant-scoped read of a form's responses + answers. Used by tests to prove
      * isolation; NO owner UI surfaces this in 1b (the results view is 1c).
      */
-    async getResponsesForForm(formId: string) {
+    /**
+     * Tenant-scoped page of a form's responses + answers, newest first. Ordered
+     * by `submitted_at DESC, id DESC` — the id tiebreaker makes limit/offset
+     * paging DETERMINISTIC so rows aren't dropped/duplicated across pages when
+     * timestamps tie on a busy form. Answers are returned with each response
+     * (the page orders them by live field position; orphans last). Scoped by
+     * `business_id` + `form_id`, so a foreign form id reads nothing.
+     */
+    async getResponsesForForm(
+      formId: string,
+      opts: { limit?: number; offset?: number } = {},
+    ) {
+      const limit = opts.limit ?? 50;
+      const offset = opts.offset ?? 0;
       const responses = await database
         .select()
         .from(formResponses)
@@ -3065,7 +3086,9 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             eq(formResponses.businessId, businessId),
           ),
         )
-        .orderBy(desc(formResponses.submittedAt));
+        .orderBy(desc(formResponses.submittedAt), desc(formResponses.id))
+        .limit(limit)
+        .offset(offset);
       if (responses.length === 0) return [];
       const ids = responses.map((r) => r.id);
       const answers = await database
@@ -3076,11 +3099,26 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             inArray(formResponseAnswers.responseId, ids),
             eq(formResponseAnswers.businessId, businessId),
           ),
-        );
+        )
+        .orderBy(asc(formResponseAnswers.createdAt));
       return responses.map((r) => ({
         ...r,
         answers: answers.filter((a) => a.responseId === r.id),
       }));
+    },
+
+    /** Scoped count of a form's responses (for the list/editor count + paging). */
+    async countResponses(formId: string) {
+      const [row] = await database
+        .select({ count: sql<number>`count(*)::int` })
+        .from(formResponses)
+        .where(
+          and(
+            eq(formResponses.formId, formId),
+            eq(formResponses.businessId, businessId),
+          ),
+        );
+      return row?.count ?? 0;
     },
   };
 }
