@@ -751,8 +751,27 @@ field_id)`.
     (`src/lib/turnstile.ts`) and **fails closed** when `TURNSTILE_SECRET_KEY` is
     unset (both keys are optional in `env.ts` so boot never breaks; set them in
     Vercel before publishing). QR is the public URL rendered server-side via the
-    `qrcode` lib (no separate route/channel). The owner-facing **responses view is
-    NOT built (Phase 1c)** — `getResponsesForForm` exists for tests only.
+    `qrcode` lib (no separate route/channel).
+  - **Owner responses view (Phase 1c)** — authenticated, owner-scoped (NEVER the
+    public slug resolver). `/app/forms/[id]/responses` shows per-field
+    **summaries** on top (rating average + 1–5 distribution bars, single_select/
+    yes_no tallies, recent text — "no ratings yet" handled) over a **paginated**
+    response list (page size 25, `?page=`, deterministic order `submitted_at
+DESC, id DESC`), each row an expandable `<details>` rendering `field_label →
+value` from the **answer snapshot**. Summaries are SQL-aggregated
+    (`getResponseSummaryAggregates` GROUP BY + `getRecentTextAnswers` window —
+    one answer maps to one response, so no fan-out) then shaped by the pure,
+    unit-tested `src/lib/form-report.ts`: it groups by `field_id` when present,
+    falls back to the `(field_label, field_type)` snapshot for deleted fields
+    (shown, flagged "removed field"), and `displayAnswer` is the single source of
+    truth for which column each type reads (`rating` → `value_number`, else
+    `value_text`). `listForms` carries `fieldCount`/`responseCount` as
+    **correlated scalar subqueries** (NOT joins — joining both would fan out and
+    multiply the counts). **Delete guard**: `deleteForm(id, { confirmed })`
+    refuses (returns `{ ok:false, reason:"has_responses", count }`) when a form
+    has responses and `confirmed` isn't set, so collected responses can't be
+    wiped by accident; the list page shows a count-aware confirm. Read-only — no
+    CSV/export, no per-response edit/delete, no new public surface.
 
 ## Milestones
 
@@ -776,3 +795,4 @@ field_id)`.
 - [x] M18 — Staff in-app notices: per-staff PIN-gated `/me` page (capability link + short-lived signed proof), notices at leave decisions / swap approvals / publishes (additive to emails), and a daily IN-APP-ONLY shift reminder (idempotent via dedupe key; business-level toggle)
 - [x] M19 — Form builder Phase 1a (builder CRUD only): owner-authenticated `form` + `form_field` tables, owner-labelled fields of five v1 types, single transactional `saveForm` reconcile (tenant-scoped, IDOR-guarded, stable option ids), `/app/forms` list + `/app/forms/[id]` editor (no publishing, no public routes, no responses — later phases)
 - [x] M20 — Form builder Phase 1b (publish + public collection + QR): owner publish/close + public URL/copy/QR; public `/f/[slug]` route (outside `/app`) storing anonymous `form_response`/`form_response_answer` (self-describing snapshots, rating in `value_number`); abuse protection (Cloudflare Turnstile server-side fail-closed, honeypot, durable per-IP/slug `form_rate_limit`); publish lock freezes a published form's fields. Owner responses view deferred to 1c.
+- [x] M21 — Form builder Phase 1c (owner responses view + delete guard): owner-scoped `/app/forms/[id]/responses` with SQL-aggregated per-field summaries (rating average+distribution, select/yes_no tallies, recent text) shaped by the pure `form-report.ts` (snapshot grouping, `displayAnswer`), a paginated `<details>` response list (deterministic order), response counts on the list/editor, and a `deleteForm` confirmed-flag guard so responses can't be wiped accidentally. Read-only; no migration; no export.
