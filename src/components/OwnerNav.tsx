@@ -46,6 +46,7 @@ const GROUPS: NavGroup[] = [
   },
 ];
 
+const FORMS: NavItem = { label: "Forms", href: "/app/forms" };
 const SETTINGS: NavItem = { label: "Settings", href: "/app/settings" };
 
 function isActive(pathname: string, href: string): boolean {
@@ -159,6 +160,16 @@ export function OwnerNav() {
           );
         })}
         <Link
+          href={FORMS.href}
+          className={`rounded-md px-3 py-2 text-[var(--color-header-ink)] hover:bg-white/10 ${
+            isActive(pathname, FORMS.href)
+              ? "border-b-2 border-[var(--color-accent)] font-semibold"
+              : "border-b-2 border-transparent"
+          }`}
+        >
+          {FORMS.label}
+        </Link>
+        <Link
           href={SETTINGS.href}
           className={`rounded-md px-3 py-2 text-[var(--color-header-ink)] hover:bg-white/10 ${
             isActive(pathname, SETTINGS.href)
@@ -224,6 +235,16 @@ export function OwnerNav() {
                 </ul>
               </div>
             ))}
+            <Link
+              href={FORMS.href}
+              className={`flex min-h-12 items-center rounded-md px-3 py-2 text-[var(--color-header-ink)] hover:bg-white/10 ${
+                isActive(pathname, FORMS.href)
+                  ? "font-semibold text-[var(--color-accent)]"
+                  : ""
+              }`}
+            >
+              {FORMS.label}
+            </Link>
             <Link
               href={SETTINGS.href}
               className={`flex min-h-12 items-center rounded-md px-3 py-2 text-[var(--color-header-ink)] hover:bg-white/10 ${
