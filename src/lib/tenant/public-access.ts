@@ -4,6 +4,7 @@ import {
   availabilityRequests,
   publishedRosters,
   rosterPeriods,
+  forms,
 } from "@/lib/db/schema";
 import { hashToken } from "@/lib/tokens";
 
@@ -63,6 +64,25 @@ export async function findPublishedBySlug(
       eq(publishedRosters.rosterPeriodId, rosterPeriods.id),
     )
     .where(eq(publishedRosters.publicSlug, slug))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Resolve a PUBLISHED form from its public slug. Returns `{ businessId, formId }`
+ * ONLY when the form exists AND its status is `published` — a draft, closed, or
+ * unknown slug all resolve to null (the public route 404s). The slug is the only
+ * thing identifying the form; callers then scope all work via
+ * `createTenantRepo(businessId)`. No owner data is exposed by this lookup.
+ */
+export async function findPublishedFormBySlug(
+  slug: string,
+  database: Db = defaultDb,
+) {
+  const rows = await database
+    .select({ businessId: forms.businessId, formId: forms.id })
+    .from(forms)
+    .where(and(eq(forms.publicSlug, slug), eq(forms.status, "published")))
     .limit(1);
   return rows[0] ?? null;
 }

@@ -1,8 +1,11 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import QRCode from "qrcode";
 import { ownerRepo } from "@/lib/auth/context";
+import { env } from "@/lib/env";
 import { formSaveSchema, type FormFieldTypeInput } from "@/lib/validation";
-import { PageHeader } from "@/components/ui";
+import { Banner, Button, Card, PageHeader } from "@/components/ui";
+import { CopyButton } from "@/components/CopyButton";
 import {
   FormEditor,
   type FormEditorField,
@@ -30,10 +33,17 @@ function toEditorField(f: {
 
 export default async function FormEditorPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{
+    published?: string;
+    closed?: string;
+    error?: string;
+  }>;
 }) {
   const { id } = await params;
+  const sp = await searchParams;
   const repo = await ownerRepo();
   const data = await repo.getFormWithFields(id);
   if (!data) {
@@ -41,6 +51,18 @@ export default async function FormEditorPage({
       `${PATH}?error=${encodeURIComponent("That form could not be found.")}`,
     );
   }
+
+  const status = data.form.status;
+  const isPublished = status === "published";
+  const publicUrl =
+    data.form.publicSlug !== null
+      ? `${env.APP_URL}/f/${data.form.publicSlug}`
+      : null;
+  // QR is just the public URL as an image (no separate channel/route).
+  const qrDataUrl =
+    isPublished && publicUrl
+      ? await QRCode.toDataURL(publicUrl, { width: 220, margin: 1 })
+      : null;
 
   async function save(
     _prev: SaveFormState,
@@ -65,8 +87,14 @@ export default async function FormEditorPage({
       };
     }
     const saved = await repo.saveForm(id, parsed.data);
-    if (!saved) {
-      return { status: "error", message: "This form could not be found." };
+    if (!saved.ok) {
+      return {
+        status: "error",
+        message:
+          saved.reason === "locked"
+            ? saved.message
+            : "This form could not be found.",
+      };
     }
     revalidatePath(PATH);
     revalidatePath(`${PATH}/${id}`);
@@ -79,19 +107,118 @@ export default async function FormEditorPage({
     };
   }
 
+  async function publish() {
+    "use server";
+    const repo = await ownerRepo();
+    const result = await repo.publishForm(id);
+    if (!result) {
+      redirect(`${PATH}?error=${encodeURIComponent("Form not found")}`);
+    }
+    revalidatePath(`${PATH}/${id}`);
+    redirect(`${PATH}/${id}?published=1`);
+  }
+
+  async function close() {
+    "use server";
+    const repo = await ownerRepo();
+    await repo.closeForm(id);
+    revalidatePath(`${PATH}/${id}`);
+    redirect(`${PATH}/${id}?closed=1`);
+  }
+
   return (
     <>
       <PageHeader
         title="Edit form"
-        subtitle="Add the questions you want to ask. Saved as a draft — nothing is published yet."
+        subtitle="Add the questions you want to ask, then publish to share a link or QR code."
       />
-      <FormEditor
-        action={save}
-        initialTitle={data.form.title}
-        initialDescription={data.form.description ?? ""}
-        initialFields={data.fields.map(toEditorField)}
-        listHref={PATH}
-      />
+
+      {sp.published ? (
+        <Banner tone="success">Form published — share the link below.</Banner>
+      ) : null}
+      {sp.closed ? (
+        <Banner tone="success">
+          Form closed — it no longer accepts responses.
+        </Banner>
+      ) : null}
+      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+
+      <Card className="mt-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Sharing</h2>
+            <p className="text-sm text-[var(--color-muted)]">
+              Status:{" "}
+              <span className="font-semibold">
+                {status === "published"
+                  ? "Published"
+                  : status === "closed"
+                    ? "Closed"
+                    : "Draft"}
+              </span>
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {isPublished ? (
+              <form action={close}>
+                <Button type="submit" variant="secondary">
+                  Unpublish (close)
+                </Button>
+              </form>
+            ) : (
+              <form action={publish}>
+                <Button type="submit">
+                  {status === "closed" ? "Re-publish" : "Publish"}
+                </Button>
+              </form>
+            )}
+          </div>
+        </div>
+
+        {isPublished && publicUrl ? (
+          <div className="mt-4 space-y-3">
+            <p className="text-sm text-[var(--color-muted)]">
+              Anyone with this link can fill in the form. Print the QR code for
+              a table or counter.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <code className="break-all rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 text-sm">
+                {publicUrl}
+              </code>
+              <CopyButton value={publicUrl} />
+            </div>
+            {qrDataUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={qrDataUrl}
+                alt="QR code linking to the public form"
+                width={220}
+                height={220}
+                className="rounded-lg border border-[var(--color-line)] bg-white p-2"
+              />
+            ) : null}
+          </div>
+        ) : null}
+
+        {isPublished ? (
+          <p className="mt-4 text-sm text-[var(--color-muted)]">
+            This form is published, so its fields are locked. Unpublish to
+            change them — the link and QR code stay the same when you
+            re-publish.
+          </p>
+        ) : null}
+      </Card>
+
+      <div className="mt-6">
+        <FormEditor
+          action={save}
+          initialTitle={data.form.title}
+          initialDescription={data.form.description ?? ""}
+          initialFields={data.fields.map(toEditorField)}
+          listHref={PATH}
+          locked={isPublished}
+        />
+      </div>
     </>
   );
 }

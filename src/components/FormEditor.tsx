@@ -80,12 +80,16 @@ export function FormEditor({
   initialDescription,
   initialFields,
   listHref,
+  locked = false,
 }: {
   action: (prev: SaveFormState, formData: FormData) => Promise<SaveFormState>;
   initialTitle: string;
   initialDescription: string;
   initialFields: FormEditorField[];
   listHref: string;
+  // When the form is published its field structure is frozen (the server also
+  // enforces this). Title/description stay editable; field controls disable.
+  locked?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(action, initial);
   const [title, setTitle] = useState(initialTitle);
@@ -247,10 +251,19 @@ export function FormEditor({
       <section aria-label="Fields" className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Fields ({fields.length})</h2>
-          <Button type="button" variant="secondary" onClick={addField}>
-            Add field
-          </Button>
+          {locked ? null : (
+            <Button type="button" variant="secondary" onClick={addField}>
+              Add field
+            </Button>
+          )}
         </div>
+
+        {locked ? (
+          <Banner tone="info">
+            This form is published, so its fields are locked. Unpublish it (in
+            Sharing above) to add, remove, reorder or edit fields.
+          </Banner>
+        ) : null}
 
         {fields.length === 0 ? (
           <p className="text-[var(--color-muted)]">
@@ -275,29 +288,32 @@ export function FormEditor({
                             maxLength={100}
                             placeholder="e.g. Your name"
                             aria-label={`Field ${index + 1} label`}
+                            disabled={locked}
                           />
                         </Field>
                       </div>
-                      <div className="flex flex-col gap-1 pt-7">
-                        <button
-                          type="button"
-                          onClick={() => moveField(index, -1)}
-                          disabled={index === 0}
-                          aria-label={`Move field ${index + 1} up`}
-                          className="rounded-md border border-[var(--color-line)] px-2 py-1 text-sm disabled:opacity-40"
-                        >
-                          ↑
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => moveField(index, 1)}
-                          disabled={index === fields.length - 1}
-                          aria-label={`Move field ${index + 1} down`}
-                          className="rounded-md border border-[var(--color-line)] px-2 py-1 text-sm disabled:opacity-40"
-                        >
-                          ↓
-                        </button>
-                      </div>
+                      {locked ? null : (
+                        <div className="flex flex-col gap-1 pt-7">
+                          <button
+                            type="button"
+                            onClick={() => moveField(index, -1)}
+                            disabled={index === 0}
+                            aria-label={`Move field ${index + 1} up`}
+                            className="rounded-md border border-[var(--color-line)] px-2 py-1 text-sm disabled:opacity-40"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => moveField(index, 1)}
+                            disabled={index === fields.length - 1}
+                            aria-label={`Move field ${index + 1} down`}
+                            className="rounded-md border border-[var(--color-line)] px-2 py-1 text-sm disabled:opacity-40"
+                          >
+                            ↓
+                          </button>
+                        </div>
+                      )}
                     </div>
 
                     <div className="grid gap-3 sm:grid-cols-2">
@@ -311,7 +327,8 @@ export function FormEditor({
                             )
                           }
                           aria-label={`Field ${index + 1} type`}
-                          className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-3 text-base"
+                          disabled={locked}
+                          className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-3 text-base disabled:opacity-60"
                         >
                           {FORM_FIELD_TYPES.map((t) => (
                             <option key={t} value={t}>
@@ -327,6 +344,7 @@ export function FormEditor({
                           onChange={(e) =>
                             patchField(f.key, { required: e.target.checked })
                           }
+                          disabled={locked}
                         />
                         <span className="text-sm font-semibold">Required</span>
                       </label>
@@ -347,24 +365,29 @@ export function FormEditor({
                               maxLength={100}
                               placeholder="Option label"
                               aria-label="Option label"
+                              disabled={locked}
                             />
-                            <button
-                              type="button"
-                              onClick={() => deleteOption(f.key, o.key)}
-                              aria-label="Remove option"
-                              className="rounded-md border border-[var(--color-line)] px-3 py-2 text-sm"
-                            >
-                              Remove
-                            </button>
+                            {locked ? null : (
+                              <button
+                                type="button"
+                                onClick={() => deleteOption(f.key, o.key)}
+                                aria-label="Remove option"
+                                className="rounded-md border border-[var(--color-line)] px-3 py-2 text-sm"
+                              >
+                                Remove
+                              </button>
+                            )}
                           </div>
                         ))}
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          onClick={() => addOption(f.key)}
-                        >
-                          Add option
-                        </Button>
+                        {locked ? null : (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => addOption(f.key)}
+                          >
+                            Add option
+                          </Button>
+                        )}
                       </fieldset>
                     ) : null}
 
@@ -385,13 +408,15 @@ export function FormEditor({
                       </p>
                     ) : null}
 
-                    <button
-                      type="button"
-                      onClick={() => deleteField(f.key)}
-                      className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
-                    >
-                      Delete field
-                    </button>
+                    {locked ? null : (
+                      <button
+                        type="button"
+                        onClick={() => deleteField(f.key)}
+                        className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
+                      >
+                        Delete field
+                      </button>
+                    )}
                   </Card>
                 </li>
               );

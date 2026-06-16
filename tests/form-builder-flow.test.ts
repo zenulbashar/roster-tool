@@ -72,7 +72,7 @@ describe("form builder flow", () => {
       description: "",
       fields: [],
     });
-    expect(saved).not.toBeNull();
+    expect(saved.ok).toBe(true);
     const reloaded = await repoA.getFormWithFields(form.id);
     expect(reloaded!.form.title).toBe("Empty (edited)");
     expect(reloaded!.form.description).toBeNull();
@@ -185,12 +185,11 @@ describe("form builder flow", () => {
     expect(await repoA.getFormWithFields(formB.id)).toBeNull();
 
     // A cannot save into B's form.
-    expect(
-      await repoA.saveForm(formB.id, {
-        title: "Hijacked",
-        fields: [],
-      }),
-    ).toBeNull();
+    const hijack = await repoA.saveForm(formB.id, {
+      title: "Hijacked",
+      fields: [],
+    });
+    expect(hijack).toEqual({ ok: false, reason: "not_found" });
 
     // A cannot delete B's form.
     await repoA.deleteForm(formB.id);
