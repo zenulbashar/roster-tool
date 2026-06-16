@@ -2821,11 +2821,41 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       return row!;
     },
 
-    /** Delete an owned form (its fields cascade). Scoped, so foreign ids no-op. */
-    async deleteForm(id: string) {
+    /**
+     * Delete an owned form (fields + responses + answers cascade). Scoped, so a
+     * foreign id is a no-op.
+     *
+     * DELETE GUARD: if the form has responses and `confirmed` isn't set, this
+     * REFUSES (deletes nothing) and returns the count, so the UI can ask the
+     * owner to confirm a count-aware deletion — collected responses must never
+     * be wiped by an accidental click. An empty form (or `confirmed: true`)
+     * deletes normally.
+     */
+    async deleteForm(
+      id: string,
+      opts: { confirmed?: boolean } = {},
+    ): Promise<
+      | { ok: true }
+      | { ok: false; reason: "not_found" }
+      | { ok: false; reason: "has_responses"; count: number }
+    > {
+      const owned = await first(
+        database
+          .select({ id: forms.id })
+          .from(forms)
+          .where(and(eq(forms.id, id), eq(forms.businessId, businessId))),
+      );
+      if (!owned) return { ok: false, reason: "not_found" };
+
+      if (!opts.confirmed) {
+        const count = await this.countResponses(id);
+        if (count > 0) return { ok: false, reason: "has_responses", count };
+      }
+
       await database
         .delete(forms)
         .where(and(eq(forms.id, id), eq(forms.businessId, businessId)));
+      return { ok: true };
     },
 
     /**

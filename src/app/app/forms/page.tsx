@@ -24,7 +24,12 @@ const STATUS_LABEL: Record<string, string> = {
 export default async function FormsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; deleted?: string }>;
+  searchParams: Promise<{
+    error?: string;
+    deleted?: string;
+    confirmDelete?: string;
+    count?: string;
+  }>;
 }) {
   const sp = await searchParams;
   const repo = await ownerRepo();
@@ -33,6 +38,7 @@ export default async function FormsPage({
     repo.listForms(),
   ]);
   const tz = business?.timezone ?? DEFAULT_TIMEZONE;
+  const pendingDelete = forms.find((f) => f.id === sp.confirmDelete);
 
   async function createForm(formData: FormData) {
     "use server";
@@ -50,7 +56,14 @@ export default async function FormsPage({
   async function deleteForm(formData: FormData) {
     "use server";
     const repo = await ownerRepo();
-    await repo.deleteForm(String(formData.get("id")));
+    const id = String(formData.get("id"));
+    const confirmed = formData.get("confirmed") === "1";
+    const result = await repo.deleteForm(id, { confirmed });
+    // Has responses and not confirmed → bounce to a count-aware confirmation
+    // instead of wiping them.
+    if (!result.ok && result.reason === "has_responses") {
+      redirect(`${PATH}?confirmDelete=${id}&count=${result.count}`);
+    }
     revalidatePath(PATH);
     redirect(`${PATH}?deleted=1`);
   }
@@ -64,6 +77,32 @@ export default async function FormsPage({
 
       {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
       {sp.deleted ? <Banner tone="success">Form deleted.</Banner> : null}
+
+      {pendingDelete ? (
+        <Card className="mt-4 border-[var(--color-danger)]">
+          <h2 className="text-lg font-semibold">
+            Delete “{pendingDelete.title}”?
+          </h2>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">
+            This form has {sp.count} response
+            {sp.count === "1" ? "" : "s"}. Deleting the form permanently removes
+            the form and all of its responses. This can’t be undone.
+          </p>
+          <div className="mt-3 flex items-center gap-3">
+            <form action={deleteForm}>
+              <input type="hidden" name="id" value={pendingDelete.id} />
+              <input type="hidden" name="confirmed" value="1" />
+              <Button type="submit" variant="danger">
+                Delete form and {sp.count} response
+                {sp.count === "1" ? "" : "s"}
+              </Button>
+            </form>
+            <ButtonLink href={PATH} variant="secondary">
+              Cancel
+            </ButtonLink>
+          </div>
+        </Card>
+      ) : null}
 
       <section className="mt-4" aria-label="Forms">
         <h2 className="mb-3 text-lg font-semibold">
@@ -87,11 +126,22 @@ export default async function FormsPage({
                         </span>
                         {" · "}
                         {f.fieldCount} field{f.fieldCount === 1 ? "" : "s"}
+                        {" · "}
+                        {f.responseCount} response
+                        {f.responseCount === 1 ? "" : "s"}
                         {" · created "}
                         {formatDate(f.createdAt, tz)}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
+                      {f.responseCount > 0 ? (
+                        <ButtonLink
+                          href={`${PATH}/${f.id}/responses`}
+                          variant="secondary"
+                        >
+                          Responses
+                        </ButtonLink>
+                      ) : null}
                       <ButtonLink href={`${PATH}/${f.id}`} variant="secondary">
                         Edit
                       </ButtonLink>
