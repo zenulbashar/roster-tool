@@ -2751,12 +2751,34 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           status: forms.status,
           createdAt: forms.createdAt,
           updatedAt: forms.updatedAt,
-          fieldCount: sql<number>`count(${formFields.id})`.mapWith(Number),
+          // CORRELATED SCALAR SUBQUERIES, not joins. Joining form_field AND
+          // form_response in one query would fan out (rows = fields ×
+          // responses) and multiply BOTH counts; independent subqueries can't.
+          // Built via embedded query builders (NOT a raw `sql` correlation),
+          // because Drizzle renders columns UNQUALIFIED inside a raw `sql`
+          // template — there `field.form_id = forms.id` collapses to
+          // `"form_id" = "id"` (both resolved against form_field) and counts 0.
+          fieldCount: sql<number>`(${database
+            .select({ n: sql`count(*)` })
+            .from(formFields)
+            .where(
+              and(
+                eq(formFields.formId, forms.id),
+                eq(formFields.businessId, businessId),
+              ),
+            )})`.mapWith(Number),
+          responseCount: sql<number>`(${database
+            .select({ n: sql`count(*)` })
+            .from(formResponses)
+            .where(
+              and(
+                eq(formResponses.formId, forms.id),
+                eq(formResponses.businessId, businessId),
+              ),
+            )})`.mapWith(Number),
         })
         .from(forms)
-        .leftJoin(formFields, eq(formFields.formId, forms.id))
         .where(eq(forms.businessId, businessId))
-        .groupBy(forms.id)
         .orderBy(desc(forms.createdAt));
     },
 
@@ -2799,11 +2821,41 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       return row!;
     },
 
-    /** Delete an owned form (its fields cascade). Scoped, so foreign ids no-op. */
-    async deleteForm(id: string) {
+    /**
+     * Delete an owned form (fields + responses + answers cascade). Scoped, so a
+     * foreign id is a no-op.
+     *
+     * DELETE GUARD: if the form has responses and `confirmed` isn't set, this
+     * REFUSES (deletes nothing) and returns the count, so the UI can ask the
+     * owner to confirm a count-aware deletion — collected responses must never
+     * be wiped by an accidental click. An empty form (or `confirmed: true`)
+     * deletes normally.
+     */
+    async deleteForm(
+      id: string,
+      opts: { confirmed?: boolean } = {},
+    ): Promise<
+      | { ok: true }
+      | { ok: false; reason: "not_found" }
+      | { ok: false; reason: "has_responses"; count: number }
+    > {
+      const owned = await first(
+        database
+          .select({ id: forms.id })
+          .from(forms)
+          .where(and(eq(forms.id, id), eq(forms.businessId, businessId))),
+      );
+      if (!owned) return { ok: false, reason: "not_found" };
+
+      if (!opts.confirmed) {
+        const count = await this.countResponses(id);
+        if (count > 0) return { ok: false, reason: "has_responses", count };
+      }
+
       await database
         .delete(forms)
         .where(and(eq(forms.id, id), eq(forms.businessId, businessId)));
+      return { ok: true };
     },
 
     /**
@@ -3055,7 +3107,20 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
      * Tenant-scoped read of a form's responses + answers. Used by tests to prove
      * isolation; NO owner UI surfaces this in 1b (the results view is 1c).
      */
-    async getResponsesForForm(formId: string) {
+    /**
+     * Tenant-scoped page of a form's responses + answers, newest first. Ordered
+     * by `submitted_at DESC, id DESC` — the id tiebreaker makes limit/offset
+     * paging DETERMINISTIC so rows aren't dropped/duplicated across pages when
+     * timestamps tie on a busy form. Answers are returned with each response
+     * (the page orders them by live field position; orphans last). Scoped by
+     * `business_id` + `form_id`, so a foreign form id reads nothing.
+     */
+    async getResponsesForForm(
+      formId: string,
+      opts: { limit?: number; offset?: number } = {},
+    ) {
+      const limit = opts.limit ?? 50;
+      const offset = opts.offset ?? 0;
       const responses = await database
         .select()
         .from(formResponses)
@@ -3065,7 +3130,9 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             eq(formResponses.businessId, businessId),
           ),
         )
-        .orderBy(desc(formResponses.submittedAt));
+        .orderBy(desc(formResponses.submittedAt), desc(formResponses.id))
+        .limit(limit)
+        .offset(offset);
       if (responses.length === 0) return [];
       const ids = responses.map((r) => r.id);
       const answers = await database
@@ -3076,11 +3143,120 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             inArray(formResponseAnswers.responseId, ids),
             eq(formResponseAnswers.businessId, businessId),
           ),
-        );
+        )
+        .orderBy(asc(formResponseAnswers.createdAt));
       return responses.map((r) => ({
         ...r,
         answers: answers.filter((a) => a.responseId === r.id),
       }));
+    },
+
+    /** Scoped count of a form's responses (for the list/editor count + paging). */
+    async countResponses(formId: string) {
+      const [row] = await database
+        .select({ count: sql<number>`count(*)::int` })
+        .from(formResponses)
+        .where(
+          and(
+            eq(formResponses.formId, formId),
+            eq(formResponses.businessId, businessId),
+          ),
+        );
+      return row?.count ?? 0;
+    },
+
+    /**
+     * Grouped counts for the per-field summaries (rating distribution +
+     * select/yes_no tallies). Aggregating `form_response_answer` joined to
+     * `form_response` is safe: each answer belongs to EXACTLY ONE response, so
+     * the join does NOT fan out / double-count. Scoped by `business_id` +
+     * `form_id`. Text fields are excluded (handled by `getRecentTextAnswers`).
+     * Grouping keeps `field_id` + the snapshot `field_label`/`field_type` so the
+     * pure aggregator can group by `field_id` (live) or fall back to the
+     * snapshot for deleted fields.
+     */
+    getResponseSummaryAggregates(formId: string) {
+      return database
+        .select({
+          fieldId: formResponseAnswers.fieldId,
+          fieldLabel: formResponseAnswers.fieldLabel,
+          fieldType: formResponseAnswers.fieldType,
+          valueText: formResponseAnswers.valueText,
+          valueNumber: formResponseAnswers.valueNumber,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(formResponseAnswers)
+        .innerJoin(
+          formResponses,
+          eq(formResponses.id, formResponseAnswers.responseId),
+        )
+        .where(
+          and(
+            eq(formResponses.formId, formId),
+            eq(formResponseAnswers.businessId, businessId),
+            inArray(formResponseAnswers.fieldType, [
+              "rating",
+              "single_select",
+              "yes_no",
+            ]),
+          ),
+        )
+        .groupBy(
+          formResponseAnswers.fieldId,
+          formResponseAnswers.fieldLabel,
+          formResponseAnswers.fieldType,
+          formResponseAnswers.valueText,
+          formResponseAnswers.valueNumber,
+        );
+    },
+
+    /**
+     * The most recent `perField` text answers per field (short/long text), via a
+     * window partitioned by the snapshot group key (`field_id` when present,
+     * else `field_label`+`field_type`) ordered newest-first. Scoped by
+     * `business_id` + `form_id`. Deterministic tiebreak on response id.
+     */
+    getRecentTextAnswers(formId: string, perField = 5) {
+      const ranked = database.$with("ranked").as(
+        database
+          .select({
+            fieldId: formResponseAnswers.fieldId,
+            fieldLabel: formResponseAnswers.fieldLabel,
+            fieldType: formResponseAnswers.fieldType,
+            valueText: formResponseAnswers.valueText,
+            submittedAt: formResponses.submittedAt,
+            rn: sql<number>`row_number() over (partition by coalesce(${formResponseAnswers.fieldId}::text, 'snap:' || ${formResponseAnswers.fieldLabel} || ':' || ${formResponseAnswers.fieldType}) order by ${formResponses.submittedAt} desc, ${formResponses.id} desc)`.as(
+              "rn",
+            ),
+          })
+          .from(formResponseAnswers)
+          .innerJoin(
+            formResponses,
+            eq(formResponses.id, formResponseAnswers.responseId),
+          )
+          .where(
+            and(
+              eq(formResponses.formId, formId),
+              eq(formResponseAnswers.businessId, businessId),
+              inArray(formResponseAnswers.fieldType, [
+                "short_text",
+                "long_text",
+              ]),
+            ),
+          ),
+      );
+      return database
+        .with(ranked)
+        .select({
+          fieldId: ranked.fieldId,
+          fieldLabel: ranked.fieldLabel,
+          fieldType: ranked.fieldType,
+          valueText: ranked.valueText,
+          submittedAt: ranked.submittedAt,
+        })
+        .from(ranked)
+        .where(lte(ranked.rn, perField))
+        .orderBy(desc(ranked.submittedAt));
     },
   };
 }
