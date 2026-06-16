@@ -2754,14 +2754,28 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           // CORRELATED SCALAR SUBQUERIES, not joins. Joining form_field AND
           // form_response in one query would fan out (rows = fields ×
           // responses) and multiply BOTH counts; independent subqueries can't.
-          fieldCount:
-            sql<number>`(select count(*) from ${formFields} where ${formFields.formId} = ${forms.id} and ${formFields.businessId} = ${businessId})`.mapWith(
-              Number,
-            ),
-          responseCount:
-            sql<number>`(select count(*) from ${formResponses} where ${formResponses.formId} = ${forms.id} and ${formResponses.businessId} = ${businessId})`.mapWith(
-              Number,
-            ),
+          // Built via embedded query builders (NOT a raw `sql` correlation),
+          // because Drizzle renders columns UNQUALIFIED inside a raw `sql`
+          // template — there `field.form_id = forms.id` collapses to
+          // `"form_id" = "id"` (both resolved against form_field) and counts 0.
+          fieldCount: sql<number>`(${database
+            .select({ n: sql`count(*)` })
+            .from(formFields)
+            .where(
+              and(
+                eq(formFields.formId, forms.id),
+                eq(formFields.businessId, businessId),
+              ),
+            )})`.mapWith(Number),
+          responseCount: sql<number>`(${database
+            .select({ n: sql`count(*)` })
+            .from(formResponses)
+            .where(
+              and(
+                eq(formResponses.formId, forms.id),
+                eq(formResponses.businessId, businessId),
+              ),
+            )})`.mapWith(Number),
         })
         .from(forms)
         .where(eq(forms.businessId, businessId))
@@ -3119,6 +3133,100 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           ),
         );
       return row?.count ?? 0;
+    },
+
+    /**
+     * Grouped counts for the per-field summaries (rating distribution +
+     * select/yes_no tallies). Aggregating `form_response_answer` joined to
+     * `form_response` is safe: each answer belongs to EXACTLY ONE response, so
+     * the join does NOT fan out / double-count. Scoped by `business_id` +
+     * `form_id`. Text fields are excluded (handled by `getRecentTextAnswers`).
+     * Grouping keeps `field_id` + the snapshot `field_label`/`field_type` so the
+     * pure aggregator can group by `field_id` (live) or fall back to the
+     * snapshot for deleted fields.
+     */
+    getResponseSummaryAggregates(formId: string) {
+      return database
+        .select({
+          fieldId: formResponseAnswers.fieldId,
+          fieldLabel: formResponseAnswers.fieldLabel,
+          fieldType: formResponseAnswers.fieldType,
+          valueText: formResponseAnswers.valueText,
+          valueNumber: formResponseAnswers.valueNumber,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(formResponseAnswers)
+        .innerJoin(
+          formResponses,
+          eq(formResponses.id, formResponseAnswers.responseId),
+        )
+        .where(
+          and(
+            eq(formResponses.formId, formId),
+            eq(formResponseAnswers.businessId, businessId),
+            inArray(formResponseAnswers.fieldType, [
+              "rating",
+              "single_select",
+              "yes_no",
+            ]),
+          ),
+        )
+        .groupBy(
+          formResponseAnswers.fieldId,
+          formResponseAnswers.fieldLabel,
+          formResponseAnswers.fieldType,
+          formResponseAnswers.valueText,
+          formResponseAnswers.valueNumber,
+        );
+    },
+
+    /**
+     * The most recent `perField` text answers per field (short/long text), via a
+     * window partitioned by the snapshot group key (`field_id` when present,
+     * else `field_label`+`field_type`) ordered newest-first. Scoped by
+     * `business_id` + `form_id`. Deterministic tiebreak on response id.
+     */
+    getRecentTextAnswers(formId: string, perField = 5) {
+      const ranked = database.$with("ranked").as(
+        database
+          .select({
+            fieldId: formResponseAnswers.fieldId,
+            fieldLabel: formResponseAnswers.fieldLabel,
+            fieldType: formResponseAnswers.fieldType,
+            valueText: formResponseAnswers.valueText,
+            submittedAt: formResponses.submittedAt,
+            rn: sql<number>`row_number() over (partition by coalesce(${formResponseAnswers.fieldId}::text, 'snap:' || ${formResponseAnswers.fieldLabel} || ':' || ${formResponseAnswers.fieldType}) order by ${formResponses.submittedAt} desc, ${formResponses.id} desc)`.as(
+              "rn",
+            ),
+          })
+          .from(formResponseAnswers)
+          .innerJoin(
+            formResponses,
+            eq(formResponses.id, formResponseAnswers.responseId),
+          )
+          .where(
+            and(
+              eq(formResponses.formId, formId),
+              eq(formResponseAnswers.businessId, businessId),
+              inArray(formResponseAnswers.fieldType, [
+                "short_text",
+                "long_text",
+              ]),
+            ),
+          ),
+      );
+      return database
+        .with(ranked)
+        .select({
+          fieldId: ranked.fieldId,
+          fieldLabel: ranked.fieldLabel,
+          fieldType: ranked.fieldType,
+          valueText: ranked.valueText,
+          submittedAt: ranked.submittedAt,
+        })
+        .from(ranked)
+        .where(lte(ranked.rn, perField))
+        .orderBy(desc(ranked.submittedAt));
     },
   };
 }
