@@ -71,6 +71,19 @@ export function stockStatusLabel(status: string | null | undefined): string {
   return STOCK_STATUS_LABEL[status] ?? status;
 }
 
+/** Friendly label for a custom-form field type (the builder's type selector). */
+export const FORM_FIELD_TYPE_LABEL: Record<string, string> = {
+  short_text: "Short text",
+  long_text: "Long text",
+  rating: "Rating (1–5)",
+  single_select: "Single choice",
+  yes_no: "Yes / No",
+};
+
+export function formFieldTypeLabel(type: string): string {
+  return FORM_FIELD_TYPE_LABEL[type] ?? type;
+}
+
 /** Friendly label for a certification type. */
 export const CERT_TYPE_LABEL: Record<string, string> = {
   rsa: "RSA",

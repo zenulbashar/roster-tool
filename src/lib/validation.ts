@@ -239,6 +239,98 @@ export const stockOverrideSchema = z.object({
   quantity: z.string().trim().max(40).optional(),
 });
 
+/* ----- Form builder (custom forms — Phase 1a: builder CRUD only) ----- */
+
+/**
+ * The v1 custom-form field types (closed set, mirrors the `form_field_type`
+ * pgEnum). Exported so the client type selector and the server validation share
+ * one source of truth.
+ */
+export const FORM_FIELD_TYPES = [
+  "short_text",
+  "long_text",
+  "rating",
+  "single_select",
+  "yes_no",
+] as const;
+
+export const formFieldTypeSchema = z.enum(FORM_FIELD_TYPES);
+export type FormFieldTypeInput = z.infer<typeof formFieldTypeSchema>;
+
+/**
+ * A single_select option. `id` is optional on input: existing options carry
+ * their stable id (preserved on save), new options omit it and the repo
+ * generates one server-side. `label` allows empty at parse so a half-filled
+ * option on a NON-single_select field never blocks a save; emptiness is judged
+ * in the single_select refinement below and blanks are dropped on transform.
+ */
+export const formFieldOptionSchema = z.object({
+  id: z.string().optional(),
+  label: z.string().trim().max(100),
+});
+export type FormFieldOptionInput = z.infer<typeof formFieldOptionSchema>;
+
+/**
+ * One field in a save payload. `id` is the existing field id OR a client temp
+ * id (any string); the repo decides insert-vs-update by checking ownership, and
+ * a temp/forged id is NEVER used as a primary key (inserts always DB-generate).
+ *
+ * Refinement + transform enforce the options rule: `single_select` needs at
+ * least one non-empty option (the UI nudges 2+); every other type ignores
+ * options entirely (forced to `[]`), so stray client options can't error or be
+ * stored. single_select blanks are dropped, keeping stored options clean.
+ */
+export const formFieldSchema = z
+  .object({
+    id: z.string().optional(),
+    label: z.string().trim().min(1, "Please give the field a label").max(100),
+    type: formFieldTypeSchema,
+    required: z.boolean().optional().default(false),
+    options: z.array(formFieldOptionSchema).max(50).optional().default([]),
+  })
+  .superRefine((field, ctx) => {
+    if (
+      field.type === "single_select" &&
+      field.options.filter((o) => o.label.length > 0).length < 1
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["options"],
+        message: "Add at least one option for a choice field",
+      });
+    }
+  })
+  .transform((field) => ({
+    ...field,
+    options:
+      field.type === "single_select"
+        ? field.options.filter((o) => o.label.length > 0)
+        : [],
+  }));
+export type FormFieldInput = z.infer<typeof formFieldSchema>;
+
+/**
+ * Title-only payload for creating a form. A title is always supplied at
+ * creation (no "Untitled" placeholder); it is editable thereafter via
+ * `formSaveSchema`. Same title rule as the full save.
+ */
+export const createFormSchema = z.object({
+  title: z.string().trim().min(1, "Please enter a form title").max(200),
+});
+export type CreateFormInput = z.infer<typeof createFormSchema>;
+
+/**
+ * The whole-form transactional save: title + optional description + the ordered
+ * fields array. A zero-field form is valid (a draft mid-build). Positions are
+ * derived from array order in the repo, not trusted from the client.
+ */
+export const formSaveSchema = z.object({
+  title: z.string().trim().min(1, "Please enter a form title").max(200),
+  description: z.string().trim().max(2000).optional(),
+  fields: z.array(formFieldSchema).max(100, "That's too many fields"),
+});
+export type FormSaveInput = z.infer<typeof formSaveSchema>;
+
 export type StaffInput = z.infer<typeof staffSchema>;
 export type TemplateInput = z.infer<typeof templateSchema>;
 export type PeriodInput = z.infer<typeof periodSchema>;
