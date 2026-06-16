@@ -484,8 +484,8 @@ hmac`, AUTH_SECRET-signed, 15 min — `src/lib/notices-verification.ts`,
   `#76b900` wordmark — header only, content stays white) with the nav grouped into
   four top-level items: **Rosters** (Rosters/`/app/periods`, Shift types/`/app/templates`,
   Shifts/`/app/shifts`, Timesheets/`/app/timesheets`, Reports/`/app/reports`), **Team** (Staff, Leave,
-  Certifications), **Orders** (Stock levels/`/app/stock`, Items, Suppliers), and a
-  standalone **Settings**. The header also carries a **notification bell**
+  Certifications), **Orders** (Stock levels/`/app/stock`, Items, Suppliers), and
+  standalone **Forms** (`/app/forms`) and **Settings**. The header also carries a **notification bell**
   (`NotificationBell`, right of "Sign out") with an unread count + dropdown; the
   owner layout reads the count/list per request via `ownerRepo`. `OwnerNav` is a
   client component using `usePathname` for
@@ -534,8 +534,8 @@ connection, the worker uses the direct connection (pg-boss needs session mode).
 `roster_period`, `shift`, `availability_request`, `availability_response`,
 `roster_assignment`, `published_roster`, `timesheet_entry`, `clock_photo`,
 `leave_request`, `shift_offer`, `staff_certification`, `supplier`, `item`,
-`stock_check_entry`, `notification`, `staff_notification`. All domain tables
-are business-scoped.
+`stock_check_entry`, `notification`, `staff_notification`, `form`, `form_field`.
+All domain tables are business-scoped.
 
 Notable columns / conventions:
 
@@ -683,6 +683,31 @@ Notable columns / conventions:
   SHA-256 hash of that person's `/me` capability token; rotate to revoke) and
   `business.staff_shift_reminders_enabled` (NOT NULL default true — the
   business-level toggle for the daily in-app reminder).
+- `form` — an owner-authored custom form (form builder, Phase 1a — builder CRUD
+  only). NOT-NULL `title`; nullable `description`; `status` (`form_status`:
+  `draft`/`published`/`closed`, NOT NULL default `draft` — **1a only ever writes
+  `draft`**); `public_slug` (nullable, **unique** — the future public URL handle,
+  **never set in 1a**, generated at publish in a later phase; Postgres allows
+  many NULLs under the unique constraint); `allow_anonymous` (NOT NULL default
+  false — for later phases, unused in 1a); `created_at`/`updated_at`. Indexed on
+  `business_id`. **No publishing, no public routes, no responses in 1a.**
+- `form_field` — one owner-labelled field on a `form` (form builder, Phase 1a).
+  NOT-NULL `form_id` → `form` (**cascade**); `business_id` carried so reads stay
+  tenant-scoped and **always forced from the owner session, never request input**
+  (a field's business always equals its form's business); NOT-NULL `label`;
+  `type` (`form_field_type`: `short_text`/`long_text`/`rating`/`single_select`/
+  `yes_no`); `required` (NOT NULL default false); `position` (integer,
+  re-sequenced 0..n from the editor's array order on each save); `options`
+  (jsonb, `{id,label}[]` for `single_select` only — null otherwise; option `id`
+  is stable across saves so a later phase can store it as the answer). Indexed on
+  `(business_id, form_id)`. The whole form saves transactionally via
+  `saveForm` on the tenant repo (verify ownership, update meta, reconcile fields
+  — insert new with a **DB-generated PK (client temp/forged ids are discarded)**,
+  update owned, delete removed, re-sequence positions, preserve option ids).
+  Validation is shared Zod in `src/lib/validation.ts`; the client editor is
+  `src/components/FormEditor.tsx`; owner pages are `/app/forms` (list) and
+  `/app/forms/[id]` (editor). **Flagged scope: 1a is builder-only — `rating` is a
+  fixed 1–5 scale and `yes_no` a fixed two-option choice (no per-field config).**
 
 ## Milestones
 
@@ -704,3 +729,4 @@ Notable columns / conventions:
 - [x] M16 — Owner in-app notifications: header bell (unread count + dropdown) + `/app/notifications` + per-event preferences, fed best-effort from the five existing events (owner only; emails unchanged; no realtime)
 - [x] M17 — Owner getting-started checklist on the dashboard: step state derived from existing data (no manual ticking), core steps gate visibility (auto-hides when all four are done; optional inventory steps never keep it alive); read-only, no schema change
 - [x] M18 — Staff in-app notices: per-staff PIN-gated `/me` page (capability link + short-lived signed proof), notices at leave decisions / swap approvals / publishes (additive to emails), and a daily IN-APP-ONLY shift reminder (idempotent via dedupe key; business-level toggle)
+- [x] M19 — Form builder Phase 1a (builder CRUD only): owner-authenticated `form` + `form_field` tables, owner-labelled fields of five v1 types, single transactional `saveForm` reconcile (tenant-scoped, IDOR-guarded, stable option ids), `/app/forms` list + `/app/forms/[id]` editor (no publishing, no public routes, no responses — later phases)
