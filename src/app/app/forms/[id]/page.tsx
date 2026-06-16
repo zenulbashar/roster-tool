@@ -65,8 +65,14 @@ export default async function FormEditorPage({
       };
     }
     const saved = await repo.saveForm(id, parsed.data);
-    if (!saved) {
-      return { status: "error", message: "This form could not be found." };
+    if (!saved.ok) {
+      return {
+        status: "error",
+        message:
+          saved.reason === "locked"
+            ? saved.message
+            : "This form could not be found.",
+      };
     }
     revalidatePath(PATH);
     revalidatePath(`${PATH}/${id}`);

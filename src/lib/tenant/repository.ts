@@ -35,6 +35,8 @@ import {
   staffNotifications,
   forms,
   formFields,
+  formResponses,
+  formResponseAnswers,
   type FormFieldOption,
 } from "@/lib/db/schema";
 import type { NotificationType } from "@/lib/notifications";
@@ -44,6 +46,8 @@ import type {
   CertTypeInput,
   FormFieldInput,
 } from "@/lib/validation";
+import type { AnswerRow } from "@/lib/form-submission";
+import { generateSlug } from "@/lib/tokens";
 import type { StockStatus } from "@/lib/order-reminder";
 import type { ReminderStage } from "@/lib/certification";
 import type { SetupFlags } from "@/lib/getting-started";
@@ -2819,8 +2823,18 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
      *    the client).
      *  - `business_id` on every insert/update is forced from the session, never
      *    request input, so a field's business always equals its form's business.
-     *  - Status / public_slug / allow_anonymous are NEVER touched (1a is
-     *    draft-only).
+     *  - `status` / `public_slug` / `allow_anonymous` are NEVER touched here
+     *    (publish/close own those); only `title`/`description`/fields change.
+     *  - PUBLISH LOCK: once a form is `published` its FIELD STRUCTURE is frozen
+     *    (no add/delete/reorder/type/required/options/label change) — owners
+     *    unpublish to edit; republishing keeps the slug. Title/description may
+     *    still change. Returns `{ ok:false, reason:"locked" }` on a structural
+     *    edit to a published form. This guards the "no editing fields
+     *    mid-collection" rule at the data layer, not just the UI.
+     *
+     * Returns a discriminated result: `{ ok:true, form, fields }`,
+     * `{ ok:false, reason:"not_found" }` (not this business's), or
+     * `{ ok:false, reason:"locked", message }`.
      */
     async saveForm(
       id: string,
@@ -2829,13 +2843,39 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         description?: string | null;
         fields: FormFieldInput[];
       },
-    ) {
+    ): Promise<SaveFormOutcome> {
       return database.transaction(async (tx) => {
         const [form] = await tx
           .select()
           .from(forms)
           .where(and(eq(forms.id, id), eq(forms.businessId, businessId)));
-        if (!form) return null;
+        if (!form) return { ok: false, reason: "not_found" };
+
+        // Load existing fields in full (ordered) — needed both for the publish
+        // lock check and the reconcile below.
+        const existingFields = await tx
+          .select()
+          .from(formFields)
+          .where(
+            and(
+              eq(formFields.formId, id),
+              eq(formFields.businessId, businessId),
+            ),
+          )
+          .orderBy(asc(formFields.position));
+
+        // Publish lock: a published form's field structure is frozen.
+        if (
+          form.status === "published" &&
+          !fieldsStructurallyEqual(existingFields, input.fields)
+        ) {
+          return {
+            ok: false,
+            reason: "locked",
+            message:
+              "This form is published. Unpublish it to change its fields.",
+          };
+        }
 
         await tx
           .update(forms)
@@ -2848,16 +2888,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
 
         // The ONLY ids we will UPDATE by — proven owned, so a forged id can
         // never mutate another form's (or tenant's) field.
-        const existing = await tx
-          .select({ id: formFields.id })
-          .from(formFields)
-          .where(
-            and(
-              eq(formFields.formId, id),
-              eq(formFields.businessId, businessId),
-            ),
-          );
-        const existingIds = new Set(existing.map((r) => r.id));
+        const existingIds = new Set(existingFields.map((r) => r.id));
         const keptIds = new Set<string>();
 
         for (let position = 0; position < input.fields.length; position++) {
@@ -2928,10 +2959,178 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             ),
           )
           .orderBy(asc(formFields.position));
-        return { form: savedForm!, fields: savedFields };
+        return { ok: true, form: savedForm!, fields: savedFields };
       });
     },
+
+    /**
+     * Publish a form: set status='published' and generate an unguessable
+     * `public_slug` only if it has none yet. IDEMPOTENT — re-publishing, or
+     * publishing a previously-closed form, KEEPS the existing slug (so printed
+     * QR codes/links keep working). Scoped; returns `{ slug }` or null if the
+     * form isn't this business's.
+     */
+    async publishForm(id: string) {
+      return database.transaction(async (tx) => {
+        const [form] = await tx
+          .select()
+          .from(forms)
+          .where(and(eq(forms.id, id), eq(forms.businessId, businessId)));
+        if (!form) return null;
+        const slug = form.publicSlug ?? generateSlug();
+        const [row] = await tx
+          .update(forms)
+          .set({ status: "published", publicSlug: slug, updatedAt: new Date() })
+          .where(and(eq(forms.id, id), eq(forms.businessId, businessId)))
+          .returning();
+        return { slug: row!.publicSlug! };
+      });
+    },
+
+    /**
+     * Close a form: status='closed'. The public route then refuses new
+     * responses. The slug is KEPT so the owner can re-publish to the same URL.
+     * Scoped; returns the row or null.
+     */
+    async closeForm(id: string) {
+      const [row] = await database
+        .update(forms)
+        .set({ status: "closed", updatedAt: new Date() })
+        .where(and(eq(forms.id, id), eq(forms.businessId, businessId)))
+        .returning();
+      return row ?? null;
+    },
+
+    /**
+     * Store one PUBLIC response + its answers in a transaction. Re-checks the
+     * form is this business's AND still `published` (guards a close/unpublish
+     * race) — stores NOTHING and returns null otherwise. `business_id` is forced
+     * from the repo on the response and EVERY answer, never request input.
+     * Returns the new response id.
+     */
+    async createPublicResponse(
+      formId: string,
+      input: {
+        channel: "public" | "internal";
+        source: string | null;
+        answers: AnswerRow[];
+      },
+    ): Promise<string | null> {
+      return database.transaction(async (tx) => {
+        const [form] = await tx
+          .select({ status: forms.status })
+          .from(forms)
+          .where(and(eq(forms.id, formId), eq(forms.businessId, businessId)));
+        if (!form || form.status !== "published") return null;
+
+        const [response] = await tx
+          .insert(formResponses)
+          .values({
+            businessId,
+            formId,
+            channel: input.channel,
+            source: input.source,
+          })
+          .returning({ id: formResponses.id });
+        const responseId = response!.id;
+
+        if (input.answers.length > 0) {
+          await tx.insert(formResponseAnswers).values(
+            input.answers.map((a) => ({
+              businessId,
+              responseId,
+              fieldId: a.fieldId,
+              fieldLabel: a.fieldLabel,
+              fieldType: a.fieldType,
+              valueText: a.valueText,
+              valueNumber: a.valueNumber,
+            })),
+          );
+        }
+        return responseId;
+      });
+    },
+
+    /**
+     * Tenant-scoped read of a form's responses + answers. Used by tests to prove
+     * isolation; NO owner UI surfaces this in 1b (the results view is 1c).
+     */
+    async getResponsesForForm(formId: string) {
+      const responses = await database
+        .select()
+        .from(formResponses)
+        .where(
+          and(
+            eq(formResponses.formId, formId),
+            eq(formResponses.businessId, businessId),
+          ),
+        )
+        .orderBy(desc(formResponses.submittedAt));
+      if (responses.length === 0) return [];
+      const ids = responses.map((r) => r.id);
+      const answers = await database
+        .select()
+        .from(formResponseAnswers)
+        .where(
+          and(
+            inArray(formResponseAnswers.responseId, ids),
+            eq(formResponseAnswers.businessId, businessId),
+          ),
+        );
+      return responses.map((r) => ({
+        ...r,
+        answers: answers.filter((a) => a.responseId === r.id),
+      }));
+    },
   };
+}
+
+/** Result of `saveForm` — see its doc for the publish-lock rule. */
+export type SaveFormOutcome =
+  | {
+      ok: true;
+      form: typeof forms.$inferSelect;
+      fields: (typeof formFields.$inferSelect)[];
+    }
+  | { ok: false; reason: "not_found" }
+  | { ok: false; reason: "locked"; message: string };
+
+/**
+ * Whether two field arrays are structurally identical (for the publish lock).
+ * Compares count, then per position: same field id, label, type, required, and
+ * options (length + each option's id and label). A new/added field (no id) or
+ * any reorder/type/option change makes them unequal. Label edits also count as
+ * a change — a published form's fields are fully frozen.
+ */
+function fieldsStructurallyEqual(
+  existing: (typeof formFields.$inferSelect)[],
+  incoming: FormFieldInput[],
+): boolean {
+  if (existing.length !== incoming.length) return false;
+  for (let i = 0; i < existing.length; i++) {
+    const a = existing[i]!;
+    const b = incoming[i]!;
+    if (
+      a.id !== b.id ||
+      a.label !== b.label ||
+      a.type !== b.type ||
+      a.required !== b.required
+    ) {
+      return false;
+    }
+    const aOpts = a.options ?? [];
+    const bOpts = b.type === "single_select" ? b.options : [];
+    if (aOpts.length !== bOpts.length) return false;
+    for (let j = 0; j < aOpts.length; j++) {
+      if (
+        aOpts[j]!.id !== bOpts[j]!.id ||
+        aOpts[j]!.label !== bOpts[j]!.label
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 export type TenantRepo = ReturnType<typeof createTenantRepo>;
