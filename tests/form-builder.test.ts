@@ -70,7 +70,10 @@ describe("form builder validation", () => {
     });
 
     it("defaults required to false and options to []", () => {
-      const r = formFieldSchema.safeParse({ label: "Name", type: "short_text" });
+      const r = formFieldSchema.safeParse({
+        label: "Name",
+        type: "short_text",
+      });
       expect(r.success).toBe(true);
       if (r.success) {
         expect(r.data.required).toBe(false);

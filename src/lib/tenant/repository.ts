@@ -33,10 +33,17 @@ import {
   stockCheckEntries,
   notifications,
   staffNotifications,
+  forms,
+  formFields,
+  type FormFieldOption,
 } from "@/lib/db/schema";
 import type { NotificationType } from "@/lib/notifications";
 import type { StaffNotificationType } from "@/lib/staff-notifications";
-import type { LeaveType, CertTypeInput } from "@/lib/validation";
+import type {
+  LeaveType,
+  CertTypeInput,
+  FormFieldInput,
+} from "@/lib/validation";
 import type { StockStatus } from "@/lib/order-reminder";
 import type { ReminderStage } from "@/lib/certification";
 import type { SetupFlags } from "@/lib/getting-started";
@@ -2727,6 +2734,203 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         )
         .orderBy(asc(shifts.startTime));
     },
+
+    /* ----- Custom forms (form builder; Phase 1a — builder CRUD only) ----- */
+
+    /** This business's forms, newest first, each with its field count. */
+    listForms() {
+      return database
+        .select({
+          id: forms.id,
+          title: forms.title,
+          description: forms.description,
+          status: forms.status,
+          createdAt: forms.createdAt,
+          updatedAt: forms.updatedAt,
+          fieldCount: sql<number>`count(${formFields.id})`.mapWith(Number),
+        })
+        .from(forms)
+        .leftJoin(formFields, eq(formFields.formId, forms.id))
+        .where(eq(forms.businessId, businessId))
+        .groupBy(forms.id)
+        .orderBy(desc(forms.createdAt));
+    },
+
+    /**
+     * One owned form plus its fields (position-ordered), or null when the id
+     * isn't this business's — the IDOR guard for the editor and every field op.
+     */
+    async getFormWithFields(id: string) {
+      const form = await first(
+        database
+          .select()
+          .from(forms)
+          .where(and(eq(forms.id, id), eq(forms.businessId, businessId))),
+      );
+      if (!form) return null;
+      const fields = await database
+        .select()
+        .from(formFields)
+        .where(
+          and(eq(formFields.formId, id), eq(formFields.businessId, businessId)),
+        )
+        .orderBy(asc(formFields.position));
+      return { form, fields };
+    },
+
+    /**
+     * Create a draft form. A title is always supplied at creation (no
+     * placeholder). `business_id` is forced; status/public_slug/allow_anonymous
+     * keep their defaults (draft / null / false) — 1a never publishes.
+     */
+    async createForm(input: { title: string; description?: string | null }) {
+      const [row] = await database
+        .insert(forms)
+        .values({
+          businessId,
+          title: input.title,
+          description: emptyToNull(input.description),
+        })
+        .returning();
+      return row!;
+    },
+
+    /** Delete an owned form (its fields cascade). Scoped, so foreign ids no-op. */
+    async deleteForm(id: string) {
+      await database
+        .delete(forms)
+        .where(and(eq(forms.id, id), eq(forms.businessId, businessId)));
+    },
+
+    /**
+     * Transactional whole-form save: update the form meta and reconcile its
+     * fields against the incoming ordered array in ONE transaction. Returns the
+     * re-read form + fields, or null if the form isn't this business's.
+     *
+     * Reconcile rules (stated so they can't drift):
+     *  - Ownership first: the form must belong to this business (IDOR guard).
+     *  - An incoming field whose id matches an OWNED existing field → UPDATE
+     *    (scoped by id + form + business).
+     *  - Any other incoming field (temp client id, or a forged/foreign id that
+     *    isn't owned) → INSERT, **discarding the client id entirely** — the PK
+     *    is always DB-generated; the client never picks a primary key.
+     *  - Owned fields absent from the incoming array → DELETE.
+     *  - `position` is re-sequenced 0..n from array order (never trusted from
+     *    the client).
+     *  - `business_id` on every insert/update is forced from the session, never
+     *    request input, so a field's business always equals its form's business.
+     *  - Status / public_slug / allow_anonymous are NEVER touched (1a is
+     *    draft-only).
+     */
+    async saveForm(
+      id: string,
+      input: {
+        title: string;
+        description?: string | null;
+        fields: FormFieldInput[];
+      },
+    ) {
+      return database.transaction(async (tx) => {
+        const [form] = await tx
+          .select()
+          .from(forms)
+          .where(and(eq(forms.id, id), eq(forms.businessId, businessId)));
+        if (!form) return null;
+
+        await tx
+          .update(forms)
+          .set({
+            title: input.title,
+            description: emptyToNull(input.description),
+            updatedAt: new Date(),
+          })
+          .where(and(eq(forms.id, id), eq(forms.businessId, businessId)));
+
+        // The ONLY ids we will UPDATE by — proven owned, so a forged id can
+        // never mutate another form's (or tenant's) field.
+        const existing = await tx
+          .select({ id: formFields.id })
+          .from(formFields)
+          .where(
+            and(
+              eq(formFields.formId, id),
+              eq(formFields.businessId, businessId),
+            ),
+          );
+        const existingIds = new Set(existing.map((r) => r.id));
+        const keptIds = new Set<string>();
+
+        for (let position = 0; position < input.fields.length; position++) {
+          const field = input.fields[position]!;
+          const options = optionsForStorage(field);
+          const ownedExisting =
+            field.id !== undefined && existingIds.has(field.id);
+          if (ownedExisting) {
+            keptIds.add(field.id!);
+            await tx
+              .update(formFields)
+              .set({
+                businessId,
+                formId: id,
+                label: field.label,
+                type: field.type,
+                required: field.required,
+                position,
+                options,
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(formFields.id, field.id!),
+                  eq(formFields.formId, id),
+                  eq(formFields.businessId, businessId),
+                ),
+              );
+          } else {
+            // INSERT: client id (temp or forged) deliberately NOT threaded in —
+            // the PK is DB-generated.
+            await tx.insert(formFields).values({
+              businessId,
+              formId: id,
+              label: field.label,
+              type: field.type,
+              required: field.required,
+              position,
+              options,
+            });
+          }
+        }
+
+        const toDelete = [...existingIds].filter((fid) => !keptIds.has(fid));
+        if (toDelete.length > 0) {
+          await tx
+            .delete(formFields)
+            .where(
+              and(
+                eq(formFields.formId, id),
+                eq(formFields.businessId, businessId),
+                inArray(formFields.id, toDelete),
+              ),
+            );
+        }
+
+        const [savedForm] = await tx
+          .select()
+          .from(forms)
+          .where(and(eq(forms.id, id), eq(forms.businessId, businessId)));
+        const savedFields = await tx
+          .select()
+          .from(formFields)
+          .where(
+            and(
+              eq(formFields.formId, id),
+              eq(formFields.businessId, businessId),
+            ),
+          )
+          .orderBy(asc(formFields.position));
+        return { form: savedForm!, fields: savedFields };
+      });
+    },
   };
 }
 
@@ -2736,4 +2940,23 @@ export type TenantRepo = ReturnType<typeof createTenantRepo>;
 async function first<T>(query: PromiseLike<T[]>): Promise<T | null> {
   const rows = await query;
   return rows[0] ?? null;
+}
+
+/**
+ * What to persist in `form_field.options` for one field. Only `single_select`
+ * carries options; every other type stores null. Option id stability (the whole
+ * point of `{id,label}`): an option that ARRIVES with an id keeps it; one with
+ * no id gets a fresh server-generated id. Existing ids are never regenerated.
+ */
+function optionsForStorage(field: FormFieldInput): FormFieldOption[] | null {
+  if (field.type !== "single_select") return null;
+  return field.options.map((o) => ({
+    id: o.id ?? crypto.randomUUID(),
+    label: o.label,
+  }));
+}
+
+/** Normalise an optional/empty string to null (e.g. a blank form description). */
+function emptyToNull(value: string | null | undefined): string | null {
+  return value && value.length > 0 ? value : null;
 }
