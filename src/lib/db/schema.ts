@@ -11,6 +11,7 @@ import {
   time,
   boolean,
   integer,
+  jsonb,
   doublePrecision,
   primaryKey,
   unique,
@@ -908,6 +909,110 @@ export const staffNotifications = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
+/* Forms (custom form builder — Phase 1a: owner-authored drafts only)         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Lifecycle of a custom form. Phase 1a is builder-only and ONLY ever writes
+ * `draft`; `published`/`closed` exist now for later phases (publishing +
+ * response collection) and are never set by the builder CRUD, so those phases
+ * stay purely additive (no enum migration later).
+ */
+export const formStatus = pgEnum("form_status", [
+  "draft",
+  "published",
+  "closed",
+]);
+
+/**
+ * A custom form field's input type (closed set for v1). `rating` is a fixed 1–5
+ * scale and `yes_no` a fixed two-option choice — no per-field config. Only
+ * `single_select` carries owner-managed `options`; every other type ignores
+ * them.
+ */
+export const formFieldType = pgEnum("form_field_type", [
+  "short_text",
+  "long_text",
+  "rating",
+  "single_select",
+  "yes_no",
+]);
+
+/**
+ * A single_select option. `id` is generated server-side and is STABLE across
+ * saves (preserved when present, generated only when absent) so a later phase
+ * can store the option id as the answer and label edits won't break historical
+ * responses. `label` is the owner-facing choice text.
+ */
+export type FormFieldOption = { id: string; label: string };
+
+/**
+ * An owner-authored custom form. Business-scoped like every domain table. Phase
+ * 1a is builder-only: forms are created and edited as `draft` and never
+ * published here. `public_slug` (the future public URL handle) and
+ * `allow_anonymous` exist now so later phases are additive, but are NEVER set
+ * by 1a — the slug stays NULL until a publish action generates it (Postgres
+ * allows many NULLs under a unique constraint, so drafts never collide).
+ * `title` is required at creation and editable thereafter; `description` is
+ * optional.
+ */
+export const forms = pgTable(
+  "form",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    description: text("description"),
+    status: formStatus("status").notNull().default("draft"),
+    publicSlug: text("public_slug").unique(),
+    allowAnonymous: boolean("allow_anonymous").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("form_business_idx").on(t.businessId)],
+);
+
+/**
+ * One field on a custom form, owner-labelled. `business_id` is carried so field
+ * reads/writes stay tenant-scoped by construction; it is ALWAYS forced from the
+ * owner session (never request input), so a field's business always equals its
+ * parent form's business. `position` is re-sequenced 0..n from the editor's
+ * array order on each save. `options` holds `{ id, label }[]` for
+ * `single_select` only (stable option ids — see `FormFieldOption`); all other
+ * field types leave it null.
+ */
+export const formFields = pgTable(
+  "form_field",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    formId: uuid("form_id")
+      .notNull()
+      .references(() => forms.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    type: formFieldType("type").notNull(),
+    required: boolean("required").notNull().default(false),
+    position: integer("position").notNull(),
+    options: jsonb("options").$type<FormFieldOption[]>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("form_field_business_form_idx").on(t.businessId, t.formId)],
+);
+
+/* -------------------------------------------------------------------------- */
 /* Relations (for relational queries)                                         */
 /* -------------------------------------------------------------------------- */
 
@@ -1093,3 +1198,22 @@ export const stockCheckEntriesRelations = relations(
     }),
   }),
 );
+
+export const formsRelations = relations(forms, ({ one, many }) => ({
+  business: one(businesses, {
+    fields: [forms.businessId],
+    references: [businesses.id],
+  }),
+  fields: many(formFields),
+}));
+
+export const formFieldsRelations = relations(formFields, ({ one }) => ({
+  business: one(businesses, {
+    fields: [formFields.businessId],
+    references: [businesses.id],
+  }),
+  form: one(forms, {
+    fields: [formFields.formId],
+    references: [forms.id],
+  }),
+}));
