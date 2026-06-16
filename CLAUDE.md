@@ -79,6 +79,9 @@ owner approval, not payroll export.
 - Tailwind CSS v4 (CSS-first config in `src/app/globals.css`)
 - Vitest — unit + integration tests
 - pino — structured logging
+- Cloudflare Turnstile — bot protection on the public form route (verified
+  server-side via `src/lib/turnstile.ts`); `qrcode` — server-side QR generation
+  for public form links
 
 ## Key product decisions
 
@@ -683,14 +686,17 @@ Notable columns / conventions:
   SHA-256 hash of that person's `/me` capability token; rotate to revoke) and
   `business.staff_shift_reminders_enabled` (NOT NULL default true — the
   business-level toggle for the daily in-app reminder).
-- `form` — an owner-authored custom form (form builder, Phase 1a — builder CRUD
-  only). NOT-NULL `title`; nullable `description`; `status` (`form_status`:
-  `draft`/`published`/`closed`, NOT NULL default `draft` — **1a only ever writes
-  `draft`**); `public_slug` (nullable, **unique** — the future public URL handle,
-  **never set in 1a**, generated at publish in a later phase; Postgres allows
-  many NULLs under the unique constraint); `allow_anonymous` (NOT NULL default
-  false — for later phases, unused in 1a); `created_at`/`updated_at`. Indexed on
-  `business_id`. **No publishing, no public routes, no responses in 1a.**
+- `form` — an owner-authored custom form. NOT-NULL `title`; nullable
+  `description`; `status` (`form_status`: `draft`/`published`/`closed`, NOT NULL
+  default `draft`); `public_slug` (nullable, **unique** — the public URL handle);
+  `allow_anonymous` (NOT NULL default false — reserved for the staff phase,
+  unused); `created_at`/`updated_at`. Indexed on `business_id`. **Phase 1b**
+  writes `status` + `public_slug`: `publishForm` sets `published` and generates
+  an unguessable slug (`generateSlug`, 16-char base64url) ONLY if absent —
+  idempotent, so re-publishing or re-opening a closed form keeps the slug (and
+  printed QR codes); `closeForm` sets `closed` (keeps the slug) and the public
+  route then refuses responses. Postgres allows many NULL slugs under the unique
+  constraint (drafts never collide).
 - `form_field` — one owner-labelled field on a `form` (form builder, Phase 1a).
   NOT-NULL `form_id` → `form` (**cascade**); `business_id` carried so reads stay
   tenant-scoped and **always forced from the owner session, never request input**
@@ -706,8 +712,47 @@ Notable columns / conventions:
   update owned, delete removed, re-sequence positions, preserve option ids).
   Validation is shared Zod in `src/lib/validation.ts`; the client editor is
   `src/components/FormEditor.tsx`; owner pages are `/app/forms` (list) and
-  `/app/forms/[id]` (editor). **Flagged scope: 1a is builder-only — `rating` is a
-  fixed 1–5 scale and `yes_no` a fixed two-option choice (no per-field config).**
+  `/app/forms/[id]` (editor). `rating` is a fixed 1–5 scale and `yes_no` a fixed
+  two-option choice (no per-field config). **PUBLISH LOCK (1b)**: once a form is
+  `published`, `saveForm` rejects any field-structure change (add/delete/reorder/
+  type/required/options/label) with `{ ok:false, reason:"locked" }` — the owner
+  unpublishes to edit; title/description stay editable. The editor disables field
+  controls when published to mirror this.
+- **Inventory of form-builder Phase 1b (publish + public collection + QR):**
+  - `form_response` — one PUBLIC submission to a published form. **Anonymous** (no
+    respondent column in 1b). `business_id` denormalised and ALWAYS set
+    server-side from the FORM, never request input; NOT-NULL `form_id` → `form`
+    (cascade); `channel` (`form_channel`: `public`/`internal` — only `public`
+    written in 1b, `internal` reserved for the staff phase); nullable `source`
+    ("qr"/"link"); `submitted_at`. Indexed on `(business_id, form_id)` and
+    `(form_id, submitted_at)`.
+  - `form_response_answer` — one answer, a **self-describing snapshot**:
+    `field_label` + `field_type` captured at submit, and `field_id` → `form_field`
+    is **ON DELETE SET NULL** (nullable) so answers SURVIVE later field edits or
+    deletion. `value_text` xor `value_number` (DB `CHECK num_nonnulls(...)=1`):
+    `rating` → `value_number` (1–5, for trivial AVG/COUNT later), everything else
+    → `value_text` (`single_select` stores the chosen option's LABEL after the
+    submitted option id was validated against the field's stored ids). `business_id`
+    forced from the response. Indexed on `(response_id)` and `(business_id,
+field_id)`.
+  - `form_rate_limit` — durable fixed-window counter for public submissions
+    (`bucket_key` PK = hash(IP+slug+window), `count`, `expires_at`). Durable (not
+    in-memory) like the PIN lockout, since the app runs on many serverless
+    instances. Coarse per-(IP,slug) ceilings (40/min, 400/hour) sized for the
+    QR-in-a-busy-venue case — Turnstile is the primary bot gate. Logic in
+    `src/lib/rate-limit.ts` (IPs hashed, never stored raw).
+  - **Public route `/f/[slug]`** lives OUTSIDE `/app` (root layout, no session,
+    `force-dynamic`); `findPublishedFormBySlug` resolves ONLY published forms
+    (draft/closed/unknown → 404) and exposes no owner data — the page passes the
+    client only `{ label, type, required, options:[{id,label}] }`. Submit order is
+    **honeypot (silent drop) → rate-limit → Turnstile verify → validate → store**
+    (`src/lib/form-response-submission.ts`); per-answer validation is pure in
+    `src/lib/form-submission.ts`. Turnstile is verified server-side
+    (`src/lib/turnstile.ts`) and **fails closed** when `TURNSTILE_SECRET_KEY` is
+    unset (both keys are optional in `env.ts` so boot never breaks; set them in
+    Vercel before publishing). QR is the public URL rendered server-side via the
+    `qrcode` lib (no separate route/channel). The owner-facing **responses view is
+    NOT built (Phase 1c)** — `getResponsesForForm` exists for tests only.
 
 ## Milestones
 
@@ -730,3 +775,4 @@ Notable columns / conventions:
 - [x] M17 — Owner getting-started checklist on the dashboard: step state derived from existing data (no manual ticking), core steps gate visibility (auto-hides when all four are done; optional inventory steps never keep it alive); read-only, no schema change
 - [x] M18 — Staff in-app notices: per-staff PIN-gated `/me` page (capability link + short-lived signed proof), notices at leave decisions / swap approvals / publishes (additive to emails), and a daily IN-APP-ONLY shift reminder (idempotent via dedupe key; business-level toggle)
 - [x] M19 — Form builder Phase 1a (builder CRUD only): owner-authenticated `form` + `form_field` tables, owner-labelled fields of five v1 types, single transactional `saveForm` reconcile (tenant-scoped, IDOR-guarded, stable option ids), `/app/forms` list + `/app/forms/[id]` editor (no publishing, no public routes, no responses — later phases)
+- [x] M20 — Form builder Phase 1b (publish + public collection + QR): owner publish/close + public URL/copy/QR; public `/f/[slug]` route (outside `/app`) storing anonymous `form_response`/`form_response_answer` (self-describing snapshots, rating in `value_number`); abuse protection (Cloudflare Turnstile server-side fail-closed, honeypot, durable per-IP/slug `form_rate_limit`); publish lock freezes a published form's fields. Owner responses view deferred to 1c.

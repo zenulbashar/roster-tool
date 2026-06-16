@@ -131,7 +131,11 @@ npx auth secret
    - the `AUTH_SECRET` from step 2,
    - `AUTH_URL` and `APP_URL` both set to `https://roster.zaleit.com.au`,
    - `EMAIL_TRANSPORT=resend`, `EMAIL_FROM=Roster <roster@zaleit.com.au>`, and
-     your `RESEND_API_KEY`.
+     your `RESEND_API_KEY`,
+   - `TURNSTILE_SECRET_KEY` and `NEXT_PUBLIC_TURNSTILE_SITE_KEY` from a
+     Cloudflare Turnstile widget — **both must be set before any owner publishes
+     a form**; the public form route verifies Turnstile server-side and fails
+     closed (rejects all submissions) if the secret is missing.
 4. Click **Deploy**. (Set the env vars _before_ deploying — the build checks
    them.)
 
@@ -212,3 +216,4 @@ tests/            unit + integration tests
 - [x] M17 — Owner getting-started checklist on the dashboard: step state derived from existing data (no manual ticking), core steps gate visibility (auto-hides when all four are done; optional inventory steps never keep it alive); read-only, no schema change
 - [x] M18 — Staff in-app notices: per-staff PIN-gated `/me` page (capability link + short-lived signed proof), notices at leave decisions / swap approvals / publishes (additive to emails), and a daily IN-APP-ONLY shift reminder (idempotent via dedupe key; business-level toggle)
 - [x] M19 — Form builder Phase 1a (builder CRUD only): owner-authenticated forms + fields (five v1 types), single transactional save (tenant-scoped, IDOR-guarded), `/app/forms` list + editor; drafts only — no publishing, public routes or responses (later phases)
+- [x] M20 — Form builder Phase 1b (publish + public collection + QR): owner publish/close with public link, copy button and QR; public `/f/[slug]` route (outside `/app`) storing anonymous responses; abuse protection (Cloudflare Turnstile server-side, honeypot, durable per-IP rate limit); published forms' fields are locked. Requires `TURNSTILE_SECRET_KEY` + `NEXT_PUBLIC_TURNSTILE_SITE_KEY`. Owner responses view is Phase 1c.
