@@ -17,6 +17,7 @@ import {
   unique,
   uniqueIndex,
   index,
+  check,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -1013,6 +1014,113 @@ export const formFields = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
+/* Form responses (form builder Phase 1b — public collection)                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Where a form response came in through. Phase 1b only ever writes `public`
+ * (the unauthenticated `/f/<slug>` route); `internal` is reserved for the
+ * future PIN-gated staff channel. Fixed set.
+ */
+export const formChannel = pgEnum("form_channel", ["public", "internal"]);
+
+/**
+ * One submitted response to a published form. **Anonymous in 1b** — there is NO
+ * respondent identity column (deliberately deferred to the staff phase).
+ * `business_id` is denormalised for tenant-scoped owner reads and is ALWAYS set
+ * server-side from the FORM's business, never from the request. `source` is
+ * optional attribution ("qr"/"link") for later use.
+ */
+export const formResponses = pgTable(
+  "form_response",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    formId: uuid("form_id")
+      .notNull()
+      .references(() => forms.id, { onDelete: "cascade" }),
+    channel: formChannel("channel").notNull().default("public"),
+    source: text("source"),
+    submittedAt: timestamp("submitted_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("form_response_business_form_idx").on(t.businessId, t.formId),
+    index("form_response_form_submitted_idx").on(t.formId, t.submittedAt),
+  ],
+);
+
+/**
+ * One answer to one field within a response. Answers are **self-describing
+ * snapshots**: `field_label` + `field_type` are captured at submit time from
+ * the form's live field defs, and `field_id` is **ON DELETE SET NULL** — so an
+ * answer SURVIVES a later field edit or deletion as a standalone historical
+ * record (owners revise forms over time; cascade-deleting answers or losing the
+ * question text would be silent data loss).
+ *
+ * Exactly one value column is populated per answer, enforced by a CHECK:
+ *  - `value_number` for `rating` (1–5, so AVG()/COUNT() are trivial later);
+ *  - `value_text` for everything else. For `single_select` it holds the chosen
+ *    option's LABEL (point-in-time human-readable), after the submitted option
+ *    id was validated against that field's stored option ids.
+ * `field_label`/`field_type` are snapshot metadata, NOT value columns, so the
+ * CHECK only counts the two value columns.
+ */
+export const formResponseAnswers = pgTable(
+  "form_response_answer",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    responseId: uuid("response_id")
+      .notNull()
+      .references(() => formResponses.id, { onDelete: "cascade" }),
+    fieldId: uuid("field_id").references(() => formFields.id, {
+      onDelete: "set null",
+    }),
+    fieldLabel: text("field_label").notNull(),
+    fieldType: formFieldType("field_type").notNull(),
+    valueText: text("value_text"),
+    valueNumber: integer("value_number"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("form_response_answer_response_idx").on(t.responseId),
+    index("form_response_answer_business_field_idx").on(
+      t.businessId,
+      t.fieldId,
+    ),
+    check(
+      "form_response_answer_one_value",
+      sql`num_nonnulls(${t.valueText}, ${t.valueNumber}) = 1`,
+    ),
+  ],
+);
+
+/**
+ * Durable fixed-window rate-limit counter for public form submissions. Durable
+ * (a table, not in-memory) for the same reason as the PIN lockout: the app runs
+ * on multiple serverless instances where in-process state is unreliable.
+ * `bucket_key` encodes (hashed IP + slug + window kind + window epoch), so each
+ * window is its own row; `expires_at` lets old rows be ignored/swept. See
+ * `src/lib/rate-limit.ts` for the limits.
+ */
+export const formRateLimits = pgTable("form_rate_limit", {
+  bucketKey: text("bucket_key").primaryKey(),
+  count: integer("count").notNull().default(0),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
+/* -------------------------------------------------------------------------- */
 /* Relations (for relational queries)                                         */
 /* -------------------------------------------------------------------------- */
 
@@ -1217,3 +1325,36 @@ export const formFieldsRelations = relations(formFields, ({ one }) => ({
     references: [forms.id],
   }),
 }));
+
+export const formResponsesRelations = relations(
+  formResponses,
+  ({ one, many }) => ({
+    business: one(businesses, {
+      fields: [formResponses.businessId],
+      references: [businesses.id],
+    }),
+    form: one(forms, {
+      fields: [formResponses.formId],
+      references: [forms.id],
+    }),
+    answers: many(formResponseAnswers),
+  }),
+);
+
+export const formResponseAnswersRelations = relations(
+  formResponseAnswers,
+  ({ one }) => ({
+    business: one(businesses, {
+      fields: [formResponseAnswers.businessId],
+      references: [businesses.id],
+    }),
+    response: one(formResponses, {
+      fields: [formResponseAnswers.responseId],
+      references: [formResponses.id],
+    }),
+    field: one(formFields, {
+      fields: [formResponseAnswers.fieldId],
+      references: [formFields.id],
+    }),
+  }),
+);

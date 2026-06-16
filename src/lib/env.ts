@@ -31,6 +31,16 @@ const baseEnvSchema = z.object({
 
   // Resend — only required when EMAIL_TRANSPORT=resend.
   RESEND_API_KEY: z.string().optional(),
+
+  // Cloudflare Turnstile (bot protection on the public form-fill route).
+  // Both keys are OPTIONAL here so the app always boots; instead the verify
+  // path (src/lib/turnstile.ts) FAILS CLOSED in production when the secret is
+  // missing (and logs a warning). The site key is public (NEXT_PUBLIC_*) and is
+  // passed from the server page down to the client widget. NOTE: both keys must
+  // be set in Vercel before any owner publishes a form; locally use
+  // Cloudflare's documented always-pass test keys.
+  TURNSTILE_SECRET_KEY: z.string().optional(),
+  NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.string().optional(),
 });
 
 const envSchema = baseEnvSchema.superRefine((val, ctx) => {
