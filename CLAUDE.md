@@ -148,6 +148,13 @@ owner approval, not payroll export.
   timezone. The CSV and the UI both state prominently that this is NOT a payroll
   calculation; penalty rates, overtime, super and final pay are the
   owner's/payroll system's job. No Xero/MYOB API — file export only.
+  - **Shared CSV serializer** (`src/lib/timesheet-export.ts`): `csvCell`
+    (RFC-4180 escaping), `sanitizeCsvValue` (prefix a leading `= + - @`/tab/CR
+    with `'` to stop spreadsheet **formula injection**), and `csvField =
+csvCell(sanitizeCsvValue(v))` — guard the raw value first, THEN escape. ALL
+    CSV exports (approved hours, staff rates, form responses) go through
+    `csvField`; treat every value as hostile (names, imported item names and
+    anonymous public form answers can all start with a dangerous char).
 - **Hours & labour-cost reporting**: read-only analytics over data the app
   already collects (timesheets + the rate the owner typed). An owner **report
   page** (`/app/reports`, in the Rosters nav group) and a compact current-week
@@ -770,8 +777,19 @@ value` from the **answer snapshot**. Summaries are SQL-aggregated
     multiply the counts). **Delete guard**: `deleteForm(id, { confirmed })`
     refuses (returns `{ ok:false, reason:"has_responses", count }`) when a form
     has responses and `confirmed` isn't set, so collected responses can't be
-    wiped by accident; the list page shows a count-aware confirm. Read-only — no
-    CSV/export, no per-response edit/delete, no new public surface.
+    wiped by accident; the list page shows a count-aware confirm. No
+    per-response edit/delete, no new public surface.
+  - **CSV export** — `GET /app/forms/[id]/responses/export` (owner session via
+    `ownerRepo`; `getFormExport` 404s when the form isn't this business's, never
+    the public resolver). The pure `buildResponsesCsv` (`src/lib/form-export.ts`)
+    writes metadata columns (submitted_at ISO, channel, source, response id) +
+    the live fields in position order + appended **orphan columns** for
+    since-deleted fields (snapshot label + " (removed)", deterministically
+    ordered) so nothing is dropped; values via the shared `displayAnswer`. Every
+    cell goes through `csvField` (RFC-4180 escape + **formula-injection**
+    neutralisation — see below). UTF-8 BOM + `text/csv; charset=utf-8` +
+    attachment with a slugified filename. **Buffered, newest-10k cap**
+    (`EXPORT_CAP`), no streaming/XLSX/scheduling.
 
 ## Milestones
 
