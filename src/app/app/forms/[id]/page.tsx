@@ -187,7 +187,8 @@ export default async function FormEditorPage({
       ) : null}
       {sp.staffOn ? (
         <Banner tone="success">
-          Staff access on — your team can fill this form from their notices page.
+          Staff access on — your team can fill this form from their notices
+          page.
         </Banner>
       ) : null}
       {sp.staffOff ? (
@@ -282,12 +283,20 @@ export default async function FormEditorPage({
             <p className="text-sm text-[var(--color-muted)]">
               Let your team fill this form from their private notices page (the
               link you share with each staff member). This is separate from the
-              public link above — a form can be staff-only, public-only, or both.
+              public link above — a form can be staff-only, public-only, or
+              both.
             </p>
           </div>
           <form action={setStaffAccess}>
-            <input type="hidden" name="enabled" value={internalEnabled ? "0" : "1"} />
-            <Button type="submit" variant={internalEnabled ? "secondary" : "primary"}>
+            <input
+              type="hidden"
+              name="enabled"
+              value={internalEnabled ? "0" : "1"}
+            />
+            <Button
+              type="submit"
+              variant={internalEnabled ? "secondary" : "primary"}
+            >
               {internalEnabled ? "Turn off staff access" : "Share with staff"}
             </Button>
           </form>

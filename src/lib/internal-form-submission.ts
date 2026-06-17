@@ -62,7 +62,8 @@ export async function processInternalSubmission(
     if (!allowed) {
       return {
         status: "rejected",
-        message: "Too many submissions right now. Please try again in a minute.",
+        message:
+          "Too many submissions right now. Please try again in a minute.",
       };
     }
   }

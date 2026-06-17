@@ -239,6 +239,38 @@ describe("buildResponsesCsv", () => {
   });
 });
 
+describe("buildResponsesCsv — respondent column", () => {
+  const one = (over: Partial<ExportResponse>, allowAnonymous: boolean) => {
+    const csv = buildResponsesCsv([], [resp(over)], allowAnonymous);
+    return parseLine(csv.split("\n")[1]!)[2]; // Respondent is the 3rd column
+  };
+
+  it("public row → 'Public' regardless of allowAnonymous", () => {
+    expect(one({ channel: "public" }, false)).toBe("Public");
+    expect(one({ channel: "public" }, true)).toBe("Public");
+  });
+
+  it("internal anonymous form → 'Anonymous'", () => {
+    expect(one({ channel: "internal", respondentName: null }, true)).toBe(
+      "Anonymous",
+    );
+  });
+
+  it("internal attributed → the staff name", () => {
+    expect(one({ channel: "internal", respondentName: "Ada" }, false)).toBe(
+      "Ada",
+    );
+  });
+
+  it("internal attributed with a dropped link → 'Former staff' (NOT 'Anonymous')", () => {
+    // respondent_staff_id was SET NULL (staff deleted) but the form is
+    // attributed — must not be mislabelled anonymous.
+    expect(one({ channel: "internal", respondentName: null }, false)).toBe(
+      "Former staff",
+    );
+  });
+});
+
 describe("exportFilename", () => {
   it("slugifies the title safely", () => {
     expect(exportFilename("Café Feedback!")).toBe("caf-feedback-responses.csv");

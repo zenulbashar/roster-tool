@@ -3155,7 +3155,10 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         })
         .from(forms)
         .where(
-          and(eq(forms.businessId, businessId), eq(forms.internalEnabled, true)),
+          and(
+            eq(forms.businessId, businessId),
+            eq(forms.internalEnabled, true),
+          ),
         )
         .orderBy(desc(forms.createdAt));
     },

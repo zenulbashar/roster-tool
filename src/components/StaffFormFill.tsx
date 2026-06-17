@@ -123,10 +123,7 @@ export function StaffFormFill({
   description: string | null;
   anonymous: boolean;
   fields: StaffField[];
-  action: (
-    prev: StaffFillState,
-    formData: FormData,
-  ) => Promise<StaffFillState>;
+  action: (prev: StaffFillState, formData: FormData) => Promise<StaffFillState>;
 }) {
   const [state, formAction, pending] = useActionState(action, initial);
 
