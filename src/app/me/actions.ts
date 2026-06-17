@@ -5,13 +5,15 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { env } from "@/lib/env";
 import { createTenantRepo } from "@/lib/tenant/repository";
-import { resolveNoticesStaff } from "@/lib/tenant/notices-access";
-import { NOTICES_COOKIE, NOTICES_VERIFIED_COOKIE } from "@/lib/kiosk-cookie";
+import { NOTICES_VERIFIED_COOKIE } from "@/lib/kiosk-cookie";
 import {
   makeNoticesVerification,
-  checkNoticesVerification,
   NOTICES_VERIFICATION_TTL_MS,
 } from "@/lib/notices-verification";
+import {
+  noticesStaffFromCookie,
+  verifiedNoticesStaff,
+} from "@/lib/notices-session";
 import {
   verifyPin,
   isLockedOut,
@@ -26,23 +28,6 @@ export type NoticesPinResult =
   | { status: "error"; message: string };
 
 const PATH = "/me";
-
-/** The staff member the /me capability cookie resolves to, or null. */
-async function noticesStaffFromCookie() {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(NOTICES_COOKIE)?.value ?? "";
-  return resolveNoticesStaff(token);
-}
-
-/** Whether the visitor holds a valid PIN-verification proof for this staff member. */
-async function hasNoticesVerification(staffMemberId: string): Promise<boolean> {
-  const cookieStore = await cookies();
-  return checkNoticesVerification(
-    cookieStore.get(NOTICES_VERIFIED_COOKIE)?.value,
-    staffMemberId,
-    env.AUTH_SECRET,
-  );
-}
 
 /**
  * Verify the staff member's PIN for /me. The link's cookie says WHO; this
@@ -123,18 +108,6 @@ export async function noticesPinAction(
     },
   );
   redirect(PATH);
-}
-
-/**
- * Both cookies re-checked per action: the capability cookie says who, the
- * proof cookie shows the PIN was entered for that SAME staff member.
- */
-async function verifiedNoticesStaff() {
-  const resolved = await noticesStaffFromCookie();
-  if (!resolved) return null;
-  return (await hasNoticesVerification(resolved.staffMemberId))
-    ? resolved
-    : null;
 }
 
 /** Mark one of MY notices read. A foreign id no-ops (repo scopes by staff). */

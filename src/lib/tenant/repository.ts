@@ -3161,6 +3161,28 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     },
 
     /**
+     * Whether THIS staff member already has an attributed response to this form.
+     * UX-only (drives the /me "already responded" view); the authoritative guard
+     * is the partial-unique catch in `createInternalResponse`. Anonymous forms
+     * store no respondent, so this is always false for them.
+     */
+    async hasStaffRespondedToForm(formId: string, staffMemberId: string) {
+      const row = await first(
+        database
+          .select({ id: formResponses.id })
+          .from(formResponses)
+          .where(
+            and(
+              eq(formResponses.formId, formId),
+              eq(formResponses.businessId, businessId),
+              eq(formResponses.respondentStaffId, staffMemberId),
+            ),
+          ),
+      );
+      return row !== null;
+    },
+
+    /**
      * Store one INTERNAL (staff) response + its answers in a transaction.
      *
      * SECURITY INVARIANTS (stated so they can't drift):
