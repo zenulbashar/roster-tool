@@ -41,6 +41,9 @@ export default async function FormEditorPage({
     published?: string;
     closed?: string;
     error?: string;
+    staffOn?: string;
+    staffOff?: string;
+    anonError?: string;
   }>;
 }) {
   const { id } = await params;
@@ -53,9 +56,18 @@ export default async function FormEditorPage({
     );
   }
 
-  const responseCount = await repo.countResponses(id);
+  const [responseCount, internalResponseCount] = await Promise.all([
+    repo.countResponses(id),
+    repo.countInternalResponses(id),
+  ]);
   const status = data.form.status;
   const isPublished = status === "published";
+  const internalEnabled = data.form.internalEnabled;
+  const allowAnonymous = data.form.allowAnonymous;
+  // Anonymity is frozen once staff have responded (mirrors the repo guard).
+  const anonymityFrozen = internalResponseCount > 0;
+  // Fields are frozen while collecting from EITHER channel.
+  const fieldsLocked = isPublished || internalEnabled;
   const publicUrl =
     data.form.publicSlug !== null
       ? `${env.APP_URL}/f/${data.form.publicSlug}`
@@ -128,6 +140,36 @@ export default async function FormEditorPage({
     redirect(`${PATH}/${id}?closed=1`);
   }
 
+  // Toggle staff access. The desired value is server-decided from a hidden flag
+  // (no trust issue — owner-authenticated, scoped). Turning it on freezes the
+  // fields; turning it off lets the owner edit again.
+  async function setStaffAccess(formData: FormData) {
+    "use server";
+    const repo = await ownerRepo();
+    const enabled = formData.get("enabled") === "1";
+    await repo.setFormInternalEnabled(id, enabled);
+    revalidatePath(`${PATH}/${id}`);
+    redirect(`${PATH}/${id}?${enabled ? "staffOn" : "staffOff"}=1`);
+  }
+
+  // Toggle anonymity for staff responses. Refused once internal responses exist
+  // (the anonymity guarantee can't change under collected data).
+  async function setAnonymous(formData: FormData) {
+    "use server";
+    const repo = await ownerRepo();
+    const anonymous = formData.get("anonymous") === "1";
+    const result = await repo.setFormAllowAnonymous(id, anonymous);
+    revalidatePath(`${PATH}/${id}`);
+    if (!result.ok && result.reason === "locked") {
+      redirect(
+        `${PATH}/${id}?anonError=${encodeURIComponent(
+          "Anonymity can't be changed once staff have responded.",
+        )}`,
+      );
+    }
+    redirect(`${PATH}/${id}`);
+  }
+
   return (
     <>
       <PageHeader
@@ -143,6 +185,18 @@ export default async function FormEditorPage({
           Form closed — it no longer accepts responses.
         </Banner>
       ) : null}
+      {sp.staffOn ? (
+        <Banner tone="success">
+          Staff access on — your team can fill this form from their notices
+          page.
+        </Banner>
+      ) : null}
+      {sp.staffOff ? (
+        <Banner tone="success">
+          Staff access off — your team can no longer fill this form.
+        </Banner>
+      ) : null}
+      {sp.anonError ? <Banner tone="warn">{sp.anonError}</Banner> : null}
       {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
 
       <Card className="mt-4">
@@ -213,13 +267,84 @@ export default async function FormEditorPage({
           </div>
         ) : null}
 
-        {isPublished ? (
+        {fieldsLocked ? (
           <p className="mt-4 text-sm text-[var(--color-muted)]">
-            This form is published, so its fields are locked. Unpublishing only
-            stops new responses — your collected responses are kept, and the
-            link and QR code stay the same when you re-publish.
+            {isPublished
+              ? "This form is published, so its fields are locked. Unpublishing only stops new responses — your collected responses are kept, and the link and QR code stay the same when you re-publish."
+              : "This form is shared with staff, so its fields are locked. Turn off staff access to change its questions — collected responses are always kept."}
           </p>
         ) : null}
+      </Card>
+
+      <Card className="mt-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Staff access</h2>
+            <p className="text-sm text-[var(--color-muted)]">
+              Let your team fill this form from their private notices page (the
+              link you share with each staff member). This is separate from the
+              public link above — a form can be staff-only, public-only, or
+              both.
+            </p>
+          </div>
+          <form action={setStaffAccess}>
+            <input
+              type="hidden"
+              name="enabled"
+              value={internalEnabled ? "0" : "1"}
+            />
+            <Button
+              type="submit"
+              variant={internalEnabled ? "secondary" : "primary"}
+            >
+              {internalEnabled ? "Turn off staff access" : "Share with staff"}
+            </Button>
+          </form>
+        </div>
+
+        <div className="mt-4 rounded-lg border border-[var(--color-line)] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="font-medium">
+                {allowAnonymous
+                  ? "Responses are anonymous"
+                  : "Responses are linked to each staff member"}
+              </p>
+              <p className="mt-1 text-sm text-[var(--color-muted)]">
+                {allowAnonymous
+                  ? "Anonymous: responses are NOT attributable to a person — nothing links a response back to who sent it. Each person can submit more than once."
+                  : "Attributed: you'll see who sent each response, and each person can respond once."}
+              </p>
+            </div>
+            {anonymityFrozen ? (
+              <span className="text-sm text-[var(--color-muted)]">
+                Locked — staff have responded
+              </span>
+            ) : (
+              <form action={setAnonymous}>
+                <input
+                  type="hidden"
+                  name="anonymous"
+                  value={allowAnonymous ? "0" : "1"}
+                />
+                <Button type="submit" variant="secondary">
+                  {allowAnonymous ? "Make attributed" : "Make anonymous"}
+                </Button>
+              </form>
+            )}
+          </div>
+          {anonymityFrozen ? (
+            <p className="mt-3 text-sm text-[var(--color-muted)]">
+              Anonymity can&rsquo;t be changed once staff have responded — it
+              would change how already-collected responses are treated.
+            </p>
+          ) : (
+            <p className="mt-3 text-sm text-[var(--color-muted)]">
+              Choose before staff start responding. Switching to anonymous
+              can&rsquo;t be undone for responses already collected.
+            </p>
+          )}
+        </div>
       </Card>
 
       <div className="mt-6">
@@ -229,7 +354,7 @@ export default async function FormEditorPage({
           initialDescription={data.form.description ?? ""}
           initialFields={data.fields.map(toEditorField)}
           listHref={PATH}
-          locked={isPublished}
+          locked={fieldsLocked}
         />
       </div>
     </>

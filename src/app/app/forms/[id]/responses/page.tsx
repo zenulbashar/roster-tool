@@ -6,6 +6,7 @@ import { formatDateTime, DEFAULT_TIMEZONE } from "@/lib/time";
 import {
   buildFormSummary,
   buildResponseDetail,
+  respondentLabel,
   type LiveField,
   type FieldSummary,
 } from "@/lib/form-report";
@@ -240,6 +241,11 @@ export default async function FormResponsesPage({
                   .slice(0, 2)
                   .map((d) => val(d.value))
                   .join(" · ");
+                const who = respondentLabel({
+                  channel: r.channel,
+                  allowAnonymous: data.form.allowAnonymous,
+                  respondentName: r.respondentName,
+                });
                 return (
                   <li key={r.id}>
                     <Card className="py-3">
@@ -250,7 +256,7 @@ export default async function FormResponsesPage({
                           </span>
                           <span className="text-sm text-[var(--color-muted)]">
                             {" · "}
-                            {r.channel}
+                            {who}
                             {r.source ? ` · ${r.source}` : ""}
                             {preview ? ` — ${preview}` : ""}
                           </span>

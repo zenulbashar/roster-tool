@@ -956,6 +956,18 @@ export type FormFieldOption = { id: string; label: string };
  * allows many NULLs under a unique constraint, so drafts never collide).
  * `title` is required at creation and editable thereafter; `description` is
  * optional.
+ *
+ * Phase 2 (staff/internal channel) finally uses two more flags, INDEPENDENT of
+ * the public publish state:
+ *  - `internal_enabled` — whether staff can see + fill this form in their
+ *    PIN-gated /me portal. A form can be staff-only, public-only, or both.
+ *  - `allow_anonymous` — whether STAFF responses are anonymous. When true, no
+ *    respondent identity is ever written (true anonymity); when false, the
+ *    PIN-authenticated staff member is attributed. Frozen once the form has its
+ *    first internal response so the anonymity guarantee can't change under
+ *    already-collected data.
+ * FIELD-STRUCTURE LOCK (Phase 2): a form's fields are frozen when it is
+ * `published` OR `internal_enabled` (see `saveForm`).
  */
 export const forms = pgTable(
   "form",
@@ -969,6 +981,9 @@ export const forms = pgTable(
     status: formStatus("status").notNull().default("draft"),
     publicSlug: text("public_slug").unique(),
     allowAnonymous: boolean("allow_anonymous").notNull().default(false),
+    // Phase 2: staff can see + fill this form in their /me portal. Independent
+    // of the public publish state (status/public_slug). Off by default.
+    internalEnabled: boolean("internal_enabled").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -1018,18 +1033,34 @@ export const formFields = pgTable(
 /* -------------------------------------------------------------------------- */
 
 /**
- * Where a form response came in through. Phase 1b only ever writes `public`
- * (the unauthenticated `/f/<slug>` route); `internal` is reserved for the
- * future PIN-gated staff channel. Fixed set.
+ * Where a form response came in through. `public` = the unauthenticated
+ * `/f/<slug>` route (Phase 1b); `internal` = the PIN-gated staff `/me` portal
+ * (Phase 2). Fixed set.
  */
 export const formChannel = pgEnum("form_channel", ["public", "internal"]);
 
 /**
- * One submitted response to a published form. **Anonymous in 1b** — there is NO
- * respondent identity column (deliberately deferred to the staff phase).
+ * One submitted response to a form.
+ *
  * `business_id` is denormalised for tenant-scoped owner reads and is ALWAYS set
  * server-side from the FORM's business, never from the request. `source` is
- * optional attribution ("qr"/"link") for later use.
+ * optional attribution ("qr"/"link").
+ *
+ * `respondent_staff_id` (Phase 2) attributes an INTERNAL response to the staff
+ * member who submitted it. It is:
+ *  - ALWAYS the PIN-authenticated staff member, resolved server-side from the
+ *    /me session — NEVER taken from request input;
+ *  - NULL for `public` responses and for ANONYMOUS internal responses (when the
+ *    form's `allow_anonymous` is true we write nothing linking the response to a
+ *    person — true anonymity, not "stored then hidden");
+ *  - ON DELETE SET NULL, so deleting a staff member keeps their responses but
+ *    drops the link (an attributed row then reads as "Former staff", derived
+ *    from the form's frozen `allow_anonymous`, NOT mislabelled "Anonymous").
+ *
+ * The partial unique index enforces ONE response per staff per form for
+ * ATTRIBUTED responses (anonymous rows have a NULL respondent → excluded, so
+ * multiple anonymous rows are fine). This is the AUTHORITATIVE, race-safe
+ * one-per-staff guard (the /me list's "already responded" check is UX only).
  */
 export const formResponses = pgTable(
   "form_response",
@@ -1043,6 +1074,12 @@ export const formResponses = pgTable(
       .references(() => forms.id, { onDelete: "cascade" }),
     channel: formChannel("channel").notNull().default("public"),
     source: text("source"),
+    // Phase 2 — the attributed staff member (internal channel only). Null for
+    // public AND for anonymous internal responses. Server-resolved only.
+    respondentStaffId: uuid("respondent_staff_id").references(
+      () => staffMembers.id,
+      { onDelete: "set null" },
+    ),
     submittedAt: timestamp("submitted_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -1053,6 +1090,11 @@ export const formResponses = pgTable(
   (t) => [
     index("form_response_business_form_idx").on(t.businessId, t.formId),
     index("form_response_form_submitted_idx").on(t.formId, t.submittedAt),
+    // One ATTRIBUTED response per staff per form. Anonymous rows (null
+    // respondent) are excluded, so they never collide.
+    uniqueIndex("form_response_one_per_staff")
+      .on(t.formId, t.respondentStaffId)
+      .where(sql`${t.respondentStaffId} is not null`),
   ],
 );
 
@@ -1336,6 +1378,12 @@ export const formResponsesRelations = relations(
     form: one(forms, {
       fields: [formResponses.formId],
       references: [forms.id],
+    }),
+    // Phase 2 — the attributed staff member (internal channel). Null for public
+    // and anonymous internal responses.
+    respondent: one(staffMembers, {
+      fields: [formResponses.respondentStaffId],
+      references: [staffMembers.id],
     }),
     answers: many(formResponseAnswers),
   }),

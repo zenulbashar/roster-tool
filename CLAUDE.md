@@ -696,8 +696,11 @@ Notable columns / conventions:
 - `form` — an owner-authored custom form. NOT-NULL `title`; nullable
   `description`; `status` (`form_status`: `draft`/`published`/`closed`, NOT NULL
   default `draft`); `public_slug` (nullable, **unique** — the public URL handle);
-  `allow_anonymous` (NOT NULL default false — reserved for the staff phase,
-  unused); `created_at`/`updated_at`. Indexed on `business_id`. **Phase 1b**
+  `allow_anonymous` (NOT NULL default false — **Phase 2**: whether STAFF
+  responses are anonymous; frozen once the form has its first internal response);
+  `internal_enabled` (NOT NULL default false — **Phase 2**: whether staff can
+  fill this form in their `/me` portal, INDEPENDENT of the public publish state);
+  `created_at`/`updated_at`. Indexed on `business_id`. **Phase 1b**
   writes `status` + `public_slug`: `publishForm` sets `published` and generates
   an unguessable slug (`generateSlug`, 16-char base64url) ONLY if absent —
   idempotent, so re-publishing or re-opening a closed form keeps the slug (and
@@ -726,13 +729,21 @@ Notable columns / conventions:
   unpublishes to edit; title/description stay editable. The editor disables field
   controls when published to mirror this.
 - **Inventory of form-builder Phase 1b (publish + public collection + QR):**
-  - `form_response` — one PUBLIC submission to a published form. **Anonymous** (no
-    respondent column in 1b). `business_id` denormalised and ALWAYS set
-    server-side from the FORM, never request input; NOT-NULL `form_id` → `form`
-    (cascade); `channel` (`form_channel`: `public`/`internal` — only `public`
-    written in 1b, `internal` reserved for the staff phase); nullable `source`
-    ("qr"/"link"); `submitted_at`. Indexed on `(business_id, form_id)` and
-    `(form_id, submitted_at)`.
+  - `form_response` — one submission to a form. `business_id` denormalised and
+    ALWAYS set server-side from the FORM, never request input; NOT-NULL `form_id`
+    → `form` (cascade); `channel` (`form_channel`: `public` = the `/f/<slug>`
+    route, `internal` = the PIN-gated staff `/me` portal, Phase 2); nullable
+    `source` ("qr"/"link"/"internal"); **Phase 2** `respondent_staff_id` (uuid,
+    nullable, FK → `staff_member` **ON DELETE SET NULL**) — the attributed staff
+    member for an internal response, ALWAYS resolved server-side from the /me
+    session (never request input), NULL for public AND anonymous responses;
+    `submitted_at`. Indexed on `(business_id, form_id)` and `(form_id,
+submitted_at)`, plus a **partial unique `(form_id, respondent_staff_id)
+WHERE respondent_staff_id IS NOT NULL`** — the AUTHORITATIVE one-response-
+    per-staff guard for attributed forms (anonymous rows have a null respondent
+    → excluded, so multiple are fine). A deleted attributed staff (link nulled)
+    reads as "Former staff", derived from the form's frozen `allow_anonymous`,
+    NEVER mislabelled "Anonymous".
   - `form_response_answer` — one answer, a **self-describing snapshot**:
     `field_label` + `field_type` captured at submit, and `field_id` → `form_field`
     is **ON DELETE SET NULL** (nullable) so answers SURVIVE later field edits or
@@ -782,14 +793,56 @@ value` from the **answer snapshot**. Summaries are SQL-aggregated
   - **CSV export** — `GET /app/forms/[id]/responses/export` (owner session via
     `ownerRepo`; `getFormExport` 404s when the form isn't this business's, never
     the public resolver). The pure `buildResponsesCsv` (`src/lib/form-export.ts`)
-    writes metadata columns (submitted_at ISO, channel, source, response id) +
-    the live fields in position order + appended **orphan columns** for
-    since-deleted fields (snapshot label + " (removed)", deterministically
-    ordered) so nothing is dropped; values via the shared `displayAnswer`. Every
-    cell goes through `csvField` (RFC-4180 escape + **formula-injection**
-    neutralisation — see below). UTF-8 BOM + `text/csv; charset=utf-8` +
-    attachment with a slugified filename. **Buffered, newest-10k cap**
-    (`EXPORT_CAP`), no streaming/XLSX/scheduling.
+    writes metadata columns (submitted_at ISO, channel, **respondent** (Phase 2),
+    source, response id) + the live fields in position order + appended **orphan
+    columns** for since-deleted fields (snapshot label + " (removed)",
+    deterministically ordered) so nothing is dropped; values via the shared
+    `displayAnswer`. Every cell goes through `csvField` (RFC-4180 escape +
+    **formula-injection** neutralisation — see below). UTF-8 BOM + `text/csv;
+charset=utf-8` + attachment with a slugified filename. **Buffered, newest-10k
+    cap** (`EXPORT_CAP`), no streaming/XLSX/scheduling.
+- **Form builder Phase 2 (staff / internal channel)**: owners can share a form
+  to STAFF and staff fill it from their PIN-gated `/me` portal, with a per-form
+  anonymity choice. **NO change to the public `/f/<slug>` surface or its abuse
+  pipeline.** Two INDEPENDENT per-form controls on the editor's Sharing panel:
+  `internal_enabled` (staff can see + fill it; independent of the public publish
+  state — a form can be staff-only, public-only, or both) and `allow_anonymous`
+  (whether staff responses are anonymous; frozen once the first internal response
+  exists, with clear copy that anonymity can't be undone for collected data).
+  - **Staff fill** lives at `/me/forms/[id]` under the SAME `/me` gate (capability
+    cookie + short-lived HMAC PIN proof). The respondent identity comes ONLY from
+    `verifiedNoticesStaff` (`src/lib/notices-session.ts`) — server-resolved,
+    NEVER from request input. The `/me` page lists `internal_enabled` forms with
+    an "already responded" state for attributed forms (UX only). The client gets
+    the SAME safe field projection as `PublicFormFill` (no `business_id`/internal
+    columns); `StaffFormFill` reuses the public fill UI minus honeypot/Turnstile
+    (the PIN gate is the control).
+  - **Anonymity model**: `allow_anonymous = true` → ANONYMOUS — `respondent_staff_id`
+    is NEVER written (null); one-response-per-person CANNOT be enforced (accepted).
+    `allow_anonymous = false` → ATTRIBUTED — `respondent_staff_id` = the
+    PIN-authenticated staff id; **one response per staff per form** enforced
+    AUTHORITATIVELY by a partial-unique `ON CONFLICT DO NOTHING` inside
+    `createInternalResponse` (race-safe; the list's "already responded" is UX
+    only). The `anonymous` flag passed to the store is read SERVER-SIDE from the
+    form's `allow_anonymous`, never the client (a client can't flip an attributed
+    form to anonymous to dodge attribution + the guard).
+  - **Validation** REUSES `validatePublicSubmission` verbatim (unknown field /
+    bad single_select id / rating range rejected); the store re-checks the form
+    is this business's AND `internal_enabled` before writing; `business_id` is
+    forced on the response + every answer. Submission core is the pure
+    `processInternalSubmission` (`src/lib/internal-form-submission.ts`).
+  - **Field-structure lock broadened**: `saveForm` freezes fields when
+    `published` **OR** `internal_enabled` (turn the channel off to edit;
+    snapshots still protect history). Title/description stay editable.
+  - **Abuse**: the attributed path is bounded by the partial unique. The
+    anonymous path adds a COARSE per-FORM flood cap (`consumeInternalAnonSubmission`,
+    keyed on `internal:<formId>:<window>` — **never a staff identifier**, which
+    would be a de-anonymisation vector). No Turnstile/honeypot (PIN-gated).
+  - **Owner responses view + CSV** show the respondent via the shared
+    `respondentLabel` (Public / Anonymous / staff name / **Former staff** when an
+    attributed staff was deleted — derived off the form's frozen `allow_anonymous`,
+    not off the null). Internal responses flow into the existing 1c summaries and
+    CSV with no extra work (the SQL aggregation is channel-agnostic).
 
 ## Milestones
 
@@ -814,3 +867,4 @@ value` from the **answer snapshot**. Summaries are SQL-aggregated
 - [x] M19 — Form builder Phase 1a (builder CRUD only): owner-authenticated `form` + `form_field` tables, owner-labelled fields of five v1 types, single transactional `saveForm` reconcile (tenant-scoped, IDOR-guarded, stable option ids), `/app/forms` list + `/app/forms/[id]` editor (no publishing, no public routes, no responses — later phases)
 - [x] M20 — Form builder Phase 1b (publish + public collection + QR): owner publish/close + public URL/copy/QR; public `/f/[slug]` route (outside `/app`) storing anonymous `form_response`/`form_response_answer` (self-describing snapshots, rating in `value_number`); abuse protection (Cloudflare Turnstile server-side fail-closed, honeypot, durable per-IP/slug `form_rate_limit`); publish lock freezes a published form's fields. Owner responses view deferred to 1c.
 - [x] M21 — Form builder Phase 1c (owner responses view + delete guard): owner-scoped `/app/forms/[id]/responses` with SQL-aggregated per-field summaries (rating average+distribution, select/yes_no tallies, recent text) shaped by the pure `form-report.ts` (snapshot grouping, `displayAnswer`), a paginated `<details>` response list (deterministic order), response counts on the list/editor, and a `deleteForm` confirmed-flag guard so responses can't be wiped accidentally. Read-only; no migration; no export.
+- [x] M22 — Form builder Phase 2 (staff / internal channel): owner per-form `internal_enabled` + `allow_anonymous` controls; staff fill internal forms from the PIN-gated `/me/forms/[id]` portal (respondent server-resolved from the /me session, never request input; reuses `validatePublicSubmission`, no Turnstile/honeypot); attributed (`respondent_staff_id`, one-per-staff via partial-unique ON CONFLICT) vs anonymous (null respondent, coarse per-form rate limit keyed on form id only); field-lock broadened to published OR internal_enabled; responses view + CSV show the respondent (Public/Anonymous/name/Former staff). Additive migration 0015. No change to the public `/f/[slug]` surface.

@@ -86,6 +86,29 @@ export function displayAnswer(answer: StoredAnswer): string | number | null {
   return answer.fieldType === "rating" ? answer.valueNumber : answer.valueText;
 }
 
+/**
+ * The respondent label for one response, used by BOTH the responses view and the
+ * CSV export so they can never drift.
+ *
+ * CRITICAL — derive off the form's (frozen) `allowAnonymous`, NOT off a null
+ * `respondentName`: `respondent_staff_id` is ON DELETE SET NULL, so an
+ * ATTRIBUTED response whose staff member was later deleted has a null name but
+ * is NOT anonymous — it reads "Former staff", never mislabelled "Anonymous".
+ *  - public channel           → "Public"
+ *  - internal + allowAnonymous → "Anonymous"
+ *  - internal + attributed     → the staff name, or "Former staff" when the link
+ *                                was dropped (staff deleted)
+ */
+export function respondentLabel(args: {
+  channel: string;
+  allowAnonymous: boolean;
+  respondentName: string | null;
+}): string {
+  if (args.channel !== "internal") return "Public";
+  if (args.allowAnonymous) return "Anonymous";
+  return args.respondentName ?? "Former staff";
+}
+
 /** Group key: live field id when present, else the snapshot (label, type). */
 function groupKey(
   fieldId: string | null,

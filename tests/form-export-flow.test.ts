@@ -117,11 +117,11 @@ describe("form export flow", () => {
     expect(result.filename).toBe("survey-responses.csv");
     const lines = result.csv.split("\n");
     expect(lines[0]).toBe(
-      "Submitted at,Channel,Source,Response id,Name,Size,Stars",
+      "Submitted at,Channel,Respondent,Source,Response id,Name,Size,Stars",
     );
     // One data row with the seeded values.
     expect(lines).toHaveLength(2);
-    expect(lines[1]).toContain(",public,qr,");
+    expect(lines[1]).toContain(",public,Public,qr,");
     expect(lines[1]!.endsWith(",Ada,Large,5")).toBe(true);
   });
 

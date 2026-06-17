@@ -2877,12 +2877,13 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
      *    request input, so a field's business always equals its form's business.
      *  - `status` / `public_slug` / `allow_anonymous` are NEVER touched here
      *    (publish/close own those); only `title`/`description`/fields change.
-     *  - PUBLISH LOCK: once a form is `published` its FIELD STRUCTURE is frozen
-     *    (no add/delete/reorder/type/required/options/label change) — owners
-     *    unpublish to edit; republishing keeps the slug. Title/description may
-     *    still change. Returns `{ ok:false, reason:"locked" }` on a structural
-     *    edit to a published form. This guards the "no editing fields
-     *    mid-collection" rule at the data layer, not just the UI.
+     *  - FIELD-STRUCTURE LOCK: once a form is `published` OR `internal_enabled`
+     *    its FIELD STRUCTURE is frozen (no add/delete/reorder/type/required/
+     *    options/label change) — owners unpublish / turn off staff sharing to
+     *    edit; republishing keeps the slug. Title/description may still change.
+     *    Returns `{ ok:false, reason:"locked" }` on a structural edit to a
+     *    locked form. This guards the "no editing fields mid-collection" rule on
+     *    BOTH the public and staff channels at the data layer, not just the UI.
      *
      * Returns a discriminated result: `{ ok:true, form, fields }`,
      * `{ ok:false, reason:"not_found" }` (not this business's), or
@@ -2903,7 +2904,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           .where(and(eq(forms.id, id), eq(forms.businessId, businessId)));
         if (!form) return { ok: false, reason: "not_found" };
 
-        // Load existing fields in full (ordered) — needed both for the publish
+        // Load existing fields in full (ordered) — needed both for the field
         // lock check and the reconcile below.
         const existingFields = await tx
           .select()
@@ -2916,16 +2917,18 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           )
           .orderBy(asc(formFields.position));
 
-        // Publish lock: a published form's field structure is frozen.
+        // Field-structure lock: a form collecting from EITHER channel — public
+        // (`published`) or staff (`internal_enabled`) — has its fields frozen.
         if (
-          form.status === "published" &&
+          (form.status === "published" || form.internalEnabled) &&
           !fieldsStructurallyEqual(existingFields, input.fields)
         ) {
           return {
             ok: false,
             reason: "locked",
-            message:
-              "This form is published. Unpublish it to change its fields.",
+            message: form.internalEnabled
+              ? "This form is shared with staff. Turn off staff access to change its fields."
+              : "This form is published. Unpublish it to change its fields.",
           };
         }
 
@@ -3053,6 +3056,212 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       return row ?? null;
     },
 
+    /* ----- Forms Phase 2 (staff / internal channel) ----- */
+
+    /**
+     * Toggle whether staff can see + fill this form in their /me portal.
+     * Scoped; a foreign id is a no-op. Independent of the public publish state.
+     */
+    async setFormInternalEnabled(id: string, enabled: boolean) {
+      const [row] = await database
+        .update(forms)
+        .set({ internalEnabled: enabled, updatedAt: new Date() })
+        .where(and(eq(forms.id, id), eq(forms.businessId, businessId)))
+        .returning();
+      return row ?? null;
+    },
+
+    /**
+     * Toggle whether STAFF responses are anonymous. FROZEN once the form has its
+     * first INTERNAL response: the anonymity guarantee must not change under
+     * already-collected data, so this refuses (returns `{ ok:false,
+     * reason:"locked" }`) when any internal response exists. Scoped.
+     */
+    async setFormAllowAnonymous(
+      id: string,
+      allowAnonymous: boolean,
+    ): Promise<
+      | { ok: true }
+      | { ok: false; reason: "not_found" }
+      | { ok: false; reason: "locked" }
+    > {
+      const owned = await first(
+        database
+          .select({ id: forms.id })
+          .from(forms)
+          .where(and(eq(forms.id, id), eq(forms.businessId, businessId))),
+      );
+      if (!owned) return { ok: false, reason: "not_found" };
+
+      const [existing] = await database
+        .select({ n: sql<number>`count(*)::int` })
+        .from(formResponses)
+        .where(
+          and(
+            eq(formResponses.formId, id),
+            eq(formResponses.businessId, businessId),
+            eq(formResponses.channel, "internal"),
+          ),
+        );
+      if ((existing?.n ?? 0) > 0) return { ok: false, reason: "locked" };
+
+      await database
+        .update(forms)
+        .set({ allowAnonymous, updatedAt: new Date() })
+        .where(and(eq(forms.id, id), eq(forms.businessId, businessId)));
+      return { ok: true };
+    },
+
+    /**
+     * One owned form + fields for the STAFF fill page, but ONLY when the form is
+     * `internal_enabled`. Returns null for a foreign id (repo is business-scoped)
+     * OR a form not shared with staff — so a staff member can never fill a form
+     * outside their business or one the owner hasn't opened to them.
+     */
+    async getInternalFormForStaff(id: string) {
+      const data = await this.getFormWithFields(id);
+      if (!data || !data.form.internalEnabled) return null;
+      return data;
+    },
+
+    /**
+     * The internal_enabled forms a staff member can fill, newest first, each
+     * with an `alreadyResponded` flag. The flag is UX ONLY — it is meaningful
+     * for ATTRIBUTED forms (a respondent_staff_id match exists) and always false
+     * for anonymous forms (no respondent is ever stored, so we can't know).
+     * The AUTHORITATIVE one-per-staff guard is the partial-unique catch in
+     * `createInternalResponse`, not this read.
+     */
+    listInternalFormsForStaff(staffMemberId: string) {
+      return database
+        .select({
+          id: forms.id,
+          title: forms.title,
+          description: forms.description,
+          allowAnonymous: forms.allowAnonymous,
+          // Correlated EXISTS: did THIS staff member already submit an attributed
+          // response to this form? Always false for anonymous forms (the partial
+          // index excludes null respondents, so none would match anyway).
+          alreadyResponded: sql<boolean>`exists (${database
+            .select({ one: sql`1` })
+            .from(formResponses)
+            .where(
+              and(
+                eq(formResponses.formId, forms.id),
+                eq(formResponses.businessId, businessId),
+                eq(formResponses.respondentStaffId, staffMemberId),
+              ),
+            )})`.mapWith(Boolean),
+        })
+        .from(forms)
+        .where(
+          and(
+            eq(forms.businessId, businessId),
+            eq(forms.internalEnabled, true),
+          ),
+        )
+        .orderBy(desc(forms.createdAt));
+    },
+
+    /**
+     * Whether THIS staff member already has an attributed response to this form.
+     * UX-only (drives the /me "already responded" view); the authoritative guard
+     * is the partial-unique catch in `createInternalResponse`. Anonymous forms
+     * store no respondent, so this is always false for them.
+     */
+    async hasStaffRespondedToForm(formId: string, staffMemberId: string) {
+      const row = await first(
+        database
+          .select({ id: formResponses.id })
+          .from(formResponses)
+          .where(
+            and(
+              eq(formResponses.formId, formId),
+              eq(formResponses.businessId, businessId),
+              eq(formResponses.respondentStaffId, staffMemberId),
+            ),
+          ),
+      );
+      return row !== null;
+    },
+
+    /**
+     * Store one INTERNAL (staff) response + its answers in a transaction.
+     *
+     * SECURITY INVARIANTS (stated so they can't drift):
+     *  - Re-checks the form is THIS business's AND `internal_enabled` — stores
+     *    NOTHING and returns `not_found` otherwise (a staff member can only ever
+     *    submit to their own business's staff-shared forms).
+     *  - `respondentStaffId` is the value the CALLER resolved from the /me
+     *    session; the action passes the authenticated staff id for attributed
+     *    forms and null for anonymous. `anonymous` itself is read SERVER-SIDE
+     *    from the form's `allow_anonymous` by the action, never the client.
+     *  - `business_id` is forced from the repo on the response AND every answer.
+     *  - ONE-PER-STAFF is enforced AUTHORITATIVELY here: the insert uses
+     *    ON CONFLICT DO NOTHING against the partial unique
+     *    (form_id, respondent_staff_id); if no row comes back, an attributed
+     *    response already exists → `already_responded` (race-safe, not a
+     *    read-then-write check). Anonymous rows have a null respondent, never
+     *    conflict, and are always inserted.
+     */
+    async createInternalResponse(
+      formId: string,
+      input: {
+        respondentStaffId: string | null;
+        source: string | null;
+        answers: AnswerRow[];
+      },
+    ): Promise<
+      | { ok: true; responseId: string }
+      | { ok: false; reason: "not_found" }
+      | { ok: false; reason: "already_responded" }
+    > {
+      return database.transaction(async (tx) => {
+        const [form] = await tx
+          .select({ internalEnabled: forms.internalEnabled })
+          .from(forms)
+          .where(and(eq(forms.id, formId), eq(forms.businessId, businessId)));
+        if (!form || !form.internalEnabled) {
+          return { ok: false, reason: "not_found" };
+        }
+
+        const inserted = await tx
+          .insert(formResponses)
+          .values({
+            businessId,
+            formId,
+            channel: "internal",
+            source: input.source,
+            respondentStaffId: input.respondentStaffId,
+          })
+          .onConflictDoNothing({
+            target: [formResponses.formId, formResponses.respondentStaffId],
+            where: sql`${formResponses.respondentStaffId} is not null`,
+          })
+          .returning({ id: formResponses.id });
+
+        const responseId = inserted[0]?.id;
+        // No row back ⇒ the partial-unique fired ⇒ this staff member already has
+        // an attributed response to this form.
+        if (!responseId) return { ok: false, reason: "already_responded" };
+
+        if (input.answers.length > 0) {
+          await tx.insert(formResponseAnswers).values(
+            input.answers.map((a) => ({
+              businessId,
+              responseId,
+              fieldId: a.fieldId,
+              fieldLabel: a.fieldLabel,
+              fieldType: a.fieldType,
+              valueText: a.valueText,
+              valueNumber: a.valueNumber,
+            })),
+          );
+        }
+        return { ok: true, responseId };
+      });
+    },
+
     /**
      * Store one PUBLIC response + its answers in a transaction. Re-checks the
      * form is this business's AND still `published` (guards a close/unpublish
@@ -3121,9 +3330,28 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     ) {
       const limit = opts.limit ?? 50;
       const offset = opts.offset ?? 0;
+      // LEFT JOIN the respondent so attributed internal rows carry the staff
+      // name. The name is DERIVED for display only — never snapshotted onto the
+      // response (ON DELETE SET NULL is the privacy-preserving default; a
+      // deleted attributed staff reads as "Former staff", computed from the
+      // form's frozen allow_anonymous, not mislabelled "Anonymous").
       const responses = await database
-        .select()
+        .select({
+          id: formResponses.id,
+          businessId: formResponses.businessId,
+          formId: formResponses.formId,
+          channel: formResponses.channel,
+          source: formResponses.source,
+          respondentStaffId: formResponses.respondentStaffId,
+          respondentName: staffMembers.name,
+          submittedAt: formResponses.submittedAt,
+          createdAt: formResponses.createdAt,
+        })
         .from(formResponses)
+        .leftJoin(
+          staffMembers,
+          eq(staffMembers.id, formResponses.respondentStaffId),
+        )
         .where(
           and(
             eq(formResponses.formId, formId),
@@ -3149,6 +3377,25 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         ...r,
         answers: answers.filter((a) => a.responseId === r.id),
       }));
+    },
+
+    /**
+     * Scoped count of a form's INTERNAL responses — drives the editor's "freeze
+     * the anonymity toggle once staff have responded" UI (the authoritative
+     * freeze is in `setFormAllowAnonymous`).
+     */
+    async countInternalResponses(formId: string) {
+      const [row] = await database
+        .select({ count: sql<number>`count(*)::int` })
+        .from(formResponses)
+        .where(
+          and(
+            eq(formResponses.formId, formId),
+            eq(formResponses.businessId, businessId),
+            eq(formResponses.channel, "internal"),
+          ),
+        );
+      return row?.count ?? 0;
     },
 
     /** Scoped count of a form's responses (for the list/editor count + paging). */

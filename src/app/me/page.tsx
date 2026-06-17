@@ -56,7 +56,10 @@ export default async function NoticesPage() {
   }
 
   const repo = createTenantRepo(resolved.businessId);
-  const notices = await repo.listStaffNotifications(resolved.staffMemberId);
+  const [notices, internalForms] = await Promise.all([
+    repo.listStaffNotifications(resolved.staffMemberId),
+    repo.listInternalFormsForStaff(resolved.staffMemberId),
+  ]);
   const unreadCount = notices.filter((n) => !n.isRead).length;
   const now = new Date();
 
@@ -70,6 +73,52 @@ export default async function NoticesPage() {
           From {resolved.businessName}. Only you can see this page.
         </p>
       </header>
+
+      {internalForms.length > 0 ? (
+        <section className="mb-6" aria-label="Forms to fill">
+          <h2 className="mb-2 text-lg font-semibold">Forms to fill</h2>
+          <ul className="space-y-2">
+            {internalForms.map((f) => {
+              // alreadyResponded is meaningful for attributed forms only; an
+              // anonymous form is always fillable (no per-person record exists).
+              const done = !f.allowAnonymous && f.alreadyResponded;
+              return (
+                <li key={f.id}>
+                  <Card className="py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold">{f.title}</p>
+                        {f.description ? (
+                          <p className="mt-0.5 text-sm text-[var(--color-muted)]">
+                            {f.description}
+                          </p>
+                        ) : null}
+                        <p className="mt-1 text-xs text-[var(--color-muted)]">
+                          {f.allowAnonymous
+                            ? "Anonymous"
+                            : "Your name is recorded"}
+                        </p>
+                      </div>
+                      {done ? (
+                        <span className="shrink-0 text-sm text-[var(--color-muted)]">
+                          Done
+                        </span>
+                      ) : (
+                        <a
+                          href={`/me/forms/${f.id}`}
+                          className="shrink-0 text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
+                        >
+                          Fill in
+                        </a>
+                      )}
+                    </div>
+                  </Card>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
 
       {unreadCount > 0 ? (
         <form action={markAllNoticesReadAction} className="mb-3 text-right">
