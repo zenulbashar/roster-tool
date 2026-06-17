@@ -3,6 +3,8 @@ import {
   buildApprovedHoursCsv,
   hoursWorked,
   csvCell,
+  sanitizeCsvValue,
+  csvField,
   APPROVED_HOURS_DISCLAIMER,
   type ExportRow,
 } from "@/lib/timesheet-export";
@@ -49,6 +51,24 @@ describe("csvCell", () => {
     expect(csvCell("Smith, Ava")).toBe('"Smith, Ava"');
     expect(csvCell('She said "hi"')).toBe('"She said ""hi"""');
     expect(csvCell("line1\nline2")).toBe('"line1\nline2"');
+  });
+});
+
+describe("sanitizeCsvValue / csvField (formula-injection hardening)", () => {
+  it("prefixes a leading dangerous character with an apostrophe", () => {
+    for (const bad of ["=1+1", "+1", "-1", "@x", "\tx", "\rx"]) {
+      expect(sanitizeCsvValue(bad)).toBe(`'${bad}`);
+    }
+  });
+  it("leaves safe values untouched", () => {
+    expect(sanitizeCsvValue("Ava")).toBe("Ava");
+    expect(sanitizeCsvValue("3.5")).toBe("3.5");
+    expect(sanitizeCsvValue("")).toBe("");
+  });
+  it("neutralises THEN RFC-4180 escapes (guard inside the quotes)", () => {
+    // A formula that also contains a comma → both guarded and quoted.
+    expect(csvField("=SUM(A1,A2)")).toBe(`"'=SUM(A1,A2)"`);
+    expect(csvField("=1+1")).toBe("'=1+1");
   });
 });
 

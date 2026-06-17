@@ -45,7 +45,28 @@ export function csvCell(value: string): string {
   return value;
 }
 
-const csvRow = (cells: string[]): string => cells.map(csvCell).join(",");
+/**
+ * Neutralise spreadsheet FORMULA INJECTION. A cell whose value begins with one
+ * of `= + - @`, a tab, or a carriage return can be executed as a formula by
+ * Excel/Google Sheets on open. We prefix such a value with a single apostrophe
+ * so the spreadsheet treats it as literal text. Treat EVERY value as hostile —
+ * exported data includes staff names, imported item names and anonymous public
+ * form answers, none reliably owner-typed. Legit hours/rates/ratings never
+ * start with a dangerous char, so this only changes cells that need it.
+ */
+export function sanitizeCsvValue(value: string): string {
+  return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+}
+
+/**
+ * One CSV field: neutralise injection on the RAW value FIRST, then RFC-4180
+ * escape. Order matters — the guard apostrophe must be inside the quoting.
+ */
+export function csvField(value: string): string {
+  return csvCell(sanitizeCsvValue(value));
+}
+
+const csvRow = (cells: string[]): string => cells.map(csvField).join(",");
 
 /** "HH:MM" (24h) for an instant in the given timezone. */
 function timeInTz(instant: Date, timeZone: string): string {
