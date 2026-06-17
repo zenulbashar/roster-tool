@@ -109,6 +109,19 @@ You should see "Migrations applied." Delete that temporary `.env` afterwards.
 (The worker creates its own job tables automatically the first time it starts —
 nothing extra to do.)
 
+This manual run is only needed for the **first** deploy. After that, the
+`migrate-prod` job in `.github/workflows/ci.yml` auto-applies pending
+migrations to production on every merge to `main` (after the `build`/test job
+passes). Add two repository secrets (GitHub → **Settings → Secrets and
+variables → Actions**) for it to work:
+
+- `PROD_DATABASE_URL` — the Neon **direct** (non-pooled) connection string.
+- `AUTH_SECRET` — the same value as production (the migration script validates
+  the whole env at import, so it won't boot without it).
+
+The job is for **additive/expand** migrations only; destructive migrations
+(drop/rename/retype) must still be run manually using expand/contract.
+
 ### 2. Generate a sign-in secret
 
 Run this once and keep the output — you'll paste the **same** value into both

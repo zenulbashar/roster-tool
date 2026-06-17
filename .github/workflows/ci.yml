@@ -55,3 +55,66 @@ jobs:
 
       - name: Test
         run: npm test
+
+  # ---------------------------------------------------------------------------
+  # Auto-apply pending DB migrations to PRODUCTION after a merge to main.
+  #
+  # Prerequisite GitHub Actions secrets (Settings -> Secrets and variables ->
+  # Actions). A failing job is self-documenting via this block:
+  #   - PROD_DATABASE_URL : the DIRECT (non-pooled) Neon connection string.
+  #                         pg-boss/migrations need session mode, so this must
+  #                         NOT be the pooled URL the web app uses.
+  #   - AUTH_SECRET       : same value as production. Not used by the migration
+  #                         itself, but src/lib/env.ts validates the whole env at
+  #                         import, so the script won't boot without it.
+  #
+  # SCOPE / SAFETY: this job is for ADDITIVE / expand migrations ONLY (new
+  # tables, columns, indexes). DESTRUCTIVE migrations (drop / rename / retype a
+  # column or table) must be run MANUALLY using the expand/contract pattern and
+  # are NEVER applied through this job. There is deliberately no destructive
+  # path here.
+  #
+  # Vercel is NOT gated or triggered from this job: it auto-deploys on push to
+  # main independently. For additive migrations the concurrent order (migrate vs
+  # deploy) is safe — new code tolerates the old schema and old code ignores the
+  # new schema either way.
+  # ---------------------------------------------------------------------------
+  migrate-prod:
+    runs-on: ubuntu-latest
+
+    # Only after `build` is green: a red main never migrates.
+    needs: build
+
+    # Only on a real push to main (i.e. after a PR merges) — never on PRs or
+    # preview branches. The `pull_request` event and pushes to other branches
+    # both fall through this guard.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    # Serialise migration runs. Overlapping merges QUEUE instead of running two
+    # migrators at once (which can deadlock / race drizzle's migrations table).
+    # cancel-in-progress MUST stay false — never cancel a migration mid-apply.
+    concurrency:
+      group: migrate-prod
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Match the Node setup used by `build`.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Own run step (not chained behind && or wrapped): a non-zero exit fails
+      # the job and nothing proceeds past a failed migration. Idempotent —
+      # drizzle skips already-applied migrations, so reruns are safe. Secrets
+      # are passed via env only and never echoed.
+      - name: Apply production migrations
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
