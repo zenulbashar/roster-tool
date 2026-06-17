@@ -22,6 +22,7 @@ export const NOTIFICATION_TYPES = [
   "stock_needs_order",
   "cert_expiring",
   "availability_reply",
+  "form_response",
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
@@ -33,6 +34,7 @@ export type NotificationPrefs = {
   notifyStockNeedsOrder: boolean;
   notifyCertExpiring: boolean;
   notifyAvailabilityReply: boolean;
+  notifyFormResponse: boolean;
 };
 
 /**
@@ -68,6 +70,11 @@ export const NOTIFICATION_PREFS: Record<
     column: "notifyAvailabilityReply",
     label: "Availability replies",
     description: "When a staff member sends their availability.",
+  },
+  form_response: {
+    column: "notifyFormResponse",
+    label: "Form responses",
+    description: "When someone responds to one of your forms.",
   },
 };
 
@@ -141,6 +148,45 @@ export async function notifyOwner(
     logger.warn(
       { err, businessId: repo.businessId, type: input.type },
       "Failed to create owner notification; continuing",
+    );
+  }
+}
+
+/**
+ * The coalesced "new form response" title — COUNT + form title ONLY. There is
+ * deliberately NO answer content and NO respondent identity here (or anywhere in
+ * the notification): a count-only line is the SAME for public, attributed and
+ * anonymous internal responses, so an anonymous form's notification can never
+ * name or imply who submitted. Pure + unit-tested.
+ */
+export function formResponseTitle(count: number, formTitle: string): string {
+  return `${count} new response${count === 1 ? "" : "s"} to ${formTitle}`;
+}
+
+/**
+ * Notify the OWNER that a form response arrived — best-effort + preference-gated
+ * (mirrors `notifyOwner`). Reads the business prefs, skips when
+ * `form_response` is off (or the business is missing), otherwise COALESCES into
+ * the form's single unread bell row (see `upsertFormResponseNotification`). ANY
+ * error is caught and logged, never thrown, so the response submit it follows
+ * can never be rolled back or failed by a notification problem.
+ *
+ * It is passed ONLY `{ formId, formTitle }` — never answers or a respondent —
+ * so it is structurally incapable of leaking response content or identity.
+ */
+export async function notifyFormResponse(
+  repo: TenantRepo,
+  input: { formId: string; formTitle: string },
+): Promise<void> {
+  try {
+    const business = await repo.getBusiness();
+    if (!business) return;
+    if (!prefEnabled(business, "form_response")) return;
+    await repo.upsertFormResponseNotification(input);
+  } catch (err) {
+    logger.warn(
+      { err, businessId: repo.businessId, type: "form_response" },
+      "Failed to create form-response notification; continuing",
     );
   }
 }

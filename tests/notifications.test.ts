@@ -16,6 +16,7 @@ function prefs(over: Partial<NotificationPrefs> = {}): NotificationPrefs {
     notifyStockNeedsOrder: true,
     notifyCertExpiring: true,
     notifyAvailabilityReply: true,
+    notifyFormResponse: true,
     ...over,
   };
 }
