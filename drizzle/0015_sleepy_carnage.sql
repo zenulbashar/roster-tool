@@ -1,0 +1,4 @@
+ALTER TABLE "form_response" ADD COLUMN "respondent_staff_id" uuid;--> statement-breakpoint
+ALTER TABLE "form" ADD COLUMN "internal_enabled" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "form_response" ADD CONSTRAINT "form_response_respondent_staff_id_staff_member_id_fk" FOREIGN KEY ("respondent_staff_id") REFERENCES "public"."staff_member"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE UNIQUE INDEX "form_response_one_per_staff" ON "form_response" USING btree ("form_id","respondent_staff_id") WHERE "form_response"."respondent_staff_id" is not null;
