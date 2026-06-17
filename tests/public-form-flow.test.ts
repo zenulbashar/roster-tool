@@ -233,6 +233,72 @@ describe("public form flow", () => {
     expect(await repoA.getResponsesForForm(formId)).toHaveLength(0);
   });
 
+  it("fires notifyResponse ONCE on a stored response, but NOT on a honeypot drop", async () => {
+    const { formId, slug, fields } = await publishedForm(repoA);
+    const { raw } = answersFor(fields);
+    let calls = 0;
+    const io = { ...okIo, notifyResponse: async () => void calls++ };
+
+    // Honeypot drop → stored nothing → must NOT notify.
+    await processPublicSubmission(
+      repoA,
+      {
+        formId,
+        slug,
+        fields,
+        rawAnswers: raw,
+        token: "t",
+        honeypot: "bot",
+        ipHash: "ip1",
+      },
+      io,
+    );
+    expect(calls).toBe(0);
+
+    // Genuine success → notify exactly once (after the row commits).
+    const ok = await processPublicSubmission(
+      repoA,
+      {
+        formId,
+        slug,
+        fields,
+        rawAnswers: raw,
+        token: "t",
+        honeypot: "",
+        ipHash: "ip1",
+      },
+      io,
+    );
+    expect(ok.status).toBe("ok");
+    expect(calls).toBe(1);
+  });
+
+  it("swallows a thrown notifyResponse — the public response is still stored", async () => {
+    const { formId, slug, fields } = await publishedForm(repoA);
+    const { raw } = answersFor(fields);
+    const io = {
+      ...okIo,
+      notifyResponse: async () => {
+        throw new Error("notify boom");
+      },
+    };
+    const outcome = await processPublicSubmission(
+      repoA,
+      {
+        formId,
+        slug,
+        fields,
+        rawAnswers: raw,
+        token: "t",
+        honeypot: "",
+        ipHash: "ip1",
+      },
+      io,
+    );
+    expect(outcome.status).toBe("ok");
+    expect(await repoA.getResponsesForForm(formId)).toHaveLength(1);
+  });
+
   it("rejects when the rate limit is exceeded, without storing", async () => {
     const { formId, slug, fields } = await publishedForm(repoA);
     const { raw } = answersFor(fields);

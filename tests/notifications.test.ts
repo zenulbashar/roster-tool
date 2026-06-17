@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   prefEnabled,
   relativeTime,
+  formResponseTitle,
   NOTIFICATION_TYPES,
   NOTIFICATION_PREFS,
   type NotificationPrefs,
@@ -40,6 +41,19 @@ describe("notifications: prefEnabled", () => {
   it("maps each type to a distinct preference column", () => {
     const columns = NOTIFICATION_TYPES.map((t) => NOTIFICATION_PREFS[t].column);
     expect(new Set(columns).size).toBe(NOTIFICATION_TYPES.length);
+  });
+});
+
+describe("notifications: formResponseTitle", () => {
+  it("is count + form title only — singular at 1, plural above (NO identity)", () => {
+    expect(formResponseTitle(1, "Feedback")).toBe("1 new response to Feedback");
+    expect(formResponseTitle(12, "Feedback")).toBe(
+      "12 new responses to Feedback",
+    );
+    // The form's own title is the only free text; never any respondent name.
+    expect(formResponseTitle(3, "Staff survey")).toBe(
+      "3 new responses to Staff survey",
+    );
   });
 });
 
