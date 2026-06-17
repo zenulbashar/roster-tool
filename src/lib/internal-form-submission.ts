@@ -53,6 +53,11 @@ export async function processInternalSubmission(
   io: {
     /** Per-FORM anon flood guard (no staff identifier in the key). */
     consumeAnonRateLimit: (formId: string) => Promise<boolean>;
+    // Best-effort, AFTER-COMMIT owner notification (Phase 3a). Fires ONLY when a
+    // NEW response row was stored (`ok`) — NEVER on a blocked duplicate
+    // (`already_responded`, which stores nothing), nor on rate-limit/validation/
+    // not_found. Wired by the action; guarded here so it can't fail the submit.
+    notifyResponse: () => Promise<void>;
   },
 ): Promise<InternalSubmitOutcome> {
   // 1. Anonymous flood guard (the attributed path is bounded by the partial
@@ -83,7 +88,17 @@ export async function processInternalSubmission(
     answers: validated.rows,
   });
 
-  if (result.ok) return { status: "ok", responseId: result.responseId };
+  if (result.ok) {
+    // A new response row WAS stored → notify (best-effort, after-commit).
+    // Guarded so a notify failure can never fail/roll back the submit.
+    try {
+      await io.notifyResponse();
+    } catch {
+      // Swallowed: the response is already committed.
+    }
+    return { status: "ok", responseId: result.responseId };
+  }
+  // Blocked duplicate: NO new row stored → MUST NOT notify or bump the count.
   if (result.reason === "already_responded") {
     return { status: "already_responded" };
   }

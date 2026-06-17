@@ -49,11 +49,17 @@ describe("processInternalSubmission", () => {
     };
   }
 
-  const alwaysAllow = { consumeAnonRateLimit: vi.fn(async () => true) };
+  const alwaysAllow = {
+    consumeAnonRateLimit: vi.fn(async () => true),
+    notifyResponse: vi.fn(async () => {}),
+  };
 
   it("attributed: passes the session staff id as respondent, no rate limit", async () => {
     const repo = repoStub();
-    const io = { consumeAnonRateLimit: vi.fn(async () => true) };
+    const io = {
+      consumeAnonRateLimit: vi.fn(async () => true),
+      notifyResponse: vi.fn(async () => {}),
+    };
     const out = await processInternalSubmission(
       repo,
       {
@@ -86,7 +92,10 @@ describe("processInternalSubmission", () => {
 
   it("anonymous: respondent is null and the per-form rate limit is consulted", async () => {
     const repo = repoStub();
-    const io = { consumeAnonRateLimit: vi.fn(async () => true) };
+    const io = {
+      consumeAnonRateLimit: vi.fn(async () => true),
+      notifyResponse: vi.fn(async () => {}),
+    };
     await processInternalSubmission(
       repo,
       {
@@ -106,7 +115,10 @@ describe("processInternalSubmission", () => {
 
   it("anonymous: a tripped rate limit rejects WITHOUT storing", async () => {
     const repo = repoStub();
-    const io = { consumeAnonRateLimit: vi.fn(async () => false) };
+    const io = {
+      consumeAnonRateLimit: vi.fn(async () => false),
+      notifyResponse: vi.fn(async () => {}),
+    };
     const out = await processInternalSubmission(
       repo,
       {

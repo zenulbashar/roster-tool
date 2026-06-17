@@ -3,6 +3,7 @@
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { verifiedNoticesStaff } from "@/lib/notices-session";
 import { processInternalSubmission } from "@/lib/internal-form-submission";
+import { notifyFormResponse } from "@/lib/notifications";
 import { consumeInternalAnonSubmission } from "@/lib/rate-limit";
 import type { SubmissionField } from "@/lib/form-submission";
 import type { StaffFillState } from "@/components/StaffFormFill";
@@ -76,6 +77,11 @@ export async function submitInternalForm(
     },
     {
       consumeAnonRateLimit: (id) => consumeInternalAnonSubmission(id),
+      // After-commit, best-effort: coalesced owner bell notification. Count +
+      // form title only — never answer content or respondent identity (so an
+      // anonymous internal response can never imply who submitted).
+      notifyResponse: () =>
+        notifyFormResponse(repo, { formId, formTitle: data.form.title }),
     },
   );
 

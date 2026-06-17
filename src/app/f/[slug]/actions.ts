@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { findPublishedFormBySlug } from "@/lib/tenant/public-access";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { processPublicSubmission } from "@/lib/form-response-submission";
+import { notifyFormResponse } from "@/lib/notifications";
 import { verifyTurnstile } from "@/lib/turnstile";
 import { consumeFormSubmission, hashIp } from "@/lib/rate-limit";
 import type { SubmissionField } from "@/lib/form-submission";
@@ -74,6 +75,13 @@ export async function submitPublicForm(
     {
       verifyToken: (t) => verifyTurnstile(t, ip),
       consumeRateLimit: (ipHash, s) => consumeFormSubmission(ipHash, s),
+      // After-commit, best-effort: coalesced owner bell notification. Count +
+      // form title only — never answer content or respondent identity.
+      notifyResponse: () =>
+        notifyFormResponse(repo, {
+          formId: resolved.formId,
+          formTitle: data.form.title,
+        }),
     },
   );
 

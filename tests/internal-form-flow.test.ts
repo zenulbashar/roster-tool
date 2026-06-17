@@ -27,7 +27,10 @@ describe("internal form flow", () => {
   let staffA1 = "";
   let staffA2 = "";
 
-  const allowLimiter = { consumeAnonRateLimit: async () => true };
+  const allowLimiter = {
+    consumeAnonRateLimit: async () => true,
+    notifyResponse: async () => {},
+  };
 
   beforeAll(async () => {
     const [a] = await db

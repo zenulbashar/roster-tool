@@ -94,10 +94,11 @@ describe("public form flow", () => {
     };
   }
 
-  // Sensible io defaults: human verified, under the rate limit.
+  // Sensible io defaults: human verified, under the rate limit, no-op notify.
   const okIo = {
     verifyToken: async () => true,
     consumeRateLimit: async () => true,
+    notifyResponse: async () => {},
   };
 
   function answersFor(fields: SubmissionField[]) {
@@ -246,7 +247,11 @@ describe("public form flow", () => {
         honeypot: "",
         ipHash: "ip1",
       },
-      { verifyToken: async () => true, consumeRateLimit: async () => false },
+      {
+        verifyToken: async () => true,
+        consumeRateLimit: async () => false,
+        notifyResponse: async () => {},
+      },
     );
     expect(outcome.status).toBe("rejected");
     expect(await repoA.getResponsesForForm(formId)).toHaveLength(0);
@@ -266,7 +271,11 @@ describe("public form flow", () => {
         honeypot: "",
         ipHash: "ip1",
       },
-      { verifyToken: async () => false, consumeRateLimit: async () => true },
+      {
+        verifyToken: async () => false,
+        consumeRateLimit: async () => true,
+        notifyResponse: async () => {},
+      },
     );
     expect(outcome.status).toBe("rejected");
     expect(await repoA.getResponsesForForm(formId)).toHaveLength(0);
