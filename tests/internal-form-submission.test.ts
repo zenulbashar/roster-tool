@@ -49,11 +49,17 @@ describe("processInternalSubmission", () => {
     };
   }
 
-  const alwaysAllow = { consumeAnonRateLimit: vi.fn(async () => true) };
+  const alwaysAllow = {
+    consumeAnonRateLimit: vi.fn(async () => true),
+    notifyResponse: vi.fn(async () => {}),
+  };
 
   it("attributed: passes the session staff id as respondent, no rate limit", async () => {
     const repo = repoStub();
-    const io = { consumeAnonRateLimit: vi.fn(async () => true) };
+    const io = {
+      consumeAnonRateLimit: vi.fn(async () => true),
+      notifyResponse: vi.fn(async () => {}),
+    };
     const out = await processInternalSubmission(
       repo,
       {
@@ -86,7 +92,10 @@ describe("processInternalSubmission", () => {
 
   it("anonymous: respondent is null and the per-form rate limit is consulted", async () => {
     const repo = repoStub();
-    const io = { consumeAnonRateLimit: vi.fn(async () => true) };
+    const io = {
+      consumeAnonRateLimit: vi.fn(async () => true),
+      notifyResponse: vi.fn(async () => {}),
+    };
     await processInternalSubmission(
       repo,
       {
@@ -106,7 +115,10 @@ describe("processInternalSubmission", () => {
 
   it("anonymous: a tripped rate limit rejects WITHOUT storing", async () => {
     const repo = repoStub();
-    const io = { consumeAnonRateLimit: vi.fn(async () => false) };
+    const io = {
+      consumeAnonRateLimit: vi.fn(async () => false),
+      notifyResponse: vi.fn(async () => {}),
+    };
     const out = await processInternalSubmission(
       repo,
       {
@@ -190,6 +202,95 @@ describe("processInternalSubmission", () => {
       alwaysAllow,
     );
     expect(out).toEqual({ status: "already_responded" });
+  });
+
+  it("notifies (best-effort) on a genuine new-response success", async () => {
+    const repo = repoStub();
+    const io = {
+      consumeAnonRateLimit: vi.fn(async () => true),
+      notifyResponse: vi.fn(async () => {}),
+    };
+    await processInternalSubmission(
+      repo,
+      {
+        formId: "form-1",
+        fields,
+        rawAnswers: { "f-name": "Ada" },
+        anonymous: false,
+        staffMemberId: "staff-1",
+      },
+      io,
+    );
+    expect(io.notifyResponse).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT notify on a blocked duplicate (already_responded) — no new row", async () => {
+    const repo = {
+      createInternalResponse: vi.fn(async () => ({
+        ok: false as const,
+        reason: "already_responded" as const,
+      })),
+    };
+    const io = {
+      consumeAnonRateLimit: vi.fn(async () => true),
+      notifyResponse: vi.fn(async () => {}),
+    };
+    const out = await processInternalSubmission(
+      repo,
+      {
+        formId: "form-1",
+        fields,
+        rawAnswers: { "f-name": "Ada" },
+        anonymous: false,
+        staffMemberId: "staff-1",
+      },
+      io,
+    );
+    expect(out).toEqual({ status: "already_responded" });
+    expect(io.notifyResponse).not.toHaveBeenCalled();
+  });
+
+  it("does NOT notify on a validation reject (nothing stored)", async () => {
+    const repo = repoStub();
+    const io = {
+      consumeAnonRateLimit: vi.fn(async () => true),
+      notifyResponse: vi.fn(async () => {}),
+    };
+    await processInternalSubmission(
+      repo,
+      {
+        formId: "form-1",
+        fields,
+        rawAnswers: { "f-name": "Ada", "f-ghost": "x" },
+        anonymous: false,
+        staffMemberId: "staff-1",
+      },
+      io,
+    );
+    expect(io.notifyResponse).not.toHaveBeenCalled();
+    expect(repo.createInternalResponse).not.toHaveBeenCalled();
+  });
+
+  it("swallows a thrown notifyResponse; the response still succeeds", async () => {
+    const repo = repoStub();
+    const io = {
+      consumeAnonRateLimit: vi.fn(async () => true),
+      notifyResponse: vi.fn(async () => {
+        throw new Error("notify boom");
+      }),
+    };
+    const out = await processInternalSubmission(
+      repo,
+      {
+        formId: "form-1",
+        fields,
+        rawAnswers: { "f-name": "Ada" },
+        anonymous: false,
+        staffMemberId: "staff-1",
+      },
+      io,
+    );
+    expect(out.status).toBe("ok");
   });
 
   it("maps the repo's not_found outcome to a rejection", async () => {

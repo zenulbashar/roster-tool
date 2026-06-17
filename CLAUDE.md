@@ -188,9 +188,10 @@ csvCell(sanitizeCsvValue(v))` — guard the raw value first, THEN escape. ALL
   in Settings. **Owner only** — the staff analog is the separate staff notices
   system (`/me`, see "Staff in-app notices" below). These are **IN ADDITION to
   the existing emails**, never a replacement.
-  - **Five event types** (`notification_type`): `leave_requested`,
+  - **Six event types** (`notification_type`): `leave_requested`,
     `shift_offer_activity` (released or claimed), `stock_needs_order`,
-    `cert_expiring`, `availability_reply`. The set is fixed.
+    `cert_expiring`, `availability_reply`, and `form_response` (Phase 3a — the
+    only COALESCED type; see below). The set is fixed.
   - **Creation is best-effort + preference-gated.** `notifyOwner(repo, {...})`
     in `src/lib/notifications.ts` reads the business's prefs, **skips** if the
     type is off, else inserts — all wrapped in try/catch that logs and **never
@@ -204,11 +205,31 @@ csvCell(sanitizeCsvValue(v))` — guard the raw value first, THEN escape. ALL
     **shared submission cores**, so BOTH the kiosk and personal-phone surfaces
     are covered in one place — plus the `/a/[token]` availability reply action
     and the worker's `cert-reminder` job (mirrors the digest; the **email is
-    unchanged**, only the extra in-app row is pref-gated).
-  - **Preferences are five boolean columns on `business`** (`notify_*`, all
-    default true) — a fixed five-event set makes columns simpler than a side
-    table (no row-existence/default ambiguity). Toggled in Settings via a
-    tenant-scoped action.
+    unchanged**, only the extra in-app row is pref-gated). **`form_response`**
+    (Phase 3a) is created by `notifyFormResponse(repo, {formId, formTitle})` from
+    the two form-submission cores AFTER the response commits, best-effort —
+    fired ONLY on a genuine new-response success (never on a honeypot drop,
+    rate-limit/Turnstile/validation reject, store-null, or an `already_responded`
+    blocked-duplicate, which stores nothing).
+  - **New-response notifications COALESCE** (Phase 3a — a busy public form would
+    otherwise flood the bell): ONE updating UNREAD row per form. `notification`
+    gains `group_key` (`form_response:<formId>`, NULL for every other type) +
+    `count`; a new response increments the form's existing unread row (count+1,
+    title refreshed, `created_at` bumped to resurface it) or starts a fresh one.
+    The **partial unique index** `(business_id, group_key) WHERE group_key IS NOT
+NULL AND is_read = false` is the upsert's ON CONFLICT arbiter, so a flood is
+    race-safe and the bell shows ONE item (count N), not N. Reading the row (the
+    bell marks it read on navigate) flips `is_read`, so the next response starts
+    a fresh count. **PRIVACY: count + form title + link ONLY** — never answer
+    content and never a respondent identity, so the wording is IDENTICAL for
+    public, attributed and anonymous responses (an anonymous internal response
+    can never imply who submitted). Email (a daily digest) is deferred to a later
+    phase; this phase is in-app bell only.
+  - **Preferences are six boolean columns on `business`** (`notify_*`, all
+    default true, incl. `notify_form_response`) — a fixed event set makes columns
+    simpler than a side table (no row-existence/default ambiguity). Toggled in
+    Settings via a tenant-scoped action (the UI auto-renders from
+    `NOTIFICATION_TYPES`).
   - **The bell is server-driven** (no websockets): the owner layout reads the
     unread count + recent list per request (owner pages are dynamic), so it
     refreshes on navigation/refresh. Clicking an item marks it read and
@@ -669,14 +690,23 @@ Notable columns / conventions:
   **Flagged/reminders only — never enforced; the app never places orders.**
 - `notification` — an owner-facing in-app notification (the header bell). NOT-NULL
   `type` (`notification_type`: `leave_requested`/`shift_offer_activity`/
-  `stock_needs_order`/`cert_expiring`/`availability_reply`), NOT-NULL `title`,
-  nullable `body`/`link_path` (where clicking it goes, e.g. `/app/leave`),
-  `is_read` (NOT NULL default false), `created_at`. Indexed on
-  `(business_id, is_read)` and `(business_id, created_at)`. Created best-effort
-  and **preference-gated** via `notifyOwner` (`src/lib/notifications.ts`) at each
-  event source; **IN ADDITION to the existing emails**. Per-event preferences are
-  five `notify_*` boolean columns on `business` (all NOT NULL default true).
-  **Owner only — the staff analog is `staff_notification` below.**
+  `stock_needs_order`/`cert_expiring`/`availability_reply`/`form_response`),
+  NOT-NULL `title`, nullable `body`/`link_path` (where clicking it goes, e.g.
+  `/app/leave`), `is_read` (NOT NULL default false), `created_at`. **Coalescing
+  (Phase 3a)**: nullable `group_key` (`form_response:<formId>`; NULL for every
+  non-coalesced type) + `count` (NOT NULL default 1) let new-response
+  notifications collapse into ONE updating unread row per form — a **partial
+  unique index** `(business_id, group_key) WHERE group_key IS NOT NULL AND
+is_read = false` is the `upsertFormResponseNotification` ON CONFLICT arbiter
+  (race-safe under a flood), and reading the row resets the window. Also indexed
+  on `(business_id, is_read)` and `(business_id, created_at)`. Created best-effort
+  and **preference-gated** via `notifyOwner` (and `notifyFormResponse` for the
+  coalesced type) in `src/lib/notifications.ts` at each event source; **IN
+  ADDITION to the existing emails**, carrying COUNT + title + link only (never
+  answer content or respondent identity). Per-event preferences are six
+  `notify_*` boolean columns on `business` (all NOT NULL default true, incl.
+  `notify_form_response`). **Owner only — the staff analog is
+  `staff_notification` below.**
 - `staff_notification` — a STAFF-facing in-app notice, keyed to ONE staff
   member (`staff_member_id`, cascade) and shown only on their PIN-gated `/me`
   page. NOT-NULL `type` (`staff_notification_type`: `leave_decided`/
@@ -868,3 +898,4 @@ charset=utf-8` + attachment with a slugified filename. **Buffered, newest-10k
 - [x] M20 — Form builder Phase 1b (publish + public collection + QR): owner publish/close + public URL/copy/QR; public `/f/[slug]` route (outside `/app`) storing anonymous `form_response`/`form_response_answer` (self-describing snapshots, rating in `value_number`); abuse protection (Cloudflare Turnstile server-side fail-closed, honeypot, durable per-IP/slug `form_rate_limit`); publish lock freezes a published form's fields. Owner responses view deferred to 1c.
 - [x] M21 — Form builder Phase 1c (owner responses view + delete guard): owner-scoped `/app/forms/[id]/responses` with SQL-aggregated per-field summaries (rating average+distribution, select/yes_no tallies, recent text) shaped by the pure `form-report.ts` (snapshot grouping, `displayAnswer`), a paginated `<details>` response list (deterministic order), response counts on the list/editor, and a `deleteForm` confirmed-flag guard so responses can't be wiped accidentally. Read-only; no migration; no export.
 - [x] M22 — Form builder Phase 2 (staff / internal channel): owner per-form `internal_enabled` + `allow_anonymous` controls; staff fill internal forms from the PIN-gated `/me/forms/[id]` portal (respondent server-resolved from the /me session, never request input; reuses `validatePublicSubmission`, no Turnstile/honeypot); attributed (`respondent_staff_id`, one-per-staff via partial-unique ON CONFLICT) vs anonymous (null respondent, coarse per-form rate limit keyed on form id only); field-lock broadened to published OR internal_enabled; responses view + CSV show the respondent (Public/Anonymous/name/Former staff). Additive migration 0015. No change to the public `/f/[slug]` surface.
+- [x] M23 — Form builder Phase 3a (new-response owner notifications): a sixth `notification_type` `form_response` reusing the existing bell + per-event preference (`business.notify_form_response`); fired best-effort AFTER the response commits from both submission cores, ONLY on a genuine new row (never honeypot/reject/`already_responded`); COALESCED into one updating unread row per form via `notification.group_key` + `count` and a partial unique index (count-only/no answer content/no respondent identity — uniform for public/attributed/anonymous); reading the row resets it. Additive migration 0016. In-app bell only (email digest deferred).

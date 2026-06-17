@@ -84,6 +84,9 @@ export const businesses = pgTable("business", {
   notifyAvailabilityReply: boolean("notify_availability_reply")
     .notNull()
     .default(true),
+  // Phase 3a — coalesced "new form response" notifications (count-only, no
+  // answer content or respondent identity). On by default like the others.
+  notifyFormResponse: boolean("notify_form_response").notNull().default(true),
   // Whether the daily IN-APP shift reminder ("you work tomorrow") is created
   // for this business's staff. Business-level (staff have no settings surface);
   // on by default. In-app only — this never sends email.
@@ -822,9 +825,10 @@ export const stockCheckEntries = pgTable(
 );
 
 /**
- * Kind of owner-facing in-app notification. One per in-scope event; the set is
- * fixed (no staff-facing notifications in this build). Each maps to a boolean
- * preference column on `business` (see `notify_*` below) that gates creation.
+ * Kind of owner-facing in-app notification. One per in-scope event. Each maps to
+ * a boolean preference column on `business` (see `notify_*` below) that gates
+ * creation. `form_response` (Phase 3a) is the only COALESCED type — see
+ * `notification.group_key`/`count`.
  */
 export const notificationType = pgEnum("notification_type", [
   "leave_requested",
@@ -832,6 +836,7 @@ export const notificationType = pgEnum("notification_type", [
   "stock_needs_order",
   "cert_expiring",
   "availability_reply",
+  "form_response",
 ]);
 
 /**
@@ -841,6 +846,17 @@ export const notificationType = pgEnum("notification_type", [
  * `business`). `link_path` is where clicking it takes the owner (e.g.
  * `/app/leave`). These are IN ADDITION to the existing emails — never a
  * replacement. NO staff-facing notifications (staff have no persistent session).
+ *
+ * COALESCING (Phase 3a, `form_response`): a busy public form would flood the
+ * bell with one item per response, so form-response notifications COALESCE into
+ * ONE updating unread row per form. `group_key` is the coalescing handle
+ * (`form_response:<formId>`; NULL for every non-coalesced type) and `count` is
+ * how many responses the row represents (default 1). A new response increments
+ * the existing UNREAD row for that group (refreshing `created_at`) or starts a
+ * fresh one; the partial unique index `(business_id, group_key) WHERE group_key
+ * IS NOT NULL AND is_read = false` guarantees at most one active row per group
+ * and is the ON CONFLICT arbiter. Reading the row (the bell marks it read on
+ * navigate) flips `is_read`, so the next response starts a fresh count.
  */
 export const notifications = pgTable(
   "notification",
@@ -854,6 +870,12 @@ export const notifications = pgTable(
     body: text("body"),
     linkPath: text("link_path"),
     isRead: boolean("is_read").notNull().default(false),
+    // Coalescing handle: `form_response:<formId>` for the coalesced
+    // form-response type, NULL for every other (one-shot) notification type.
+    groupKey: text("group_key"),
+    // How many underlying events this (coalesced) row represents. Always 1 for
+    // non-coalesced rows.
+    count: integer("count").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -861,6 +883,13 @@ export const notifications = pgTable(
   (t) => [
     index("notification_business_read_idx").on(t.businessId, t.isRead),
     index("notification_business_created_idx").on(t.businessId, t.createdAt),
+    // At most one ACTIVE (unread) coalesced row per (business, group). The
+    // predicate MUST match the upsert's ON CONFLICT arbiter so Postgres uses
+    // this partial unique index. Non-coalesced rows (group_key NULL) are
+    // excluded, so they never collide.
+    uniqueIndex("notification_unread_group_unique")
+      .on(t.businessId, t.groupKey)
+      .where(sql`${t.groupKey} is not null and ${t.isRead} = false`),
   ],
 );
 

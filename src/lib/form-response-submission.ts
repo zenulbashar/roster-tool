@@ -40,6 +40,12 @@ export async function processPublicSubmission(
   io: {
     verifyToken: (token: string | null) => Promise<boolean>;
     consumeRateLimit: (ipHash: string, slug: string) => Promise<boolean>;
+    // Best-effort, AFTER-COMMIT owner notification (Phase 3a). Fires ONLY on a
+    // genuine new-response success below — never on honeypot/rate-limit/
+    // Turnstile/validation/store-null. Wired by the action; itself swallows
+    // errors, and we guard again here so it can NEVER fail or roll back the
+    // already-committed response (the public path especially must not break).
+    notifyResponse: () => Promise<void>;
   },
 ): Promise<PublicSubmitOutcome> {
   // 1. Honeypot — a populated hidden field means a bot. Drop silently.
@@ -82,6 +88,13 @@ export async function processPublicSubmission(
       status: "rejected",
       message: "This form is no longer accepting responses.",
     };
+  }
+  // 6. A new response row WAS stored → notify (best-effort, after-commit).
+  //    Guarded so a notify failure can never fail/roll back the submit.
+  try {
+    await io.notifyResponse();
+  } catch {
+    // Swallowed: the response is already committed; notification is best-effort.
   }
   return { status: "ok", responseId };
 }

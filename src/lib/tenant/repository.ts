@@ -39,7 +39,7 @@ import {
   formResponseAnswers,
   type FormFieldOption,
 } from "@/lib/db/schema";
-import type { NotificationType } from "@/lib/notifications";
+import { formResponseTitle, type NotificationType } from "@/lib/notifications";
 import type { StaffNotificationType } from "@/lib/staff-notifications";
 import type {
   LeaveType,
@@ -2538,6 +2538,45 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       return row!;
     },
 
+    /**
+     * COALESCED upsert for a new form response (Phase 3a). Either bumps the
+     * form's existing UNREAD notification (count + 1, title refreshed,
+     * `created_at` bumped so it resurfaces as latest, still unread) or inserts a
+     * fresh count=1 row. Race-safe under a public flood via ON CONFLICT against
+     * the partial unique `notification_unread_group_unique` — the arbiter
+     * predicate MUST match that index (`group_key IS NOT NULL AND is_read =
+     * false`) so Postgres uses it. Carries ONLY count + form title + link — no
+     * answer content, no respondent identity. Tenant-scoped (business forced).
+     */
+    async upsertFormResponseNotification(input: {
+      formId: string;
+      formTitle: string;
+    }) {
+      const groupKey = `form_response:${input.formId}`;
+      await database
+        .insert(notifications)
+        .values({
+          businessId,
+          type: "form_response",
+          // Fresh row: exactly one response so far (singular).
+          title: formResponseTitle(1, input.formTitle),
+          linkPath: `/app/forms/${input.formId}/responses`,
+          groupKey,
+          count: 1,
+        })
+        .onConflictDoUpdate({
+          target: [notifications.businessId, notifications.groupKey],
+          targetWhere: sql`${notifications.groupKey} is not null and ${notifications.isRead} = false`,
+          set: {
+            // Existing-row reference: the count BEFORE this response.
+            count: sql`${notifications.count} + 1`,
+            createdAt: new Date(),
+            // The bumped count is always >= 2 here, so always plural.
+            title: sql`(${notifications.count} + 1)::text || ' new responses to ' || ${input.formTitle}`,
+          },
+        });
+    },
+
     /** Recent notifications for the bell/list, newest first. */
     listRecentNotifications(limit = 10) {
       return database
@@ -2598,6 +2637,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         notifyStockNeedsOrder: boolean;
         notifyCertExpiring: boolean;
         notifyAvailabilityReply: boolean;
+        notifyFormResponse: boolean;
       }>,
     ) {
       const [row] = await database
