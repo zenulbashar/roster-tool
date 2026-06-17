@@ -86,3 +86,47 @@ export async function consumeFormSubmission(
   }
   return allowed;
 }
+
+/**
+ * COARSE per-form flood ceiling for ANONYMOUS internal (staff) submissions.
+ *
+ * Anonymous internal responses store NO respondent, so the partial-unique
+ * one-per-staff guard can't bound them and a logged-in staff member could
+ * otherwise spam an anonymous form within their 15-minute PIN proof. This caps
+ * total anonymous submissions per form per window.
+ *
+ * CRITICAL — anonymity: the key is keyed ONLY on the form id
+ * (`internal:<formId>:<window>`), NEVER on any staff identifier. A staff-id key
+ * would be a de-anonymisation vector — anyone with DB read access (the owner)
+ * could recompute hash(staffId+form+window) and time-correlate a bucket with an
+ * anonymous submission. The form-only key reveals only "some anonymous
+ * submission to form X happened in window W", which is already implied by the
+ * response existing.
+ */
+export const INTERNAL_ANON_LIMITS = [
+  { kind: "min", windowMs: 60_000, max: 30 }, // 30 / minute per form
+  { kind: "hour", windowMs: 3_600_000, max: 300 }, // 300 / hour per form
+] as const;
+
+/**
+ * Consume one slot for an ANONYMOUS internal submission to `formId`. Returns
+ * true only if under every per-form ceiling. NO staff identifier is involved.
+ */
+export async function consumeInternalAnonSubmission(
+  formId: string,
+  database: Db = defaultDb,
+  now: number = Date.now(),
+): Promise<boolean> {
+  let allowed = true;
+  for (const limit of INTERNAL_ANON_LIMITS) {
+    const ok = await consumeWindow(
+      database,
+      `internal:${formId}:${limit.kind}`,
+      limit.max,
+      limit.windowMs,
+      now,
+    );
+    if (!ok) allowed = false;
+  }
+  return allowed;
+}
