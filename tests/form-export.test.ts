@@ -30,6 +30,7 @@ function resp(over: Partial<ExportResponse>): ExportResponse {
     submittedAt: over.submittedAt ?? new Date("2026-06-16T01:02:03.000Z"),
     channel: over.channel ?? "public",
     source: over.source ?? null,
+    respondentName: over.respondentName ?? null,
     answers: over.answers ?? [],
   };
 }
@@ -59,36 +60,41 @@ function parseLine(line: string): string[] {
 
 describe("buildResponsesCsv", () => {
   it("emits metadata + live-field columns with values via displayAnswer", () => {
-    const csv = buildResponsesCsv(liveFields, [
-      resp({
-        id: "abc",
-        source: "qr",
-        answers: [
-          ans({
-            fieldId: "f-name",
-            fieldLabel: "Your name",
-            fieldType: "short_text",
-            valueText: "Ada",
-          }),
-          ans({
-            fieldId: "f-size",
-            fieldLabel: "Size",
-            fieldType: "single_select",
-            valueText: "Large",
-          }),
-          ans({
-            fieldId: "f-stars",
-            fieldLabel: "Stars",
-            fieldType: "rating",
-            valueNumber: 5,
-          }),
-        ],
-      }),
-    ]);
+    const csv = buildResponsesCsv(
+      liveFields,
+      [
+        resp({
+          id: "abc",
+          source: "qr",
+          answers: [
+            ans({
+              fieldId: "f-name",
+              fieldLabel: "Your name",
+              fieldType: "short_text",
+              valueText: "Ada",
+            }),
+            ans({
+              fieldId: "f-size",
+              fieldLabel: "Size",
+              fieldType: "single_select",
+              valueText: "Large",
+            }),
+            ans({
+              fieldId: "f-stars",
+              fieldLabel: "Stars",
+              fieldType: "rating",
+              valueNumber: 5,
+            }),
+          ],
+        }),
+      ],
+      false,
+    );
     const lines = csv.split("\n");
     expect(parseLine(lines[0]!)).toEqual([
       "Submitted at",
       "Channel",
+      "Respondent",
       "Source",
       "Response id",
       "Your name",
@@ -98,6 +104,7 @@ describe("buildResponsesCsv", () => {
     expect(parseLine(lines[1]!)).toEqual([
       "2026-06-16T01:02:03.000Z",
       "public",
+      "Public", // respondent label for a public row
       "qr",
       "abc",
       "Ada",
@@ -107,41 +114,49 @@ describe("buildResponsesCsv", () => {
   });
 
   it("leaves a blank cell when a response has no answer for a field", () => {
-    const csv = buildResponsesCsv(liveFields, [
-      resp({
-        answers: [
-          ans({
-            fieldId: "f-name",
-            fieldLabel: "Your name",
-            fieldType: "short_text",
-            valueText: "Bea",
-          }),
-        ],
-      }),
-    ]);
+    const csv = buildResponsesCsv(
+      liveFields,
+      [
+        resp({
+          answers: [
+            ans({
+              fieldId: "f-name",
+              fieldLabel: "Your name",
+              fieldType: "short_text",
+              valueText: "Bea",
+            }),
+          ],
+        }),
+      ],
+      false,
+    );
     const row = parseLine(csv.split("\n")[1]!);
-    expect(row.slice(4)).toEqual(["Bea", "", ""]); // Size + Stars blank
+    expect(row.slice(5)).toEqual(["Bea", "", ""]); // Size + Stars blank
   });
 
   it("appends an orphan column for a since-deleted field (field_id null)", () => {
-    const csv = buildResponsesCsv(liveFields, [
-      resp({
-        answers: [
-          ans({
-            fieldId: "f-name",
-            fieldLabel: "Your name",
-            fieldType: "short_text",
-            valueText: "Cleo",
-          }),
-          ans({
-            fieldId: null,
-            fieldLabel: "Old Q",
-            fieldType: "yes_no",
-            valueText: "Yes",
-          }),
-        ],
-      }),
-    ]);
+    const csv = buildResponsesCsv(
+      liveFields,
+      [
+        resp({
+          answers: [
+            ans({
+              fieldId: "f-name",
+              fieldLabel: "Your name",
+              fieldType: "short_text",
+              valueText: "Cleo",
+            }),
+            ans({
+              fieldId: null,
+              fieldLabel: "Old Q",
+              fieldType: "yes_no",
+              valueText: "Yes",
+            }),
+          ],
+        }),
+      ],
+      false,
+    );
     const lines = csv.split("\n");
     expect(parseLine(lines[0]!)).toContain("Old Q (removed)");
     // orphan column is last; its value is present.
@@ -169,9 +184,10 @@ describe("buildResponsesCsv", () => {
           ],
         }),
       ],
+      false,
     );
     const header = parseLine(csv.split("\n")[0]!);
-    expect(header.slice(4)).toEqual(["Alpha (removed)", "Zeta (removed)"]);
+    expect(header.slice(5)).toEqual(["Alpha (removed)", "Zeta (removed)"]);
   });
 
   it("escapes commas, quotes and newlines (RFC-4180)", () => {
@@ -189,11 +205,14 @@ describe("buildResponsesCsv", () => {
           ],
         }),
       ],
+      false,
     );
     const lines = csv.split("\n");
     // The embedded newline keeps the record quoted across the physical newline.
     expect(csv).toContain('"a, b ""c""\nd"');
-    expect(lines[0]).toBe("Submitted at,Channel,Source,Response id,Comment");
+    expect(lines[0]).toBe(
+      "Submitted at,Channel,Respondent,Source,Response id,Comment",
+    );
   });
 
   it("neutralises formula injection in field values AND the source", () => {
@@ -212,10 +231,11 @@ describe("buildResponsesCsv", () => {
           ],
         }),
       ],
+      false,
     );
     const row = parseLine(csv.split("\n")[1]!);
-    expect(row[2]).toBe("'=cmd()"); // source neutralised
-    expect(row[4]).toBe("'=1+2"); // field value neutralised
+    expect(row[3]).toBe("'=cmd()"); // source neutralised (now after Respondent)
+    expect(row[5]).toBe("'=1+2"); // field value neutralised
   });
 });
 
