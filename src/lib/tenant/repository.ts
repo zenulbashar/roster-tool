@@ -3354,6 +3354,25 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       }));
     },
 
+    /**
+     * Scoped count of a form's INTERNAL responses — drives the editor's "freeze
+     * the anonymity toggle once staff have responded" UI (the authoritative
+     * freeze is in `setFormAllowAnonymous`).
+     */
+    async countInternalResponses(formId: string) {
+      const [row] = await database
+        .select({ count: sql<number>`count(*)::int` })
+        .from(formResponses)
+        .where(
+          and(
+            eq(formResponses.formId, formId),
+            eq(formResponses.businessId, businessId),
+            eq(formResponses.channel, "internal"),
+          ),
+        );
+      return row?.count ?? 0;
+    },
+
     /** Scoped count of a form's responses (for the list/editor count + paging). */
     async countResponses(formId: string) {
       const [row] = await database
