@@ -217,7 +217,9 @@ export const googleDriveClient: DriveClient = {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": `multipart/related; boundary=${boundary}`,
       },
-      body: payload,
+      // Copy into a plain Uint8Array — the global fetch BodyInit type doesn't
+      // accept a Node Buffer directly.
+      body: new Uint8Array(payload),
     });
     if (!res.ok) await driveError(res, "uploadFile");
     const data = (await res.json()) as { id?: string; webViewLink?: string };
