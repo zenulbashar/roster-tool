@@ -246,8 +246,8 @@ export default async function SettingsPage({
           <div className="mt-4 space-y-3">
             {driveConnection.needsReconnect ? (
               <Banner tone="warn">
-                Google Drive needs to be reconnected — your access expired or was
-                revoked. Reconnect to upload documents again.
+                Google Drive needs to be reconnected — your access expired or
+                was revoked. Reconnect to upload documents again.
               </Banner>
             ) : null}
             <p className="text-sm">
@@ -261,10 +261,7 @@ export default async function SettingsPage({
             </p>
             <div className="flex flex-wrap gap-3">
               {driveConnection.needsReconnect ? (
-                <form
-                  action="/api/integrations/google/connect"
-                  method="get"
-                >
+                <form action="/api/integrations/google/connect" method="get">
                   <Button type="submit">Reconnect Google Drive</Button>
                 </form>
               ) : null}
@@ -276,8 +273,8 @@ export default async function SettingsPage({
             </div>
             <p className="text-sm text-[var(--color-muted)]">
               Disconnecting stops new uploads. It does{" "}
-              <span className="font-semibold">not</span> delete documents already
-              in your Drive — those stay yours.
+              <span className="font-semibold">not</span> delete documents
+              already in your Drive — those stay yours.
             </p>
           </div>
         ) : (

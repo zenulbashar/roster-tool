@@ -14,7 +14,9 @@ describe("isTokenExpired", () => {
   const expiry = new Date("2026-01-01T12:00:00Z");
 
   it("is false well before expiry", () => {
-    expect(isTokenExpired(expiry, new Date("2026-01-01T11:00:00Z"))).toBe(false);
+    expect(isTokenExpired(expiry, new Date("2026-01-01T11:00:00Z"))).toBe(
+      false,
+    );
   });
 
   it("is true after expiry", () => {
@@ -27,9 +29,9 @@ describe("isTokenExpired", () => {
   });
 
   it("respects a custom skew of 0", () => {
-    expect(
-      isTokenExpired(expiry, new Date("2026-01-01T11:59:30Z"), 0),
-    ).toBe(false);
+    expect(isTokenExpired(expiry, new Date("2026-01-01T11:59:30Z"), 0)).toBe(
+      false,
+    );
   });
 });
 
@@ -69,9 +71,9 @@ describe("buildGoogleAuthUrl", () => {
 
 describe("validateUpload", () => {
   it("accepts an allowed type within the size limit", () => {
-    expect(
-      validateUpload({ size: 1024, mimeType: "application/pdf" }),
-    ).toEqual({ ok: true });
+    expect(validateUpload({ size: 1024, mimeType: "application/pdf" })).toEqual(
+      { ok: true },
+    );
     for (const mimeType of ALLOWED_MIME_TYPES) {
       expect(validateUpload({ size: 1, mimeType }).ok).toBe(true);
     }

@@ -39,12 +39,7 @@ export async function GET(req: NextRequest) {
   const code = params.get("code");
   const state = params.get("state");
   const expected = req.cookies.get(OAUTH_STATE_COOKIE)?.value ?? null;
-  if (
-    !code ||
-    !state ||
-    !expected ||
-    !safeHashEqual(state, expected)
-  ) {
+  if (!code || !state || !expected || !safeHashEqual(state, expected)) {
     return fail("Couldn’t verify the Google sign-in. Please try again.");
   }
 

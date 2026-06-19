@@ -1257,7 +1257,10 @@ export const staffDocuments = pgTable(
   },
   (t) => [
     index("staff_document_business_idx").on(t.businessId),
-    index("staff_document_business_staff_idx").on(t.businessId, t.staffMemberId),
+    index("staff_document_business_staff_idx").on(
+      t.businessId,
+      t.staffMemberId,
+    ),
   ],
 );
 

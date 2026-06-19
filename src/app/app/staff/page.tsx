@@ -9,16 +9,16 @@ import { hashPin } from "@/lib/pin";
 import { generateToken } from "@/lib/tokens";
 import { logger } from "@/lib/logger";
 import { formatDate } from "@/lib/time";
-import { isDriveConfigured, googleDriveClient } from "@/lib/google-drive/client";
+import {
+  isDriveConfigured,
+  googleDriveClient,
+} from "@/lib/google-drive/client";
 import { DriveReconnectRequired } from "@/lib/google-drive/errors";
 import {
   deleteDocument,
   uploadDocumentToDrive,
 } from "@/lib/google-drive/service";
-import {
-  DOC_TYPES,
-  validateUpload,
-} from "@/lib/google-drive/validation";
+import { DOC_TYPES, validateUpload } from "@/lib/google-drive/validation";
 import { ClearFlashCookie } from "@/components/ClearFlashCookie";
 import {
   Banner,
@@ -210,7 +210,9 @@ export default async function StaffPage({
     const docTypeRaw = String(formData.get("docType") ?? "");
 
     if (!(file instanceof File) || file.size === 0) {
-      redirect(`${PATH}?error=${encodeURIComponent("Choose a file to upload.")}`);
+      redirect(
+        `${PATH}?error=${encodeURIComponent("Choose a file to upload.")}`,
+      );
     }
     const f = file as File;
     const valid = validateUpload({ size: f.size, mimeType: f.type });
@@ -284,9 +286,7 @@ export default async function StaffPage({
       {sp.uploaded ? (
         <Banner tone="success">Document uploaded to your Drive.</Banner>
       ) : null}
-      {sp.docDeleted ? (
-        <Banner tone="success">Document removed.</Banner>
-      ) : null}
+      {sp.docDeleted ? <Banner tone="success">Document removed.</Banner> : null}
 
       <Card className="mt-4">
         <h2 className="text-lg font-semibold">Add someone</h2>
