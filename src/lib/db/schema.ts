@@ -1192,6 +1192,76 @@ export const formRateLimits = pgTable("form_rate_limit", {
 });
 
 /* -------------------------------------------------------------------------- */
+/* Google Drive document storage (Phase 1)                                    */
+/*                                                                            */
+/* The owner connects their OWN Google Drive as an ADDITIONAL authorization   */
+/* (drive.file scope) — this is NOT a sign-in method. Files live in the       */
+/* owner's Drive; we store only a reference. OAuth tokens are stored          */
+/* AES-256-GCM encrypted (src/lib/crypto.ts); we never persist file bytes.    */
+/* -------------------------------------------------------------------------- */
+
+export const googleDriveConnections = pgTable(
+  "google_drive_connection",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // One connection per business (UNIQUE) — the owner's single linked Drive.
+    businessId: uuid("business_id")
+      .notNull()
+      .unique()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    // Which Google account is connected — display only.
+    googleAccountEmail: text("google_account_email").notNull(),
+    // OAuth tokens, AES-256-GCM encrypted at rest. Never sent to the client,
+    // never logged.
+    accessTokenEnc: text("access_token_enc").notNull(),
+    refreshTokenEnc: text("refresh_token_enc").notNull(),
+    tokenExpiry: timestamp("token_expiry", { withTimezone: true }).notNull(),
+    // The Drive folder id the app created to hold this business's documents.
+    rootFolderId: text("root_folder_id"),
+    // Set true when a refresh fails (revoked/invalid_grant); the owner is shown
+    // a "reconnect Google Drive" prompt instead of a crash.
+    needsReconnect: boolean("needs_reconnect").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("google_drive_connection_business_idx").on(t.businessId)],
+);
+
+export const staffDocuments = pgTable(
+  "staff_document",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    staffMemberId: uuid("staff_member_id")
+      .notNull()
+      .references(() => staffMembers.id, { onDelete: "cascade" }),
+    fileName: text("file_name").notNull(),
+    // Optional owner-chosen label (Contract / RSA / ID / Other) — free text.
+    docType: text("doc_type"),
+    // The file's identity in the owner's Drive — we store only the reference.
+    driveFileId: text("drive_file_id").notNull(),
+    driveWebLink: text("drive_web_link").notNull(),
+    mimeType: text("mime_type").notNull(),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("staff_document_business_idx").on(t.businessId),
+    index("staff_document_business_staff_idx").on(t.businessId, t.staffMemberId),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
 /* Relations (for relational queries)                                         */
 /* -------------------------------------------------------------------------- */
 
