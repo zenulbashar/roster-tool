@@ -41,6 +41,24 @@ const baseEnvSchema = z.object({
   // Cloudflare's documented always-pass test keys.
   TURNSTILE_SECRET_KEY: z.string().optional(),
   NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.string().optional(),
+
+  // Google Drive document storage (owner connects their OWN Drive; this is an
+  // ADDITIONAL authorization, NOT a sign-in method — owner Auth.js login is
+  // untouched). All four are OPTIONAL here so the app always boots; the connect
+  // flow FAILS CLOSED (refuses to start, shows the owner a clear message) when
+  // any are missing, so an OAuth token can never be written without encryption.
+  //  - GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET: the Google Cloud OAuth app.
+  //  - GOOGLE_OAUTH_REDIRECT_URI: must EXACTLY match an authorized redirect URI
+  //    in the Google Cloud console, e.g.
+  //    https://roster.zaleit.com.au/api/integrations/google/callback
+  //  - TOKEN_ENCRYPTION_KEY: base64 of 32 random bytes, used to AES-256-GCM
+  //    encrypt the stored OAuth tokens at rest. Generate with:
+  //      node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+  //    The connect flow refuses to store a token if this is unset/invalid.
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_OAUTH_REDIRECT_URI: z.string().url().optional(),
+  TOKEN_ENCRYPTION_KEY: z.string().optional(),
 });
 
 const envSchema = baseEnvSchema.superRefine((val, ctx) => {

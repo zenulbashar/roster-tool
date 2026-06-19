@@ -61,7 +61,12 @@ staff/owner-set, never auto-computed from a threshold — a possible future
 option), and **object storage** (inventory CSV is pasted text / parsed in
 memory, no file store),
 free-text reply parsing, billing, native apps,
-continuous/background location tracking. If a request drifts here, flag it
+continuous/background location tracking, and — for the Google Drive document
+feature (Phase 1, built) — **OneDrive, Dropbox, and per-employee
+onboarding/offboarding checklists** (those are later, separate phases), any
+**broader-than-`drive.file` Drive access**, using the Google connection as a
+**login method**, and **storing file bytes in the app's own DB/storage** (Drive
+is the home; the app holds only a reference). If a request drifts here, flag it
 rather than silently building it.
 
 Note: clock-in/timesheets was added after the original MVP (time clocking used
@@ -466,6 +471,69 @@ hmac`, AUTH_SECRET-signed, 15 min — `src/lib/notices-verification.ts`,
     `supplier.last_order_reminder_date`** — set to the delivery date after a
     successful send, so a re-run the same day is a no-op and the next cycle's
     different date re-arms it. Owner-less businesses are skipped.
+- **Google Drive document storage (Phase 1 of a phased feature)**: an owner
+  connects their OWN Google Drive and uploads documents (contracts, RSA, ID)
+  that are stored in THEIR Drive and attached to a staff member. **The app
+  stores only a REFERENCE (Drive file id + web link) — never the file bytes, in
+  the DB or anywhere else, and never logs file content.** Later phases (OneDrive,
+  Dropbox, per-employee onboarding/offboarding checklists) are **separate, not
+  built here**.
+  - **Separate from sign-in.** The owner's Auth.js email-magic-link login is
+    UNTOUCHED. The Google connection is an ADDITIONAL OAuth authorization the
+    owner grants so the app can store files in their Drive — it is NOT a login
+    method and must never become one.
+  - **`drive.file` scope ONLY** (`https://www.googleapis.com/auth/drive.file`):
+    the app can only see/manage files IT creates, never the owner's other Drive
+    files. No broader Drive scope is ever requested. The connected Google account
+    email (display only) is read via Drive's `about.get` (works under drive.file)
+    — we do NOT add `email`/`openid` scopes.
+  - **OAuth flow** (owner-session-gated, per business): `GET
+/api/integrations/google/connect` mints a CSRF `state` nonce (short-lived
+    httpOnly cookie) and redirects to Google's consent (`access_type=offline` +
+    `prompt=consent` so a refresh token is always returned). The callback
+    (`/api/integrations/google/callback`) derives `businessId` from the OWNER
+    SESSION (never from `state`/query), verifies the state cookie, exchanges the
+    code, stores tokens, records the email and creates a per-business "Roster
+    Documents" Drive folder (reused on reconnect). Every failure redirects to
+    Settings with a friendly message — it never crashes. The client (Settings
+    card) offers Connect / Reconnect (on `needs_reconnect`) / Disconnect.
+  - **Tokens are encrypted at rest with AES-256-GCM** (`src/lib/crypto.ts`;
+    versioned `v1.<iv>.<tag>.<ciphertext>`, fresh 96-bit IV, auth-tag verified on
+    decrypt) keyed by `TOKEN_ENCRYPTION_KEY` (base64 of 32 bytes). The app
+    otherwise only HASHES secrets, so this reversible mechanism was added for
+    this feature. **FAIL CLOSED**: `isDriveConfigured()` gates the connect flow
+    on the OAuth env vars AND a valid key, so a token is NEVER stored in
+    plaintext; tokens are decrypted only server-side, immediately before a Drive
+    call, and are never returned to the client or logged.
+  - **Token refresh / revocation** (`src/lib/google-drive/service.ts`):
+    `ensureFreshAccessToken` refreshes when `isTokenExpired` (60s skew) and
+    persists the new encrypted access token before any Drive call. A
+    revoked/`invalid_grant` refresh sets `google_drive_connection.needs_reconnect`
+    and throws the typed `DriveReconnectRequired`; the UI surfaces a "reconnect
+    Google Drive" prompt — it never crashes the request.
+  - **Disconnect ≠ delete.** Disconnecting best-effort revokes the grant and
+    forgets the stored tokens (stops further uploads); it does NOT delete files
+    already in the owner's Drive — they're the owner's. The UI says so.
+  - **Upload-through-server** (Staff page, per staff member): a multipart server
+    action validates size (≤ **10 MB**) + an allow-list of common doc/image mime
+    types (`validateUpload`, pure) BEFORE any Drive call, confirms the staff
+    member is this business's, then streams the bytes into the business's Drive
+    folder and stores a `staff_document` row with the returned Drive file id +
+    web link. The next-config `serverActions.bodySizeLimit` is raised to 12 MB.
+    No upload control is shown unless a usable connection exists (else a "Connect
+    Google Drive first" prompt).
+  - **View / delete**: per staff member the card lists documents (name → Drive
+    link, type, date). **Delete removes the app's reference AND deletes the file
+    the app created in Drive** (the app created it), best-effort — a
+    reconnect-needed/Drive error still removes our reference so no dangling row
+    remains. The UI states the Drive file is removed too.
+  - **The Drive client is server-side only and mockable**: a `DriveClient`
+    interface (`src/lib/google-drive/client.ts`) wraps the OAuth + Drive v3 REST
+    calls (google-auth-library for token exchange/refresh, `fetch` for folder/
+    upload/delete/about/revoke) so the whole flow is unit-tested against a fake
+    Drive (`tests/google-drive-flow.test.ts`). Pure helpers
+    (`isTokenExpired`, `buildGoogleAuthUrl`, `validateUpload`, the AES helpers)
+    are unit-tested in `tests/google-drive-helpers.test.ts` + `tests/crypto.test.ts`.
 
 ## Non-negotiable conventions
 
@@ -565,8 +633,9 @@ connection, the worker uses the direct connection (pg-boss needs session mode).
 `roster_period`, `shift`, `availability_request`, `availability_response`,
 `roster_assignment`, `published_roster`, `timesheet_entry`, `clock_photo`,
 `leave_request`, `shift_offer`, `staff_certification`, `supplier`, `item`,
-`stock_check_entry`, `notification`, `staff_notification`, `form`, `form_field`.
-All domain tables are business-scoped.
+`stock_check_entry`, `notification`, `staff_notification`, `form`, `form_field`,
+`google_drive_connection`, `staff_document`. All domain tables are
+business-scoped.
 
 Notable columns / conventions:
 
@@ -873,6 +942,26 @@ charset=utf-8` + attachment with a slugified filename. **Buffered, newest-10k
     attributed staff was deleted — derived off the form's frozen `allow_anonymous`,
     not off the null). Internal responses flow into the existing 1c summaries and
     CSV with no extra work (the SQL aggregation is channel-agnostic).
+- `google_drive_connection` — one Google Drive link per business (**UNIQUE
+  `business_id`**, cascade). `google_account_email` (display only); `access_token_enc`
+  / `refresh_token_enc` (AES-256-GCM ciphertext — NEVER plaintext, never sent to
+  the client, never logged); `token_expiry` (timestamptz, drives the refresh
+  check); `root_folder_id` (the app-created "Roster Documents" folder, nullable
+  until first folder create); `needs_reconnect` (NOT NULL default false — set when
+  a refresh hits `invalid_grant`, surfaced as a reconnect prompt, cleared on a
+  successful connect/refresh); `created_at`/`updated_at`. Written via the
+  tenant-scoped `upsertDriveConnection`/`updateDriveAccessToken`/
+  `markDriveNeedsReconnect`/`setDriveRootFolder`/`deleteDriveConnection`. The
+  owner Auth.js login is SEPARATE and untouched — this is additive authorization
+  only. **drive.file scope only; files live in the owner's Drive.**
+- `staff_document` — a per-staff REFERENCE to a file in the owner's Drive (the
+  app never stores the bytes). NOT-NULL `business_id` (cascade) + `staff_member_id`
+  (cascade); `file_name`; `doc_type` (nullable free text — Contract/RSA/ID/Other);
+  `drive_file_id` + `drive_web_link` (the file's identity + view URL in Drive);
+  `mime_type`; `uploaded_at`/`created_at`. Indexed on `business_id` and
+  `(business_id, staff_member_id)`. Created by `uploadDocumentToDrive` after the
+  bytes are streamed to Drive; `deleteDocument` removes this row AND (best-effort)
+  the Drive file the app created.
 
 ## Milestones
 
@@ -899,3 +988,4 @@ charset=utf-8` + attachment with a slugified filename. **Buffered, newest-10k
 - [x] M21 — Form builder Phase 1c (owner responses view + delete guard): owner-scoped `/app/forms/[id]/responses` with SQL-aggregated per-field summaries (rating average+distribution, select/yes_no tallies, recent text) shaped by the pure `form-report.ts` (snapshot grouping, `displayAnswer`), a paginated `<details>` response list (deterministic order), response counts on the list/editor, and a `deleteForm` confirmed-flag guard so responses can't be wiped accidentally. Read-only; no migration; no export.
 - [x] M22 — Form builder Phase 2 (staff / internal channel): owner per-form `internal_enabled` + `allow_anonymous` controls; staff fill internal forms from the PIN-gated `/me/forms/[id]` portal (respondent server-resolved from the /me session, never request input; reuses `validatePublicSubmission`, no Turnstile/honeypot); attributed (`respondent_staff_id`, one-per-staff via partial-unique ON CONFLICT) vs anonymous (null respondent, coarse per-form rate limit keyed on form id only); field-lock broadened to published OR internal_enabled; responses view + CSV show the respondent (Public/Anonymous/name/Former staff). Additive migration 0015. No change to the public `/f/[slug]` surface.
 - [x] M23 — Form builder Phase 3a (new-response owner notifications): a sixth `notification_type` `form_response` reusing the existing bell + per-event preference (`business.notify_form_response`); fired best-effort AFTER the response commits from both submission cores, ONLY on a genuine new row (never honeypot/reject/`already_responded`); COALESCED into one updating unread row per form via `notification.group_key` + `count` and a partial unique index (count-only/no answer content/no respondent identity — uniform for public/attributed/anonymous); reading the row resets it. Additive migration 0016. In-app bell only (email digest deferred).
+- [x] M24 — Google Drive document storage (Phase 1 of 4): owners connect their OWN Google Drive (drive.file scope only, additive OAuth authorization — NOT a login; Auth.js untouched) and upload per-staff documents stored in their Drive with the app holding only a reference. AES-256-GCM token encryption (`TOKEN_ENCRYPTION_KEY`, fail-closed), CSRF-state OAuth connect/callback (businessId from session), token refresh + revoke→reconnect handling, 10 MB + mime-allow-list upload-through-server (bytes never persisted/logged), document list + delete (also deletes the Drive file the app created), disconnect ≠ delete. Mockable `DriveClient` (google-auth-library + Drive v3 REST). Additive migration 0017 (`google_drive_connection`, `staff_document`). **Later phases (separate PRs): OneDrive, Dropbox, per-employee onboarding/offboarding checklists.**
