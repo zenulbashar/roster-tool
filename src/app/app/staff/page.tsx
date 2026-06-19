@@ -1,11 +1,24 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
-import { ownerRepo } from "@/lib/auth/context";
+import { ownerRepo, requireOwner } from "@/lib/auth/context";
+import { createTenantRepo } from "@/lib/tenant/repository";
 import { env } from "@/lib/env";
 import { staffSchema, pinSchema, payRateSchema } from "@/lib/validation";
 import { hashPin } from "@/lib/pin";
 import { generateToken } from "@/lib/tokens";
+import { logger } from "@/lib/logger";
+import { formatDate } from "@/lib/time";
+import { isDriveConfigured, googleDriveClient } from "@/lib/google-drive/client";
+import { DriveReconnectRequired } from "@/lib/google-drive/errors";
+import {
+  deleteDocument,
+  uploadDocumentToDrive,
+} from "@/lib/google-drive/service";
+import {
+  DOC_TYPES,
+  validateUpload,
+} from "@/lib/google-drive/validation";
 import { ClearFlashCookie } from "@/components/ClearFlashCookie";
 import {
   Banner,
@@ -42,11 +55,28 @@ export default async function StaffPage({
     added?: string;
     pin?: string;
     rate?: string;
+    uploaded?: string;
+    docDeleted?: string;
   }>;
 }) {
   const sp = await searchParams;
   const repo = await ownerRepo();
   const staff = await repo.listStaff();
+  const business = await repo.getBusiness();
+  const timeZone = business?.timezone ?? undefined;
+
+  // Google Drive document state. Documents are grouped by staff member; uploads
+  // are only offered when a usable connection exists.
+  const driveConnection = await repo.getDriveConnection();
+  const driveReady = isDriveConfigured() && driveConnection !== null;
+  const driveNeedsReconnect = driveConnection?.needsReconnect ?? false;
+  const allDocs = driveConnection ? await repo.listAllStaffDocuments() : [];
+  const docsByStaff = new Map<string, typeof allDocs>();
+  for (const d of allDocs) {
+    const list = docsByStaff.get(d.staffMemberId) ?? [];
+    list.push(d);
+    docsByStaff.set(d.staffMemberId, list);
+  }
 
   // A just-generated notices link, shown exactly once (we store only the hash).
   const cookieStore = await cookies();
@@ -171,6 +201,75 @@ export default async function StaffPage({
     redirect(`${PATH}?rate=1`);
   }
 
+  async function uploadDocument(formData: FormData) {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const id = String(formData.get("id"));
+    const file = formData.get("file");
+    const docTypeRaw = String(formData.get("docType") ?? "");
+
+    if (!(file instanceof File) || file.size === 0) {
+      redirect(`${PATH}?error=${encodeURIComponent("Choose a file to upload.")}`);
+    }
+    const f = file as File;
+    const valid = validateUpload({ size: f.size, mimeType: f.type });
+    if (!valid.ok) {
+      redirect(`${PATH}?error=${encodeURIComponent(valid.message)}`);
+    }
+    // Confirm the staff member is this business's before doing any Drive work.
+    const member = await repo.getStaff(id);
+    if (!member) {
+      redirect(`${PATH}?error=${encodeURIComponent("Staff member not found")}`);
+    }
+    const docType = (DOC_TYPES as readonly string[]).includes(docTypeRaw)
+      ? docTypeRaw
+      : null;
+    // Read the bytes to forward to Drive. They are NEVER persisted in our DB
+    // and never logged.
+    const body = Buffer.from(await f.arrayBuffer());
+    try {
+      await uploadDocumentToDrive({
+        repo,
+        client: googleDriveClient,
+        staffMemberId: id,
+        fileName: f.name.slice(0, 255) || "document",
+        docType,
+        mimeType: f.type,
+        body,
+      });
+    } catch (err) {
+      if (err instanceof DriveReconnectRequired) {
+        redirect(
+          `${PATH}?error=${encodeURIComponent(
+            "Reconnect Google Drive in Settings to upload documents.",
+          )}`,
+        );
+      }
+      logger.error({ err }, "Staff document upload failed");
+      redirect(
+        `${PATH}?error=${encodeURIComponent("Couldn’t upload the document. Please try again.")}`,
+      );
+    }
+    revalidatePath(PATH);
+    redirect(`${PATH}?uploaded=1`);
+  }
+
+  async function deleteDocumentAction(formData: FormData) {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const documentId = String(formData.get("documentId"));
+    // Scoped delete: a foreign document id resolves to nothing and is a no-op.
+    await deleteDocument({
+      repo,
+      client: googleDriveClient,
+      documentId,
+    });
+    revalidatePath(PATH);
+    redirect(`${PATH}?docDeleted=1`);
+  }
+
   return (
     <>
       <PageHeader
@@ -182,6 +281,12 @@ export default async function StaffPage({
       {sp.added ? <Banner tone="success">Staff member added.</Banner> : null}
       {sp.pin ? <Banner tone="success">PIN updated.</Banner> : null}
       {sp.rate ? <Banner tone="success">Pay rate saved.</Banner> : null}
+      {sp.uploaded ? (
+        <Banner tone="success">Document uploaded to your Drive.</Banner>
+      ) : null}
+      {sp.docDeleted ? (
+        <Banner tone="success">Document removed.</Banner>
+      ) : null}
 
       <Card className="mt-4">
         <h2 className="text-lg font-semibold">Add someone</h2>
@@ -376,6 +481,126 @@ export default async function StaffPage({
                         decisions and shift reminders — it opens with their PIN.
                         A new link replaces the old one.
                       </p>
+                    </div>
+
+                    <div className="mt-4 border-t border-[var(--color-line)] pt-3">
+                      <span className="block text-sm font-semibold">
+                        Documents
+                      </span>
+                      {!driveReady ? (
+                        <p className="mt-1 text-xs text-[var(--color-muted)]">
+                          Connect Google Drive in{" "}
+                          <a
+                            href="/app/settings"
+                            className="text-[var(--color-brand)] underline underline-offset-2"
+                          >
+                            Settings
+                          </a>{" "}
+                          to store {s.name}&apos;s documents in your own Drive.
+                        </p>
+                      ) : driveNeedsReconnect ? (
+                        <p className="mt-1 text-xs text-[var(--color-muted)]">
+                          Google Drive needs reconnecting — fix it in{" "}
+                          <a
+                            href="/app/settings"
+                            className="text-[var(--color-brand)] underline underline-offset-2"
+                          >
+                            Settings
+                          </a>{" "}
+                          to upload documents.
+                        </p>
+                      ) : (
+                        <>
+                          {(docsByStaff.get(s.id) ?? []).length > 0 ? (
+                            <ul className="mt-2 space-y-1">
+                              {(docsByStaff.get(s.id) ?? []).map((d) => (
+                                <li
+                                  key={d.id}
+                                  className="flex flex-wrap items-center gap-2 text-sm"
+                                >
+                                  <a
+                                    href={d.driveWebLink}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-[var(--color-brand)] underline underline-offset-2"
+                                  >
+                                    {d.fileName}
+                                  </a>
+                                  {d.docType ? (
+                                    <span className="rounded bg-[var(--color-canvas)] px-2 py-0.5 text-xs font-medium text-[var(--color-muted)]">
+                                      {d.docType}
+                                    </span>
+                                  ) : null}
+                                  <span className="text-xs text-[var(--color-muted)]">
+                                    {formatDate(d.uploadedAt, timeZone)}
+                                  </span>
+                                  <form action={deleteDocumentAction}>
+                                    <input
+                                      type="hidden"
+                                      name="documentId"
+                                      value={d.id}
+                                    />
+                                    <button
+                                      type="submit"
+                                      className="text-xs font-medium text-[var(--color-brand)] underline underline-offset-2"
+                                    >
+                                      Delete
+                                    </button>
+                                  </form>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="mt-1 text-xs text-[var(--color-muted)]">
+                              No documents yet.
+                            </p>
+                          )}
+
+                          <form
+                            action={uploadDocument}
+                            encType="multipart/form-data"
+                            className="mt-3 flex flex-wrap items-end gap-2"
+                          >
+                            <input type="hidden" name="id" value={s.id} />
+                            <label className="block">
+                              <span className="mb-1 block text-sm font-semibold">
+                                Add a document
+                              </span>
+                              <input
+                                type="file"
+                                name="file"
+                                required
+                                aria-label={`Upload a document for ${s.name}`}
+                                className="block max-w-full text-sm"
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="mb-1 block text-sm font-semibold">
+                                Type
+                              </span>
+                              <select
+                                name="docType"
+                                defaultValue="Other"
+                                aria-label={`Document type for ${s.name}`}
+                                className="rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 text-sm"
+                              >
+                                {DOC_TYPES.map((t) => (
+                                  <option key={t} value={t}>
+                                    {t}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <Button type="submit" variant="secondary">
+                              Upload
+                            </Button>
+                          </form>
+                          <p className="mt-1 text-xs text-[var(--color-muted)]">
+                            Stored in your Google Drive (max 10 MB). Deleting
+                            here also removes the file from your Drive.
+                          </p>
+                        </>
+                      )}
                     </div>
                   </div>
                   <form action={toggleActive}>
