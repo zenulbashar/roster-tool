@@ -3650,6 +3650,15 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .orderBy(desc(staffDocuments.uploadedAt));
     },
 
+    /** Every document across the business — for grouping on the Staff page. */
+    listAllStaffDocuments() {
+      return database
+        .select()
+        .from(staffDocuments)
+        .where(eq(staffDocuments.businessId, businessId))
+        .orderBy(desc(staffDocuments.uploadedAt));
+    },
+
     getStaffDocument(id: string) {
       return first(
         database
