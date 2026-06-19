@@ -29,6 +29,9 @@ jobs:
       APP_URL: http://localhost:3000
       EMAIL_TRANSPORT: smtp
       NODE_ENV: test
+      # Test-only key so the Google Drive flow tests exercise real AES-256-GCM
+      # encryption of OAuth tokens. NOT a production secret.
+      TOKEN_ENCRYPTION_KEY: cm9zdGVyLWNpLXRlc3QtZW5jcnlwdGlvbi1rZXktMzI=
 
     steps:
       - uses: actions/checkout@v4

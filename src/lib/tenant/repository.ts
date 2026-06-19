@@ -37,6 +37,8 @@ import {
   formFields,
   formResponses,
   formResponseAnswers,
+  googleDriveConnections,
+  staffDocuments,
   type FormFieldOption,
 } from "@/lib/db/schema";
 import { formResponseTitle, type NotificationType } from "@/lib/notifications";
@@ -3544,6 +3546,150 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .from(ranked)
         .where(lte(ranked.rn, perField))
         .orderBy(desc(ranked.submittedAt));
+    },
+
+    /* ---------------------------------------------------------------------- */
+    /* Google Drive document storage                                          */
+    /*                                                                        */
+    /* The connection (one per business) and per-staff document references.   */
+    /* Tokens are stored already-encrypted by the caller; this layer never    */
+    /* encrypts/decrypts, just persists. Every method is business-scoped.     */
+    /* ---------------------------------------------------------------------- */
+
+    getDriveConnection() {
+      return first(
+        database
+          .select()
+          .from(googleDriveConnections)
+          .where(eq(googleDriveConnections.businessId, businessId)),
+      );
+    },
+
+    /** Create or replace this business's single Drive connection. */
+    async upsertDriveConnection(input: {
+      googleAccountEmail: string;
+      accessTokenEnc: string;
+      refreshTokenEnc: string;
+      tokenExpiry: Date;
+      rootFolderId: string | null;
+    }) {
+      const [row] = await database
+        .insert(googleDriveConnections)
+        .values({ ...input, businessId, needsReconnect: false })
+        .onConflictDoUpdate({
+          target: googleDriveConnections.businessId,
+          set: {
+            googleAccountEmail: input.googleAccountEmail,
+            accessTokenEnc: input.accessTokenEnc,
+            refreshTokenEnc: input.refreshTokenEnc,
+            tokenExpiry: input.tokenExpiry,
+            rootFolderId: input.rootFolderId,
+            needsReconnect: false,
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+      return row!;
+    },
+
+    /** Persist a freshly refreshed access token (clears needs_reconnect). */
+    async updateDriveAccessToken(input: {
+      accessTokenEnc: string;
+      tokenExpiry: Date;
+    }) {
+      const [row] = await database
+        .update(googleDriveConnections)
+        .set({
+          accessTokenEnc: input.accessTokenEnc,
+          tokenExpiry: input.tokenExpiry,
+          needsReconnect: false,
+          updatedAt: new Date(),
+        })
+        .where(eq(googleDriveConnections.businessId, businessId))
+        .returning();
+      return row ?? null;
+    },
+
+    /** Record that the stored refresh token no longer works. */
+    async markDriveNeedsReconnect() {
+      const [row] = await database
+        .update(googleDriveConnections)
+        .set({ needsReconnect: true, updatedAt: new Date() })
+        .where(eq(googleDriveConnections.businessId, businessId))
+        .returning();
+      return row ?? null;
+    },
+
+    /** Save the app-created root folder id after first connect. */
+    async setDriveRootFolder(rootFolderId: string) {
+      const [row] = await database
+        .update(googleDriveConnections)
+        .set({ rootFolderId, updatedAt: new Date() })
+        .where(eq(googleDriveConnections.businessId, businessId))
+        .returning();
+      return row ?? null;
+    },
+
+    /** Disconnect: forget the tokens entirely (files in Drive are untouched). */
+    async deleteDriveConnection() {
+      await database
+        .delete(googleDriveConnections)
+        .where(eq(googleDriveConnections.businessId, businessId));
+    },
+
+    listStaffDocuments(staffMemberId: string) {
+      return database
+        .select()
+        .from(staffDocuments)
+        .where(
+          and(
+            eq(staffDocuments.businessId, businessId),
+            eq(staffDocuments.staffMemberId, staffMemberId),
+          ),
+        )
+        .orderBy(desc(staffDocuments.uploadedAt));
+    },
+
+    getStaffDocument(id: string) {
+      return first(
+        database
+          .select()
+          .from(staffDocuments)
+          .where(
+            and(
+              eq(staffDocuments.id, id),
+              eq(staffDocuments.businessId, businessId),
+            ),
+          ),
+      );
+    },
+
+    async addStaffDocument(input: {
+      staffMemberId: string;
+      fileName: string;
+      docType: string | null;
+      driveFileId: string;
+      driveWebLink: string;
+      mimeType: string;
+    }) {
+      const [row] = await database
+        .insert(staffDocuments)
+        .values({ ...input, businessId })
+        .returning();
+      return row!;
+    },
+
+    async deleteStaffDocument(id: string) {
+      const [row] = await database
+        .delete(staffDocuments)
+        .where(
+          and(
+            eq(staffDocuments.id, id),
+            eq(staffDocuments.businessId, businessId),
+          ),
+        )
+        .returning();
+      return row ?? null;
     },
   };
 }
