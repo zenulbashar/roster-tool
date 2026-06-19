@@ -159,9 +159,7 @@ describe("google drive connection + documents", () => {
   it("refreshes an expired access token before uploading + persists it", async () => {
     // Force the stored token to look expired.
     await db
-      .update(
-        (await import("@/lib/db/schema")).googleDriveConnections,
-      )
+      .update((await import("@/lib/db/schema")).googleDriveConnections)
       .set({ tokenExpiry: new Date(Date.now() - 60_000) })
       .where(
         eq(

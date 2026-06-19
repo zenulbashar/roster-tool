@@ -55,9 +55,9 @@ export interface DriveClient {
 export function isDriveConfigured(): boolean {
   return Boolean(
     env.GOOGLE_CLIENT_ID &&
-      env.GOOGLE_CLIENT_SECRET &&
-      env.GOOGLE_OAUTH_REDIRECT_URI &&
-      isEncryptionConfigured(),
+    env.GOOGLE_CLIENT_SECRET &&
+    env.GOOGLE_OAUTH_REDIRECT_URI &&
+    isEncryptionConfigured(),
   );
 }
 

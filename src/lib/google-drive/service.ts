@@ -98,8 +98,16 @@ export async function uploadDocumentToDrive(opts: {
   body: Buffer;
   now?: Date;
 }) {
-  const { repo, client, staffMemberId, fileName, docType, mimeType, body, now } =
-    opts;
+  const {
+    repo,
+    client,
+    staffMemberId,
+    fileName,
+    docType,
+    mimeType,
+    body,
+    now,
+  } = opts;
   const connection = await repo.getDriveConnection();
   if (!connection || connection.needsReconnect) {
     throw new DriveReconnectRequired();
