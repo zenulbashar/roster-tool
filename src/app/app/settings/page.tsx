@@ -16,6 +16,12 @@ import {
   NOTIFICATION_PREFS,
   type NotificationType,
 } from "@/lib/notifications";
+import { decryptSecret } from "@/lib/crypto";
+import {
+  googleDriveClient,
+  isDriveConfigured,
+} from "@/lib/google-drive/client";
+import { logger } from "@/lib/logger";
 import { AccountIdentity } from "@/components/AccountIdentity";
 import { Banner, Button, Card, PageHeader } from "@/components/ui";
 import { ClearFlashCookie } from "@/components/ClearFlashCookie";
@@ -28,7 +34,13 @@ const CLOCK_LINK_COOKIE = "personal_clock_link_once";
 export default async function SettingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; locationSaved?: string }>;
+  searchParams: Promise<{
+    error?: string;
+    locationSaved?: string;
+    driveConnected?: string;
+    driveDisconnected?: string;
+    driveError?: string;
+  }>;
 }) {
   const sp = await searchParams;
   // One session read for both the account email and the tenant scope (the
@@ -52,6 +64,11 @@ export default async function SettingsPage({
     : null;
   const hasClockLink = Boolean(business.personalClockTokenHash);
   const locationSet = business.latitude !== null && business.longitude !== null;
+
+  // Google Drive document storage. The connect/callback live in API routes; the
+  // owner manages the connection here.
+  const driveConfigured = isDriveConfigured();
+  const driveConnection = await repo.getDriveConnection();
 
   async function togglePhoto(formData: FormData) {
     "use server";
@@ -157,6 +174,25 @@ export default async function SettingsPage({
     redirect(PATH);
   }
 
+  async function disconnectDrive() {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const conn = await repo.getDriveConnection();
+    if (conn) {
+      // Best-effort: tell Google to drop the grant. Files the owner already has
+      // in their Drive are theirs and are left untouched.
+      try {
+        await googleDriveClient.revoke(decryptSecret(conn.refreshTokenEnc));
+      } catch (err) {
+        logger.warn({ err }, "Drive token revoke on disconnect failed");
+      }
+      await repo.deleteDriveConnection();
+    }
+    revalidatePath(PATH);
+    redirect(`${PATH}?driveDisconnected=1`);
+  }
+
   return (
     <>
       <PageHeader
@@ -168,6 +204,15 @@ export default async function SettingsPage({
       {sp.locationSaved ? (
         <Banner tone="success">Shop location saved.</Banner>
       ) : null}
+      {sp.driveConnected ? (
+        <Banner tone="success">Google Drive connected.</Banner>
+      ) : null}
+      {sp.driveDisconnected ? (
+        <Banner tone="success">
+          Google Drive disconnected. Files already in your Drive are untouched.
+        </Banner>
+      ) : null}
+      {sp.driveError ? <Banner tone="warn">{sp.driveError}</Banner> : null}
 
       <Card className="mt-4">
         <h2 className="text-lg font-semibold">Account</h2>
@@ -178,6 +223,72 @@ export default async function SettingsPage({
           This is the email your sign-in links go to. It can&apos;t be changed
           in the app yet.
         </p>
+      </Card>
+
+      <Card className="mt-6">
+        <h2 className="text-lg font-semibold">Google Drive documents</h2>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          Connect your Google Drive to store staff documents (contracts, RSA,
+          ID) in your own Drive. Files are saved to a “Roster Documents” folder
+          in your Drive — we only keep a link to them, never the file itself.
+          This is a separate permission from how you sign in; it doesn&apos;t
+          change your login.
+        </p>
+
+        {!driveConfigured ? (
+          <p className="mt-3">
+            <Banner tone="info">
+              Google Drive isn’t set up on this server yet. Once your
+              administrator configures it, you’ll be able to connect here.
+            </Banner>
+          </p>
+        ) : driveConnection ? (
+          <div className="mt-4 space-y-3">
+            {driveConnection.needsReconnect ? (
+              <Banner tone="warn">
+                Google Drive needs to be reconnected — your access expired or was
+                revoked. Reconnect to upload documents again.
+              </Banner>
+            ) : null}
+            <p className="text-sm">
+              Connected as{" "}
+              <span className="font-semibold">
+                {driveConnection.googleAccountEmail}
+              </span>
+              {driveConnection.rootFolderId ? (
+                <> · documents save to your “Roster Documents” folder.</>
+              ) : null}
+            </p>
+            <div className="flex flex-wrap gap-3">
+              {driveConnection.needsReconnect ? (
+                <form
+                  action="/api/integrations/google/connect"
+                  method="get"
+                >
+                  <Button type="submit">Reconnect Google Drive</Button>
+                </form>
+              ) : null}
+              <form action={disconnectDrive}>
+                <Button type="submit" variant="secondary">
+                  Disconnect
+                </Button>
+              </form>
+            </div>
+            <p className="text-sm text-[var(--color-muted)]">
+              Disconnecting stops new uploads. It does{" "}
+              <span className="font-semibold">not</span> delete documents already
+              in your Drive — those stay yours.
+            </p>
+          </div>
+        ) : (
+          <form
+            action="/api/integrations/google/connect"
+            method="get"
+            className="mt-4"
+          >
+            <Button type="submit">Connect Google Drive</Button>
+          </form>
+        )}
       </Card>
 
       <Card className="mt-6">
