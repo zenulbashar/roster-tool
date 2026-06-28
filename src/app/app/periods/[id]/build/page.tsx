@@ -10,7 +10,8 @@ import { buildDraft, draftSummary } from "@/lib/draft";
 import { makeOnLeaveLookup } from "@/lib/leave";
 import { formatDateOnly, formatTimeOnly } from "@/lib/time";
 import { periodStatusLabel, rosterBuildVerb } from "@/lib/labels";
-import { Banner, Button, Card, PageHeader } from "@/components/ui";
+import { Badge, Banner, Button, Card, PageHeader } from "@/components/ui";
+import { shiftColorScheme } from "@/lib/shift-colors";
 
 type Availability = "yes" | "no" | "unknown";
 
@@ -277,7 +278,12 @@ export default async function BuildRosterPage({
     <>
       <PageHeader
         title={`${rosterBuildVerb(period.status)}: ${period.label}`}
-        subtitle={`${formatDateOnly(period.startDate)} – ${formatDateOnly(period.endDate)} · ${periodStatusLabel(period.status)}`}
+        subtitle={`${formatDateOnly(period.startDate)} – ${formatDateOnly(period.endDate)}`}
+        action={
+          <Badge tone={period.status === "published" ? "success" : "draft"}>
+            {periodStatusLabel(period.status)}
+          </Badge>
+        }
       />
 
       <p className="mb-4 text-sm text-[var(--color-muted)]">
@@ -346,132 +352,151 @@ export default async function BuildRosterPage({
                   return rank(a.id) - rank(b.id);
                 });
                 const offer = offerByShift.get(s.id);
+                const scheme = shiftColorScheme(s.label);
                 return (
                   <li key={s.id}>
-                    <div className="flex items-baseline justify-between">
-                      <span className="font-medium">
-                        {s.label}
-                        {offer ? (
-                          <span className="ml-2 rounded bg-[var(--color-brand)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-brand-ink)]">
-                            {offer.status === "claimed"
-                              ? `Claim: ${offer.claimedByName ?? "pending"}`
-                              : "Offered"}
-                          </span>
-                        ) : null}
-                      </span>
-                      <span className="text-sm text-[var(--color-muted)]">
-                        {formatTimeOnly(s.startTime)} –{" "}
-                        {formatTimeOnly(s.endTime)}
-                      </span>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {ordered.map((member) => {
-                        const isConfirmed = confirmedSet.has(member.id);
-                        const isSuggested = suggestedSet.has(member.id);
-                        const a = availabilityOf(s.id, member.id);
-                        const isPrefilled = prefilled.has(
-                          `${s.id}:${member.id}`,
-                        );
-                        const isOnLeave = onLeave(member.id, s.date);
-                        const marker =
-                          a === "yes" ? "✓" : a === "no" ? "✗" : "?";
-
-                        // Suggested (un-accepted) draft: dashed chip with
-                        // Accept (tap the name) and a Clear (✕) control.
-                        if (isSuggested && !isConfirmed) {
-                          return (
-                            <span
-                              key={member.id}
-                              className="inline-flex items-center overflow-hidden rounded-full border border-dashed border-[var(--color-brand)] text-sm font-medium text-[var(--color-brand)]"
-                            >
-                              <form action={acceptSuggestion}>
-                                <input
-                                  type="hidden"
-                                  name="shiftId"
-                                  value={s.id}
-                                />
-                                <input
-                                  type="hidden"
-                                  name="staffId"
-                                  value={member.id}
-                                />
-                                <button
-                                  type="submit"
-                                  className="px-3 py-1.5"
-                                  title="Accept this suggestion"
-                                >
-                                  {member.name}{" "}
-                                  <span className="ml-1 rounded bg-[var(--color-brand)] px-1 py-0.5 text-[10px] font-semibold text-[var(--color-brand-ink)]">
-                                    Suggested
-                                  </span>
-                                </button>
-                              </form>
-                              <form action={clearSuggestion}>
-                                <input
-                                  type="hidden"
-                                  name="shiftId"
-                                  value={s.id}
-                                />
-                                <input
-                                  type="hidden"
-                                  name="staffId"
-                                  value={member.id}
-                                />
-                                <button
-                                  type="submit"
-                                  aria-label={`Clear suggestion for ${member.name}`}
-                                  className="border-l border-dashed border-[var(--color-brand)] px-2 py-1.5"
-                                >
-                                  <span aria-hidden="true">✕</span>
-                                </button>
-                              </form>
+                    <div
+                      className="rounded-[8px] p-3 transition-shadow hover:shadow-[0_5px_14px_rgba(17,24,39,0.11)]"
+                      style={{
+                        backgroundColor: scheme.bg,
+                        borderLeft: `3px solid ${scheme.bar}`,
+                      }}
+                    >
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span
+                          className="font-archivo text-[12.5px] font-bold tracking-[0.01em]"
+                          style={{ color: scheme.text }}
+                        >
+                          {s.label}
+                          {offer ? (
+                            <span className="ml-2 rounded bg-[var(--color-brand)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-brand-ink)]">
+                              {offer.status === "claimed"
+                                ? `Claim: ${offer.claimedByName ?? "pending"}`
+                                : "Offered"}
                             </span>
+                          ) : null}
+                        </span>
+                        <span
+                          className="text-[11px] font-medium"
+                          style={{ color: scheme.text, opacity: 0.75 }}
+                        >
+                          {formatTimeOnly(s.startTime)} –{" "}
+                          {formatTimeOnly(s.endTime)}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {ordered.map((member) => {
+                          const isConfirmed = confirmedSet.has(member.id);
+                          const isSuggested = suggestedSet.has(member.id);
+                          const a = availabilityOf(s.id, member.id);
+                          const isPrefilled = prefilled.has(
+                            `${s.id}:${member.id}`,
                           );
-                        }
+                          const isOnLeave = onLeave(member.id, s.date);
+                          const marker =
+                            a === "yes" ? "✓" : a === "no" ? "✗" : "?";
 
-                        const tone = isConfirmed
-                          ? "bg-[var(--color-brand)] text-white border-[var(--color-brand)]"
-                          : isOnLeave
-                            ? "border-[var(--color-warn)] text-[var(--color-warn)]"
-                            : a === "yes"
-                              ? "border-[var(--color-ok)] text-[var(--color-ok)]"
-                              : a === "no"
-                                ? "border-[var(--color-danger)] text-[var(--color-danger)]"
-                                : "border-[var(--color-line)] text-[var(--color-muted)]";
-                        return (
-                          <form key={member.id} action={toggleAssign}>
-                            <input type="hidden" name="shiftId" value={s.id} />
-                            <input
-                              type="hidden"
-                              name="staffId"
-                              value={member.id}
-                            />
-                            <input
-                              type="hidden"
-                              name="assigned"
-                              value={String(isConfirmed)}
-                            />
-                            <button
-                              type="submit"
-                              aria-pressed={isConfirmed}
-                              className={`rounded-full border px-3 py-1.5 text-sm font-medium ${tone}`}
-                            >
-                              {member.name}{" "}
-                              <span aria-hidden="true">{marker}</span>
-                              {isOnLeave ? (
-                                <span className="ml-1 rounded bg-[var(--color-warn)] px-1 py-0.5 text-[10px] font-semibold text-white">
-                                  On leave
-                                </span>
-                              ) : null}
-                              {isPrefilled && !isConfirmed ? (
-                                <span className="ml-1 rounded bg-[var(--color-ok)] px-1 py-0.5 text-[10px] font-semibold text-white">
-                                  Pre-filled
-                                </span>
-                              ) : null}
-                            </button>
-                          </form>
-                        );
-                      })}
+                          // Suggested (un-accepted) draft: dashed chip with
+                          // Accept (tap the name) and a Clear (✕) control.
+                          if (isSuggested && !isConfirmed) {
+                            return (
+                              <span
+                                key={member.id}
+                                className="inline-flex items-center overflow-hidden rounded-full border border-dashed border-[var(--color-brand)] text-sm font-medium text-[var(--color-brand)]"
+                              >
+                                <form action={acceptSuggestion}>
+                                  <input
+                                    type="hidden"
+                                    name="shiftId"
+                                    value={s.id}
+                                  />
+                                  <input
+                                    type="hidden"
+                                    name="staffId"
+                                    value={member.id}
+                                  />
+                                  <button
+                                    type="submit"
+                                    className="px-3 py-1.5"
+                                    title="Accept this suggestion"
+                                  >
+                                    {member.name}{" "}
+                                    <span className="ml-1 rounded bg-[var(--color-brand)] px-1 py-0.5 text-[10px] font-semibold text-[var(--color-brand-ink)]">
+                                      Suggested
+                                    </span>
+                                  </button>
+                                </form>
+                                <form action={clearSuggestion}>
+                                  <input
+                                    type="hidden"
+                                    name="shiftId"
+                                    value={s.id}
+                                  />
+                                  <input
+                                    type="hidden"
+                                    name="staffId"
+                                    value={member.id}
+                                  />
+                                  <button
+                                    type="submit"
+                                    aria-label={`Clear suggestion for ${member.name}`}
+                                    className="border-l border-dashed border-[var(--color-brand)] px-2 py-1.5"
+                                  >
+                                    <span aria-hidden="true">✕</span>
+                                  </button>
+                                </form>
+                              </span>
+                            );
+                          }
+
+                          const tone = isConfirmed
+                            ? "bg-[var(--color-success)] text-white border-[var(--color-success)]"
+                            : isOnLeave
+                              ? "bg-[var(--color-surface)] border-[var(--color-warning)] text-[var(--color-warning)]"
+                              : a === "yes"
+                                ? "bg-[var(--color-surface)] border-[var(--color-success)] text-[var(--color-success)]"
+                                : a === "no"
+                                  ? "bg-[var(--color-surface)] border-[var(--color-danger-strong)] text-[var(--color-danger-strong)]"
+                                  : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-secondary)]";
+                          return (
+                            <form key={member.id} action={toggleAssign}>
+                              <input
+                                type="hidden"
+                                name="shiftId"
+                                value={s.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="staffId"
+                                value={member.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="assigned"
+                                value={String(isConfirmed)}
+                              />
+                              <button
+                                type="submit"
+                                aria-pressed={isConfirmed}
+                                className={`rounded-full border px-3 py-1.5 text-sm font-medium ${tone}`}
+                              >
+                                {member.name}{" "}
+                                <span aria-hidden="true">{marker}</span>
+                                {isOnLeave ? (
+                                  <span className="ml-1 rounded bg-[var(--color-warning)] px-1 py-0.5 text-[10px] font-semibold text-white">
+                                    On leave
+                                  </span>
+                                ) : null}
+                                {isPrefilled && !isConfirmed ? (
+                                  <span className="ml-1 rounded bg-[var(--color-success)] px-1 py-0.5 text-[10px] font-semibold text-white">
+                                    Pre-filled
+                                  </span>
+                                ) : null}
+                              </button>
+                            </form>
+                          );
+                        })}
+                      </div>
                     </div>
                   </li>
                 );
@@ -480,6 +505,8 @@ export default async function BuildRosterPage({
           </Card>
         ))}
       </div>
+
+      <RosterLegend />
 
       <Card className="mt-6">
         <h2 className="text-lg font-semibold">Publish &amp; send</h2>
@@ -518,5 +545,67 @@ export default async function BuildRosterPage({
         </Link>
       </div>
     </>
+  );
+}
+
+/**
+ * Visual key for the builder: shift-type colours, availability dots and the
+ * on-leave pattern. Presentational only; colours come from the pure
+ * shiftColorScheme helper so they stay in sync with the cards above.
+ */
+function RosterLegend() {
+  const shiftTypes = [
+    { label: "Morning", name: "Morning" },
+    { label: "Afternoon", name: "Afternoon" },
+    { label: "Close", name: "Close" },
+    { label: "Split", name: "Split" },
+  ];
+  const dots = [
+    { label: "Available", color: "var(--color-success)" },
+    { label: "Partial", color: "var(--color-warning)" },
+    { label: "No reply", color: "var(--color-text-muted)" },
+  ];
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-[18px] text-[12px] text-[var(--color-text-secondary)]">
+      {shiftTypes.map((t) => {
+        const scheme = shiftColorScheme(t.name);
+        return (
+          <span key={t.label} className="inline-flex items-center gap-1.5">
+            <span
+              aria-hidden="true"
+              className="inline-block h-[13px] w-[13px] rounded-[4px]"
+              style={{
+                backgroundColor: scheme.bg,
+                borderLeft: `3px solid ${scheme.bar}`,
+              }}
+            />
+            {t.label}
+          </span>
+        );
+      })}
+      <span aria-hidden="true" className="h-4 w-px bg-[var(--color-border)]" />
+      {dots.map((d) => (
+        <span key={d.label} className="inline-flex items-center gap-1.5">
+          <span
+            aria-hidden="true"
+            className="inline-block h-[9px] w-[9px] rounded-full"
+            style={{ backgroundColor: d.color }}
+          />
+          {d.label}
+        </span>
+      ))}
+      <span aria-hidden="true" className="h-4 w-px bg-[var(--color-border)]" />
+      <span className="inline-flex items-center gap-1.5">
+        <span
+          aria-hidden="true"
+          className="inline-block h-[13px] w-[13px] rounded-[4px] border border-[#EAECEF]"
+          style={{
+            background:
+              "repeating-linear-gradient(135deg,#F4F5F7,#F4F5F7 4px,#EAECEF 4px,#EAECEF 8px)",
+          }}
+        />
+        On leave
+      </span>
+    </div>
   );
 }

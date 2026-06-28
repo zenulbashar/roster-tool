@@ -111,10 +111,10 @@ export function OwnerNav() {
                     current === group.label ? null : group.label,
                   )
                 }
-                className={`flex items-center gap-1 rounded-md px-3 py-2 text-[var(--color-header-ink)] hover:bg-white/10 ${
+                className={`flex items-center gap-1 border-b-[3px] px-3 py-2.5 text-[13.5px] font-semibold text-[var(--color-header-ink)] transition-colors ${
                   active
-                    ? "border-b-2 border-[var(--color-accent)] font-semibold"
-                    : "border-b-2 border-transparent"
+                    ? "border-[var(--color-accent)]"
+                    : "border-transparent hover:border-[var(--color-accent)]"
                 }`}
               >
                 {group.label}
@@ -135,7 +135,7 @@ export function OwnerNav() {
                 <div
                   id={menuId}
                   role="menu"
-                  className="absolute left-0 top-full z-50 mt-1 min-w-44 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-1 shadow-lg"
+                  className="absolute left-0 top-full z-50 mt-1 min-w-44 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-1 shadow-[var(--shadow-dropdown)] [animation:rosterFade_0.14s_ease]"
                 >
                   {group.items.map((item) => {
                     const itemActive = isActive(pathname, item.href);
@@ -144,10 +144,8 @@ export function OwnerNav() {
                         key={item.href}
                         href={item.href}
                         role="menuitem"
-                        className={`block rounded-md px-3 py-2 text-[var(--color-ink)] hover:bg-[var(--color-canvas)] ${
-                          itemActive
-                            ? "font-semibold text-[var(--color-accent)]"
-                            : ""
+                        className={`block rounded-md px-3 py-2 text-[var(--color-ink)] hover:bg-[var(--color-accent-faint)] hover:text-[#3F6212] ${
+                          itemActive ? "font-semibold text-[#3F6212]" : ""
                         }`}
                       >
                         {item.label}
@@ -161,20 +159,20 @@ export function OwnerNav() {
         })}
         <Link
           href={FORMS.href}
-          className={`rounded-md px-3 py-2 text-[var(--color-header-ink)] hover:bg-white/10 ${
+          className={`border-b-[3px] px-3 py-2.5 text-[13.5px] font-semibold text-[var(--color-header-ink)] transition-colors ${
             isActive(pathname, FORMS.href)
-              ? "border-b-2 border-[var(--color-accent)] font-semibold"
-              : "border-b-2 border-transparent"
+              ? "border-[var(--color-accent)]"
+              : "border-transparent hover:border-[var(--color-accent)]"
           }`}
         >
           {FORMS.label}
         </Link>
         <Link
           href={SETTINGS.href}
-          className={`rounded-md px-3 py-2 text-[var(--color-header-ink)] hover:bg-white/10 ${
+          className={`border-b-[3px] px-3 py-2.5 text-[13.5px] font-semibold text-[var(--color-header-ink)] transition-colors ${
             isActive(pathname, SETTINGS.href)
-              ? "border-b-2 border-[var(--color-accent)] font-semibold"
-              : "border-b-2 border-transparent"
+              ? "border-[var(--color-accent)]"
+              : "border-transparent hover:border-[var(--color-accent)]"
           }`}
         >
           {SETTINGS.label}

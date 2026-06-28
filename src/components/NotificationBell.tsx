@@ -19,11 +19,54 @@ import {
 
 export type BellItem = {
   id: string;
+  type: string;
   title: string;
   body: string | null;
   linkPath: string | null;
   timeText: string;
   isRead: boolean;
+};
+
+/**
+ * Per-type icon chip (Material Symbols Rounded). Purely decorative — colours
+ * are token-backed; unknown types fall back to a neutral bell.
+ */
+const TYPE_ICONS: Record<string, { icon: string; bg: string; fg: string }> = {
+  leave_requested: {
+    icon: "event_busy",
+    bg: "var(--color-warning-bg)",
+    fg: "var(--color-warning)",
+  },
+  shift_offer_activity: {
+    icon: "swap_horiz",
+    bg: "var(--color-info-bg)",
+    fg: "var(--color-info)",
+  },
+  stock_needs_order: {
+    icon: "inventory_2",
+    bg: "var(--color-accent-faint)",
+    fg: "#3F6212",
+  },
+  cert_expiring: {
+    icon: "workspace_premium",
+    bg: "var(--color-danger-bg)",
+    fg: "var(--color-danger-strong)",
+  },
+  availability_reply: {
+    icon: "how_to_reg",
+    bg: "var(--color-success-bg)",
+    fg: "var(--color-success)",
+  },
+  form_response: {
+    icon: "description",
+    bg: "var(--color-info-bg)",
+    fg: "var(--color-info)",
+  },
+};
+const FALLBACK_ICON = {
+  icon: "notifications",
+  bg: "var(--color-bg)",
+  fg: "var(--color-text-secondary)",
 };
 
 export function NotificationBell({
@@ -69,27 +112,23 @@ export function NotificationBell({
             : "Notifications"
         }
         onClick={() => setOpen((v) => !v)}
-        className="relative flex min-h-11 min-w-11 items-center justify-center rounded-md px-2 py-1 text-[var(--color-header-ink)] hover:bg-white/10"
+        className="relative flex h-10 w-10 items-center justify-center rounded-[var(--radius-md)] text-[#D1D5DB] hover:bg-[var(--color-header-hover)]"
       >
-        <svg
+        <span
           aria-hidden="true"
-          viewBox="0 0 24 24"
-          className="h-6 w-6"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+          className="material-symbols-rounded text-[22px]"
         >
-          <path d="M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-          <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-        </svg>
+          notifications
+        </span>
         {unreadCount > 0 ? (
           <span
             aria-hidden="true"
-            className="absolute right-0.5 top-0.5 inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--color-accent)] px-1 text-xs font-bold leading-5 text-black"
+            className="absolute right-1 top-1 inline-flex h-[17px] w-[17px] items-center justify-center"
           >
-            {badge}
+            <span className="absolute inset-0 rounded-full bg-[var(--color-danger-strong)] [animation:rosterPulse_2.2s_ease-out_infinite]" />
+            <span className="font-archivo relative flex h-[17px] w-[17px] items-center justify-center rounded-full border-2 border-[var(--color-header)] bg-[var(--color-danger-strong)] text-[10px] font-bold leading-none text-white">
+              {badge}
+            </span>
           </span>
         ) : null}
       </button>
@@ -98,10 +137,12 @@ export function NotificationBell({
         <div
           id={menuId}
           role="menu"
-          className="absolute right-0 top-full z-50 mt-1 w-80 max-w-[90vw] overflow-hidden rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] text-[var(--color-ink)] shadow-lg"
+          className="absolute right-0 top-full z-50 mt-2 w-[376px] max-w-[90vw] overflow-hidden rounded-[14px] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-ink)] shadow-[var(--shadow-bell)] [animation:rosterFade_0.15s_ease]"
         >
-          <div className="flex items-center justify-between border-b border-[var(--color-line)] px-3 py-2">
-            <span className="text-sm font-semibold">Notifications</span>
+          <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)] px-4 py-3">
+            <span className="font-archivo text-sm font-bold">
+              Notifications
+            </span>
             {unreadCount > 0 ? (
               <form action={markAllNotificationsReadAction}>
                 <button
@@ -115,61 +156,67 @@ export function NotificationBell({
           </div>
 
           {items.length === 0 ? (
-            <p className="px-3 py-6 text-center text-sm text-[var(--color-muted)]">
+            <p className="px-3 py-6 text-center text-sm text-[var(--color-text-secondary)]">
               You&rsquo;re all caught up.
             </p>
           ) : (
             <ul className="max-h-96 overflow-y-auto">
-              {items.map((n) => (
-                <li
-                  key={n.id}
-                  className="border-b border-[var(--color-line)] last:border-b-0"
-                >
-                  <form action={openNotificationAction}>
-                    <input type="hidden" name="id" value={n.id} />
-                    <input
-                      type="hidden"
-                      name="linkPath"
-                      value={n.linkPath ?? "/app"}
-                    />
-                    <button
-                      type="submit"
-                      role="menuitem"
-                      className={`block w-full px-3 py-3 text-left hover:bg-[var(--color-canvas)] ${
-                        n.isRead ? "" : "bg-[var(--color-canvas)]/60"
-                      }`}
-                    >
-                      <span className="flex items-start gap-2">
-                        {!n.isRead ? (
+              {items.map((n) => {
+                const chip = TYPE_ICONS[n.type] ?? FALLBACK_ICON;
+                return (
+                  <li
+                    key={n.id}
+                    className="border-b border-[var(--color-border-subtle)] last:border-b-0"
+                  >
+                    <form action={openNotificationAction}>
+                      <input type="hidden" name="id" value={n.id} />
+                      <input
+                        type="hidden"
+                        name="linkPath"
+                        value={n.linkPath ?? "/app"}
+                      />
+                      <button
+                        type="submit"
+                        role="menuitem"
+                        className={`block w-full px-4 py-3 text-left hover:bg-[var(--color-bg)] ${
+                          n.isRead
+                            ? ""
+                            : "border-l-[3px] border-[var(--color-accent)] bg-[var(--color-accent-faint)]/40"
+                        }`}
+                      >
+                        <span className="flex items-start gap-3">
                           <span
                             aria-hidden="true"
-                            className="mt-1.5 h-2 w-2 flex-shrink-0 rounded-full bg-[var(--color-brand)]"
-                          />
-                        ) : (
-                          <span className="mt-1.5 h-2 w-2 flex-shrink-0" />
-                        )}
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-sm font-medium">
-                            {n.title}
-                          </span>
-                          {n.body ? (
-                            <span className="block truncate text-sm text-[var(--color-muted)]">
-                              {n.body}
+                            className="flex h-[30px] w-[30px] flex-shrink-0 items-center justify-center rounded-[9px]"
+                            style={{ backgroundColor: chip.bg, color: chip.fg }}
+                          >
+                            <span className="material-symbols-rounded text-[18px]">
+                              {chip.icon}
                             </span>
-                          ) : null}
-                          <span className="block text-xs text-[var(--color-muted)]">
-                            {n.timeText}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-semibold">
+                              {n.title}
+                            </span>
+                            {n.body ? (
+                              <span className="block truncate text-sm text-[var(--color-text-secondary)]">
+                                {n.body}
+                              </span>
+                            ) : null}
+                            <span className="block text-xs text-[var(--color-text-muted)]">
+                              {n.timeText}
+                            </span>
                           </span>
                         </span>
-                      </span>
-                    </button>
-                  </form>
-                </li>
-              ))}
+                      </button>
+                    </form>
+                  </li>
+                );
+              })}
             </ul>
           )}
 
-          <div className="border-t border-[var(--color-line)] px-3 py-2 text-center">
+          <div className="border-t border-[var(--color-border-subtle)] px-3 py-2 text-center">
             <Link
               href="/app/notifications"
               className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
