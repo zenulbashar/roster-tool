@@ -103,6 +103,15 @@ h3 {
   font-family: var(--font-display);
 }
 
+/* Explicit type-face utilities (for badges, numbers, buttons — anywhere the
+ * global h1/h2/h3 rule doesn't reach). */
+.font-archivo {
+  font-family: var(--font-display);
+}
+.font-public-sans {
+  font-family: var(--font-sans);
+}
+
 /* Material Symbols Rounded — loaded via <link> in the root layout. */
 .material-symbols-rounded {
   font-family: "Material Symbols Rounded";
