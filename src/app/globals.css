@@ -3,6 +3,10 @@
 /*
  * Design tokens for the roster tool.
  * High-contrast, mobile-first, WCAG AA. Kept deliberately small and obvious.
+ *
+ * Type system: Archivo (headings, badges, numbers) + Public Sans (body, UI),
+ * loaded via <link> in the root layout. Archivo is exposed as --font-display
+ * and applied to h1/h2/h3 globally; Public Sans is --font-sans on the body.
  */
 @theme {
   --color-ink: #111827; /* primary text — ~16:1 on white */
@@ -10,7 +14,7 @@
   --color-surface: #ffffff;
   --color-canvas: #f9fafb;
   --color-line: #d1d5db;
-  --color-brand: #1d4ed8; /* blue-700, ~6.3:1 on white */
+  --color-brand: #1d4ed8; /* blue-700, ~6.3:1 on white — links/focus/info */
   --color-brand-ink: #ffffff;
   --color-button: #76b900; /* Zaleit green — primary buttons */
   --color-button-ink: #111827; /* dark text on green, ~7.4:1 on --color-button */
@@ -25,9 +29,58 @@
   --color-header-muted: #cbd5e1; /* secondary header text — AA on header-bg */
   --color-accent: #76b900; /* Zaleit green — wordmark + active accent */
 
+  /*
+   * Refined design-system tokens (added alongside the originals above — the
+   * originals stay because they're referenced app-wide). These back the
+   * mockup: surfaces, borders, semantic states, shift-type colours, radii,
+   * shadows. --color-brand (blue) is deliberately untouched.
+   */
+  --color-bg: #f9fafb; /* page background */
+  --color-border: #e5e7eb; /* primary border */
+  --color-border-subtle: #f1f3f5; /* subtle dividers */
+  --color-header: #111827; /* dark header/sidebar bg */
+  --color-header-hover: #1f2937; /* header button hover */
+  --color-accent-dark: #6aa600; /* green hover */
+  --color-accent-faint: #f4f8e9; /* green tint bg */
+  --color-accent-ink: #111827; /* text ON green */
+  --color-text: #111827; /* primary text */
+  --color-text-secondary: #6b7280; /* secondary text */
+  --color-text-muted: #9ca3af; /* muted/placeholder */
+  --color-success: #16a34a; /* approved/valid */
+  --color-success-bg: #ecfdf3;
+  --color-success-border: #bbf7d0;
+  --color-warning: #d97706; /* pending/expiring */
+  --color-warning-bg: #fdf2e3;
+  --color-danger-strong: #dc2626; /* denied/expired/urgent */
+  --color-danger-bg: #fef2f2;
+  --color-info: #2563eb;
+  --color-info-bg: #eff6ff;
+
+  /* Shift-type colours — used by the roster builder (see src/lib/shift-colors.ts) */
+  --shift-morning-bg: #f4f8e9;
+  --shift-morning-bar: #76b900;
+  --shift-arvo-bg: #f2eefb;
+  --shift-arvo-bar: #7c5cbf;
+  --shift-close-bg: #eef1f5;
+  --shift-close-bar: #1e293b;
+  --shift-split-bg: #fdf2e3;
+  --shift-split-bar: #d97706;
+
+  /* Border radius */
+  --radius-sm: 6px; /* badges, chips */
+  --radius-md: 10px; /* buttons, inputs */
+  --radius-lg: 12px; /* nav dropdowns */
+  --radius-xl: 16px; /* main cards, roster grid container */
+
+  /* Shadows */
+  --shadow-card: 0 1px 3px rgba(17, 24, 39, 0.05);
+  --shadow-dropdown: 0 18px 40px rgba(17, 24, 39, 0.2);
+  --shadow-bell: 0 22px 52px rgba(17, 24, 39, 0.24);
+
   --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
-    Arial, sans-serif;
+    "Public Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-display: "Archivo", ui-sans-serif, system-ui, sans-serif;
 }
 
 html {
@@ -35,10 +88,45 @@ html {
 }
 
 body {
-  background-color: var(--color-canvas);
+  background-color: var(--color-bg);
   color: var(--color-ink);
   font-family: var(--font-sans);
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Headings and page titles use the display face (Archivo). */
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+}
+
+/* Material Symbols Rounded — loaded via <link> in the root layout. */
+.material-symbols-rounded {
+  font-family: "Material Symbols Rounded";
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 400,
+    "GRAD" 0,
+    "opsz" 24;
+}
+.material-symbols-rounded.fill {
+  font-variation-settings:
+    "FILL" 1,
+    "wght" 400,
+    "GRAD" 0,
+    "opsz" 24;
 }
 
 /* Visible focus for keyboard users everywhere. */
@@ -46,4 +134,56 @@ body {
   outline: 3px solid var(--color-brand);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* Animations — applied only to dropdowns, the bell badge, and success toasts. */
+@keyframes rosterFade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes rosterPulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+@keyframes rosterToast {
+  from {
+    transform: translateY(14px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Custom scrollbar. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: #d1d5db;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #9ca3af;
 }
