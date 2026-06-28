@@ -510,6 +510,25 @@ hmac`, AUTH_SECRET-signed, 15 min — `src/lib/notices-verification.ts`,
 
 - Semantic HTML, keyboard navigable, visible focus, WCAG AA contrast.
 - Mobile-first. Minimal component set; no heavy UI kit.
+- **Type system**: **Archivo** (headings, page titles, badges, numbers — exposed
+  as `--font-display` and applied to `h1/h2/h3` globally + the `.font-archivo`
+  utility) and **Public Sans** (body/UI — `--font-sans`, the body default).
+  Both plus **Material Symbols Rounded** (icons, `.material-symbols-rounded`)
+  load via `<link>` in `src/app/layout.tsx` (not `next/font`, to keep builds
+  offline-safe). Design tokens live in `src/app/globals.css` `@theme` (colours,
+  semantic states, `--shift-*` colours, `--radius-*`, `--shadow-*`); the
+  originals (`--color-ink`/`--color-brand`/`--color-button`/header tokens, etc.)
+  are kept alongside the refined names since they're referenced app-wide.
+  **`--color-brand` (blue) is reserved for links, focus rings and info banners;
+  only PRIMARY buttons use the Zaleit green (`--color-button`/`--color-accent`).**
+  Shared primitives (`Button`/`Card`/`PageHeader`/`Banner`/`Badge`) are in
+  `src/components/ui.tsx`. Three keyframes (`rosterFade`/`rosterPulse`/
+  `rosterToast`) are used sparingly — dropdowns, the bell badge, and toasts only.
+- **Shift-type colours** are defined by a PURE helper,
+  `shiftColorScheme(name)` in `src/lib/shift-colors.ts` (keyword-matched
+  morning/arvo/close/split/default → `{bg,bar,text}`, unit-tested in
+  `tests/shift-colors.test.ts`). The roster builder colours its shift cards and
+  legend from it, so the mapping stays consistent and testable.
 - **Owner-area header/nav** (`src/app/app/layout.tsx` + `src/components/OwnerNav.tsx`):
   a Zaleit-branded **dark header** (`--color-header-bg`, green `--color-accent`
   `#76b900` wordmark — header only, content stays white) with the nav grouped into

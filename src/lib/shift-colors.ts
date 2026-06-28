@@ -32,20 +32,21 @@ const SCHEMES: Record<ShiftScheme, ShiftColors> = {
  * word in the (lower-cased) name wins. Matching is word-aware where it matters
  * (e.g. "am"/"pm" only match as standalone tokens, never inside "team").
  */
-const RULES: { scheme: ShiftScheme; keywords: string[]; tokens?: string[] }[] = [
-  { scheme: "split", keywords: ["split", "broken"] },
-  {
-    scheme: "morning",
-    keywords: ["morning", "open", "early"],
-    tokens: ["am"],
-  },
-  {
-    scheme: "arvo",
-    keywords: ["afternoon", "arvo", "mid"],
-    tokens: ["pm"],
-  },
-  { scheme: "close", keywords: ["close", "closing", "late", "night"] },
-];
+const RULES: { scheme: ShiftScheme; keywords: string[]; tokens?: string[] }[] =
+  [
+    { scheme: "split", keywords: ["split", "broken"] },
+    {
+      scheme: "morning",
+      keywords: ["morning", "open", "early"],
+      tokens: ["am"],
+    },
+    {
+      scheme: "arvo",
+      keywords: ["afternoon", "arvo", "mid"],
+      tokens: ["pm"],
+    },
+    { scheme: "close", keywords: ["close", "closing", "late", "night"] },
+  ];
 
 /** Resolve a shift template name to its scheme key. */
 export function shiftSchemeOf(name: string): ShiftScheme {

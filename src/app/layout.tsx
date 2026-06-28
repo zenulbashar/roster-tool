@@ -24,13 +24,19 @@ export default function RootLayout({
           href="https://fonts.gstatic.com"
           crossOrigin="anonymous"
         />
+        {/* App Router root layout is the correct place for these font links;
+            the no-page-custom-font rule predates App Router. Loaded via <link>
+            (not next/font) to keep builds offline-safe. */}
+        {/* eslint-disable-next-line @next/next/no-page-custom-font */}
         <link
           rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=Public+Sans:wght@400;500;600;700&display=swap"
         />
+        {/* display=block suits an icon font (no flash of ligature text). */}
+        {/* eslint-disable-next-line @next/next/no-page-custom-font, @next/next/google-font-display */}
         <link
           rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block"
         />
       </head>
       <body>

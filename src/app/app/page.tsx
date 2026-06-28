@@ -10,7 +10,7 @@ import {
   formatAudCents,
   resolveWindow,
 } from "@/lib/labour-report";
-import { PageHeader, Card } from "@/components/ui";
+import { Card } from "@/components/ui";
 import { buildGettingStarted } from "@/lib/getting-started";
 import { GettingStartedCard } from "@/components/GettingStartedCard";
 
@@ -40,6 +40,16 @@ export default async function DashboardPage() {
   const gettingStarted = buildGettingStarted(await repo.getSetupFlags());
   const tz = business?.timezone ?? DEFAULT_TIMEZONE;
   const today = businessDateOf(new Date(), tz);
+  // Time-of-day greeting in the business timezone (presentational only).
+  const hour = Number(
+    new Intl.DateTimeFormat("en-AU", {
+      hour: "numeric",
+      hour12: false,
+      timeZone: tz,
+    }).format(new Date()),
+  );
+  const greeting =
+    hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   const window = resolveWindow("current", { today });
   const startUtc = zonedDateTimeToUtc(window.startDate, "00:00", tz);
   const endUtc = zonedDateTimeToUtc(window.endDate, "00:00", tz);
@@ -59,7 +69,17 @@ export default async function DashboardPage() {
 
   return (
     <>
-      <PageHeader title="Welcome" subtitle="What would you like to do?" />
+      <header className="mb-6">
+        <h1 className="font-archivo text-[27px] font-extrabold tracking-[-0.015em] text-[var(--color-text)]">
+          {greeting}
+          {business?.name ? `, ${business.name}` : ""}.
+        </h1>
+        <p className="mt-1 text-[15px] text-[#4B5563]">
+          Here&rsquo;s your{" "}
+          <span className="font-semibold text-[#3F6212]">roster</span> at a
+          glance — pick up where you left off.
+        </p>
+      </header>
 
       {gettingStarted.showChecklist ? (
         <GettingStartedCard data={gettingStarted} />
@@ -67,7 +87,9 @@ export default async function DashboardPage() {
 
       <Card className="mb-6">
         <div className="flex items-baseline justify-between gap-3">
-          <h2 className="text-lg font-semibold">This week</h2>
+          <h2 className="font-archivo text-[18px] font-bold text-[var(--color-text)]">
+            This week
+          </h2>
           <Link
             href="/app/reports"
             className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
@@ -82,7 +104,7 @@ export default async function DashboardPage() {
                 <p className="text-sm text-[var(--color-muted)]">
                   Approved hours
                 </p>
-                <p className="text-2xl font-bold tracking-tight">
+                <p className="font-archivo text-[28px] font-extrabold tracking-tight text-[var(--color-text)]">
                   {report.totals.approvedHours} h
                 </p>
                 {report.totals.pendingHours > 0 ? (
@@ -95,7 +117,7 @@ export default async function DashboardPage() {
                 <p className="text-sm text-[var(--color-muted)]">
                   Estimated cost
                 </p>
-                <p className="text-2xl font-bold tracking-tight">
+                <p className="font-archivo text-[28px] font-extrabold tracking-tight text-[var(--color-text)]">
                   {formatAudCents(report.totals.estCostCents)}
                 </p>
                 <p className="text-sm text-[var(--color-muted)]">
