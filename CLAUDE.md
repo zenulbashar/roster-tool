@@ -91,6 +91,26 @@ owner approval, not payroll export.
 - **Availability**: per-shift yes/no (Available / Not available). 1:1 mapping to
   assignments.
 - **Owner auth**: email magic link. First sign-in creates the Business.
+- **Inbound SSO from prompt2eat** (`POST /api/sso/prompt2eat`): a sister app
+  (prompt2eat) hands the owner a signed, single-use token so they open Roster
+  without a second sign-in. **Identity stores stay separate** (email-level
+  linking only — no shared cookie, user table or secret). prompt2eat holds the
+  Ed25519 PRIVATE key; Roster holds only the PUBLIC key
+  (`PROMPT2EAT_SSO_PUBLIC_KEY`, optional → the verify path FAILS CLOSED when
+  unset), so Roster can verify a handoff but never mint one. The token is a
+  compact EdDSA JWS delivered in a cross-origin POST **body** (never a URL/log).
+  The route verifies signature + `iss`/`aud`/`alg` + `exp`/`iat` (≤30s skew,
+  ≤60s lifetime), enforces single use via `jti` in `sso_consumed_tokens`
+  (`onConflictDoNothing`, GC'd after ~10 min), **matches-or-provisions the owner
+  by verified email** in Roster's OWN `user` table (case-insensitive), mints
+  Roster's OWN Auth.js **database** session (a `session` row + the
+  `authjs.session-token` cookie), and **303-redirects to a fixed `/app`** (no
+  redirect param → no open-redirect). Any failure → `/sign-in?error=sso` with a
+  generic message (never echoes token contents). `venue` is CONTEXT ONLY (never
+  an org key); `entitlements.roster` is available for onboarding but tenancy
+  stays Roster's concern. Pure verify logic in `src/lib/sso/roster-sso.ts`,
+  replay guard in `src/lib/sso/replay.ts`, programmatic sign-in in
+  `src/lib/auth/sso-session.ts`. Full contract: `docs/roster-sso-contract.md`.
 - **Account clarity** (after an incident where owners signed in with a
   different email than they realised and thought their data was lost): the
   onboarding page shows "You're signed in as <email>" + a hint that an
@@ -585,7 +605,9 @@ connection, the worker uses the direct connection (pg-boss needs session mode).
 `roster_assignment`, `published_roster`, `timesheet_entry`, `clock_photo`,
 `leave_request`, `shift_offer`, `staff_certification`, `supplier`, `item`,
 `stock_check_entry`, `notification`, `staff_notification`, `form`, `form_field`.
-All domain tables are business-scoped.
+All domain tables are business-scoped. Plus one non-tenant infrastructure table:
+`sso_consumed_tokens` (the inbound prompt2eat SSO replay guard — no `business_id`,
+like the Auth.js `session`/`verificationToken` tables).
 
 Notable columns / conventions:
 
@@ -918,3 +940,4 @@ charset=utf-8` + attachment with a slugified filename. **Buffered, newest-10k
 - [x] M21 — Form builder Phase 1c (owner responses view + delete guard): owner-scoped `/app/forms/[id]/responses` with SQL-aggregated per-field summaries (rating average+distribution, select/yes_no tallies, recent text) shaped by the pure `form-report.ts` (snapshot grouping, `displayAnswer`), a paginated `<details>` response list (deterministic order), response counts on the list/editor, and a `deleteForm` confirmed-flag guard so responses can't be wiped accidentally. Read-only; no migration; no export.
 - [x] M22 — Form builder Phase 2 (staff / internal channel): owner per-form `internal_enabled` + `allow_anonymous` controls; staff fill internal forms from the PIN-gated `/me/forms/[id]` portal (respondent server-resolved from the /me session, never request input; reuses `validatePublicSubmission`, no Turnstile/honeypot); attributed (`respondent_staff_id`, one-per-staff via partial-unique ON CONFLICT) vs anonymous (null respondent, coarse per-form rate limit keyed on form id only); field-lock broadened to published OR internal_enabled; responses view + CSV show the respondent (Public/Anonymous/name/Former staff). Additive migration 0015. No change to the public `/f/[slug]` surface.
 - [x] M23 — Form builder Phase 3a (new-response owner notifications): a sixth `notification_type` `form_response` reusing the existing bell + per-event preference (`business.notify_form_response`); fired best-effort AFTER the response commits from both submission cores, ONLY on a genuine new row (never honeypot/reject/`already_responded`); COALESCED into one updating unread row per form via `notification.group_key` + `count` and a partial unique index (count-only/no answer content/no respondent identity — uniform for public/attributed/anonymous); reading the row resets it. Additive migration 0016. In-app bell only (email digest deferred).
+- [x] M24 — Inbound SSO from prompt2eat (`POST /api/sso/prompt2eat`): verify a single-use EdDSA/Ed25519 JWS (POST body, ≤60s TTL) against the pinned `PROMPT2EAT_SSO_PUBLIC_KEY` (fail-closed); pin `iss`/`aud`/`alg` + `exp`/`iat` (≤30s skew); `jti` single-use via `sso_consumed_tokens` (GC'd ~10 min); match-or-provision the owner by verified email in Roster's own `user` table (case-insensitive); mint Roster's own Auth.js database session and 303-redirect to a fixed `/app` (failures → `/sign-in?error=sso`). Separate identity stores, no shared cookie/table/secret; Roster verifies but never mints. Additive migration 0017. Contract in `docs/roster-sso-contract.md`.

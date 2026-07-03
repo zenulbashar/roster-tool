@@ -41,6 +41,13 @@ const baseEnvSchema = z.object({
   // Cloudflare's documented always-pass test keys.
   TURNSTILE_SECRET_KEY: z.string().optional(),
   NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.string().optional(),
+
+  // Inbound SSO from prompt2eat. The Ed25519 PUBLIC key that verifies handoff
+  // tokens — either a public PEM or its base64 (see src/lib/sso/roster-sso.ts).
+  // OPTIONAL so the app always boots; the verify path FAILS CLOSED (rejects
+  // every handoff) when it is unset. prompt2eat holds the matching private key,
+  // so a Roster compromise can never mint a prompt2eat-trusted token.
+  PROMPT2EAT_SSO_PUBLIC_KEY: z.string().optional(),
 });
 
 const envSchema = baseEnvSchema.superRefine((val, ctx) => {
