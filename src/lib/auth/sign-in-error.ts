@@ -20,6 +20,11 @@ export function signInErrorMessage(code?: string | null): string | null {
       return "That sign-in link has expired or was already used. Enter your email below and we'll send you a fresh one.";
     case "AccessDenied":
       return "You don't have access with that account. Enter your email below to try again.";
+    case "sso":
+      // A prompt2eat handoff (POST /api/sso/prompt2eat) couldn't be verified —
+      // expired, replayed, or misconfigured. Never echo token contents; offer
+      // the normal email sign-in instead.
+      return "We couldn't sign you in from prompt2eat. Enter your email below and we'll send you a sign-in link.";
     default:
       // Configuration, Default, or anything unexpected.
       return "Something went wrong signing you in. Enter your email below to try again.";

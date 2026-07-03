@@ -172,6 +172,28 @@ export const verificationTokens = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
+/* Cross-app SSO (inbound handoff from prompt2eat)                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Replay guard for inbound prompt2eat SSO tokens. NOT a domain table — it holds
+ * no tenant data, only the one-time `jti` of each consumed handoff token (like
+ * `verificationToken`, this is auth/SSO infrastructure). Insert-on-first-use
+ * with the `jti` primary key as the arbiter: a unique violation means the token
+ * was already spent, so the handoff is rejected. Rows are garbage-collected
+ * after ~10 minutes (far beyond the token's ≤60s lifetime). See
+ * `src/lib/sso/roster-sso.ts` and the `POST /api/sso/prompt2eat` route.
+ */
+export const ssoConsumedTokens = pgTable(
+  "sso_consumed_tokens",
+  {
+    jti: text("jti").primaryKey(),
+    seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("sso_consumed_tokens_seen_at_idx").on(t.seenAt)],
+);
+
+/* -------------------------------------------------------------------------- */
 /* Domain (all business-scoped)                                               */
 /* -------------------------------------------------------------------------- */
 

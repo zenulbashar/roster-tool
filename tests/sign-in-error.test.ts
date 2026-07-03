@@ -18,6 +18,12 @@ describe("signInErrorMessage", () => {
     expect(signInErrorMessage("AccessDenied")).toMatch(/access/i);
   });
 
+  it("explains a failed prompt2eat SSO handoff without echoing the token", () => {
+    const msg = signInErrorMessage("sso");
+    expect(msg).toMatch(/prompt2eat/i);
+    expect(msg).toMatch(/email/i);
+  });
+
   it("falls back to a generic message for unknown/Configuration codes", () => {
     expect(signInErrorMessage("Configuration")).toMatch(/went wrong/i);
     expect(signInErrorMessage("Default")).toMatch(/went wrong/i);

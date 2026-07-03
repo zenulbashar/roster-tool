@@ -120,6 +120,13 @@
       "when": 1781712375248,
       "tag": "0016_lovely_talon",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1783059361984,
+      "tag": "0017_new_banshee",
+      "breakpoints": true
     }
   ]
 }
