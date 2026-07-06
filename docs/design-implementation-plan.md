@@ -83,8 +83,25 @@ follow-ups**, not silent omissions:
   real data where available; any metric without a cheap read is shown with a
   best-effort value or a muted placeholder.
 - **Roster builder drag-and-drop assign**: the design implies click-to-assign
-  empty/open cells. Existing assignment flow is preserved; richer inline
-  assign-on-click is a follow-up.
+  empty/open cells. The design's staff×day matrix grid is now the builder's hero
+  (read view); the full interactive assignment editor is kept below it. Richer
+  inline assign-on-click directly in the grid is a follow-up.
+- **Staff "role"** (Chef/Griller/…): the `staff_member` table has no `role`
+  column, so the design's "role · email" sub-line shows the email (and the rate
+  label where set). A future migration can add `staff_member.role`.
+- **Roster periods "N staff · N replied" meta / Timesheets status filter /
+  Leave denied-history rows / "Used in N shifts" per shift type**: these design
+  details need aggregates or reads the current model doesn't expose; the real
+  data shown in their place is noted per-page in the milestone below.
+
+## Fonts at runtime
+
+The three type families (Archivo, Public Sans, Material Symbols Rounded) load
+via `<link>` to Google Fonts in `src/app/layout.tsx` (kept out of `next/font` so
+builds stay offline-safe). The **icon glyphs therefore require outbound access to
+`fonts.googleapis.com` at run time** — present in production (Vercel), but absent
+in a fully-offline sandbox, where Material Symbols ligatures render as their text
+names. This is the pre-existing loading mechanism, unchanged by the redesign.
 
 ## Working method
 
