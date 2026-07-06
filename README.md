@@ -190,6 +190,32 @@ an availability request. You should receive a real email from
 `roster@zaleit.com.au` within a minute (sent by the Railway worker). If emails
 don't arrive, check the Railway worker logs and the Resend dashboard.
 
+### 6. (Optional) Enable Google Drive document storage
+
+This lets owners connect their own Google Drive and upload staff documents
+(stored in their Drive; the app keeps only a link). It's off until you configure
+it. In the **Google Cloud Console**:
+
+1. Create (or pick) a project and **enable the Google Drive API**.
+2. Configure the **OAuth consent screen** (External). While the app is in
+   "Testing" only the test users you list can connect; **Google may require app
+   verification before the public can connect** (the `drive.file` scope is
+   non-sensitive, which usually keeps verification light, but allow time).
+3. Create an **OAuth client ID** of type **Web application**. Add this exact
+   **authorized redirect URI**:
+   `https://roster.zaleit.com.au/api/integrations/google/callback`
+4. In **Vercel → Settings → Environment Variables (Production)** set:
+   - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (from the OAuth client)
+   - `GOOGLE_OAUTH_REDIRECT_URI` = the redirect URI above (must match exactly)
+   - `TOKEN_ENCRYPTION_KEY` = a base64 of 32 random bytes, generated with:
+     `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
+     — **keep this safe and never rotate it without re-connecting**, as it
+     decrypts the stored tokens.
+
+Redeploy. Owners will then see **Connect Google Drive** in Settings. The flow
+**fails closed**: if any of these four are missing, connecting stays disabled and
+no token is ever stored. The worker does **not** need these (no Drive jobs).
+
 ## Project layout
 
 ```
@@ -234,3 +260,4 @@ tests/            unit + integration tests
 - [x] Form builder — CSV export of responses: owner-only `GET /app/forms/[id]/responses/export` (UTF-8 BOM, metadata + live-field columns + orphan columns for deleted fields, values matching the UI). Hardens the shared CSV serializer against spreadsheet formula injection (applies to all exports). No migration.
 - [x] M22 — Form builder Phase 2 (staff / internal channel): owners share a form to staff (`internal_enabled`) with a per-form anonymity choice (`allow_anonymous`); staff fill it from their PIN-gated `/me` portal (respondent resolved server-side from the /me session, never request input; reuses the public validator; no Turnstile/honeypot). Attributed responses are one-per-staff (partial-unique); anonymous responses store no respondent. Field edits lock once published OR shared with staff; the responses view + CSV show the respondent. Additive migration `0015`; the public `/f/[slug]` route is unchanged.
 - [x] M23 — Form builder Phase 3a (new-response notifications): the owner gets a coalesced in-app bell notification when a form response arrives (public or staff). A new `form_response` event reuses the existing bell + a per-event preference; notifications collapse into one updating "N new responses to <form>" item per form (count only — never answer content or respondent identity, so anonymous and attributed read identically) and reset when read. Fired best-effort after the response commits, so a notification failure can never break a submit. In-app only (email digest deferred); additive migration `0016`.
+- [x] M24 — Google Drive document storage (Phase 1 of 4): owners connect their own Google Drive (drive.file scope only — an additional authorization, NOT a login) from Settings and upload per-staff documents that live in their Drive, with the app storing only a reference. OAuth tokens are AES-256-GCM encrypted (`TOKEN_ENCRYPTION_KEY`, fail-closed); the flow handles refresh + revoke→reconnect without crashing. Uploads stream through the server (10 MB cap + mime allow-list, bytes never stored/logged); delete removes the reference and the Drive file; disconnect leaves Drive files untouched. Additive migration `0017`. Requires Google Cloud setup + env vars (see Production deployment). Later phases (separate): OneDrive, Dropbox, onboarding checklists.
