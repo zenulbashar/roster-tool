@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { resolvePersonalClockBusiness } from "@/lib/tenant/personal-clock-access";
 import { PERSONAL_CLOCK_COOKIE } from "@/lib/kiosk-cookie";
-import { Banner, Card } from "@/components/ui";
+import { Avatar, Banner } from "@/components/ui";
 import { PersonalClockForm } from "@/components/PersonalClockForm";
 import { LeaveRequestForm } from "@/components/LeaveRequestForm";
 import { StockCheckForm } from "@/components/StockCheckForm";
@@ -50,13 +50,15 @@ export default async function PersonalClockPage({
 
   if (!business) {
     return (
-      <Card className="mt-8 text-center">
-        <h1 className="text-xl font-bold">Clock-in link not active</h1>
-        <p className="mt-2 text-[var(--color-muted)]">
+      <div className="mt-8 rounded-[18px] border border-[#2A3344] bg-[#1C2433] p-8 text-center">
+        <h1 className="font-archivo text-[20px] font-extrabold text-white">
+          Clock-in link not active
+        </h1>
+        <p className="mt-2 text-[#9CA3AF]">
           This link is no longer active. Ask your manager for the current phone
           clock-in link.
         </p>
-      </Card>
+      </div>
     );
   }
 
@@ -215,12 +217,27 @@ export default async function PersonalClockPage({
 
   return (
     <>
-      <header className="mb-6 text-center">
-        <h1 className="text-2xl font-bold">{business.name}</h1>
-        <p className="mt-1 text-[var(--color-muted)]">
+      <div className="mb-1.5 flex w-full items-center justify-between">
+        <span className="flex items-center gap-2.5">
+          <span className="flex h-[26px] w-[26px] items-center justify-center rounded-[7px] bg-[#76b900]">
+            <span className="material-symbols-rounded text-[17px] text-[#111827]">
+              grid_view
+            </span>
+          </span>
+          <span className="font-archivo text-[16px] font-extrabold tracking-[0.05em] text-[#76b900]">
+            ROSTER
+          </span>
+        </span>
+        <span className="text-[13px] text-[#9CA3AF]">Clock-in</span>
+      </div>
+      <div className="mb-6 text-center">
+        <h1 className="font-archivo text-[22px] font-extrabold text-white">
+          {business.name}
+        </h1>
+        <p className="mt-0.5 text-[14px] text-[#9CA3AF]">
           Clock in or out from your phone. Tap your name.
         </p>
-      </header>
+      </div>
       {!locationConfigured ? (
         <div className="mb-4">
           <Banner tone="warn">
@@ -230,18 +247,21 @@ export default async function PersonalClockPage({
         </div>
       ) : null}
       {staff.length === 0 ? (
-        <Card className="text-center text-[var(--color-muted)]">
+        <div className="rounded-[18px] border border-[#2A3344] bg-[#1C2433] p-6 text-center text-[#9CA3AF]">
           No staff yet. Your manager can add team members and PINs.
-        </Card>
+        </div>
       ) : (
-        <ul className="grid grid-cols-2 gap-3">
+        <ul className="grid grid-cols-2 gap-3.5 sm:grid-cols-3">
           {staff.map((s) => (
             <li key={s.id}>
               <Link
                 href={`/clock?staff=${s.id}`}
-                className="flex min-h-20 items-center justify-center rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4 text-center text-lg font-semibold hover:bg-[var(--color-canvas)]"
+                className="flex flex-col items-center gap-[11px] rounded-[18px] border border-[#2A3344] bg-[#1C2433] p-[22px] transition-colors hover:border-[#76b900] hover:bg-[#222C3D]"
               >
-                {s.name}
+                <Avatar name={s.name} colorKey={s.id} size={52} />
+                <span className="font-archivo text-[15px] font-bold text-white">
+                  {s.name.split(" ")[0]}
+                </span>
               </Link>
             </li>
           ))}

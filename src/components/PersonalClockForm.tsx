@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useActionState, useRef, useState } from "react";
 import { personalClockAction, type ClockResult } from "@/app/clock/actions";
-import { Banner, Button, Card } from "@/components/ui";
+import { Banner } from "@/components/ui";
 
 const initial: ClockResult = { status: "idle" };
 
@@ -70,26 +70,37 @@ export function PersonalClockForm({
 
   if (state.status === "success") {
     return (
-      <Card className="mt-8 text-center">
-        <p className="text-xl font-bold">{state.message}</p>
+      <div className="mt-2 w-full rounded-[22px] border border-[#166534] bg-[#14532D] p-10 text-center">
+        <div className="mx-auto mb-[18px] flex h-[72px] w-[72px] items-center justify-center rounded-full bg-[#76b900]">
+          <span className="material-symbols-rounded fill text-[42px] text-[#111827]">
+            check
+          </span>
+        </div>
+        <p className="font-archivo text-[22px] font-extrabold text-white">
+          {state.message}
+        </p>
         <Link
           href="/clock"
-          className="mt-6 inline-flex min-h-12 items-center justify-center rounded-lg bg-[var(--color-button)] px-6 py-3 text-base font-semibold text-[var(--color-button-ink)]"
+          className="mt-6 inline-flex min-h-12 items-center justify-center rounded-[12px] bg-white px-8 py-3 font-archivo text-[15px] font-bold text-[#111827]"
         >
           Done
         </Link>
-      </Card>
+      </div>
     );
   }
 
   const busy = pending || locating;
 
   return (
-    <Card className="mt-6">
-      <h1 className="text-2xl font-bold">{staffName}</h1>
-      <p className="mt-1 text-[var(--color-muted)]">
-        {currentlyIn ? "You're clocked in." : "You're not clocked in."}
-      </p>
+    <div className="w-full rounded-[18px] border border-[#2A3344] bg-[#1C2433] p-6">
+      <div className="text-center">
+        <h1 className="font-archivo text-[22px] font-extrabold text-white">
+          Hi {staffName.split(" ")[0]} 👋
+        </h1>
+        <p className="mt-1 text-[14px] text-[#9CA3AF]">
+          {currentlyIn ? "You're clocked in." : "Enter your PIN to clock in."}
+        </p>
+      </div>
 
       {state.status === "error" ? (
         <div className="mt-4">
@@ -110,12 +121,14 @@ export function PersonalClockForm({
         </div>
       ) : null}
 
-      <form ref={formRef} action={formAction} className="mt-4 space-y-4">
+      <form ref={formRef} action={formAction} className="mt-5 space-y-4">
         <input type="hidden" name="staffId" value={staffId} />
         <input type="hidden" name="lat" ref={latRef} />
         <input type="hidden" name="lng" ref={lngRef} />
         <label className="block">
-          <span className="mb-1 block text-sm font-semibold">Your PIN</span>
+          <span className="mb-1.5 block text-center text-[13px] font-semibold text-[#CBD5E1]">
+            Your PIN
+          </span>
           <input
             ref={pinRef}
             name="pin"
@@ -127,38 +140,39 @@ export function PersonalClockForm({
             required
             autoFocus
             placeholder="••••"
-            className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-center text-2xl tracking-[0.5em]"
+            className="block w-full rounded-[14px] border border-[#2A3344] bg-[#0E1320] px-4 py-4 text-center font-archivo text-3xl tracking-[0.5em] text-white outline-none placeholder:text-[#4B5563] focus:border-[#76b900]"
             aria-label="Your 4-digit PIN"
           />
         </label>
-        <div className="flex gap-3">
-          <Button
-            type="button"
-            disabled={busy}
-            onClick={clockNow}
-            className="flex-1"
-          >
-            {locating
-              ? "Checking location…"
-              : pending
-                ? "Please wait…"
-                : currentlyIn
-                  ? "Clock out"
-                  : "Clock in"}
-          </Button>
-          <Link
-            href="/clock"
-            className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-5 py-3 text-base font-semibold"
-          >
-            Cancel
-          </Link>
-        </div>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={clockNow}
+          className="flex w-full items-center justify-center gap-2.5 rounded-[18px] bg-[#76b900] px-6 py-5 font-archivo text-[19px] font-extrabold text-[#111827] hover:bg-[#6aa600] disabled:opacity-60"
+        >
+          <span className="material-symbols-rounded text-[26px]">
+            {currentlyIn ? "logout" : "login"}
+          </span>
+          {locating
+            ? "Checking location…"
+            : pending
+              ? "Please wait…"
+              : currentlyIn
+                ? "Clock Out"
+                : "Clock In"}
+        </button>
+        <Link
+          href="/clock"
+          className="block text-center text-[13px] font-semibold text-[#6B7280] hover:text-[#9CA3AF]"
+        >
+          ← Not you? Start over
+        </Link>
       </form>
 
-      <p className="mt-4 text-xs text-[var(--color-muted)]">
+      <p className="mt-4 text-center text-[12px] text-[#6B7280]">
         Your location is checked when you clock in to confirm you&apos;re at
         work. It&apos;s read once, now — there&apos;s no tracking.
       </p>
-    </Card>
+    </div>
   );
 }
