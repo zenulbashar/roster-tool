@@ -127,6 +127,13 @@
       "when": 1783059361984,
       "tag": "0017_new_banshee",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1783308215573,
+      "tag": "0018_conscious_microchip",
+      "breakpoints": true
     }
   ]
 }
