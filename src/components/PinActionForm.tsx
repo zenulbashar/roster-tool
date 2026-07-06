@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useActionState, type ReactNode } from "react";
 import type { ShiftActionResult } from "@/lib/shift-offer-submission";
-import { Banner, Button, Card } from "@/components/ui";
+import { Banner } from "@/components/ui";
+import { kioskCls, KioskSuccess } from "@/components/KioskForm";
 
 const initial: ShiftActionResult = { status: "idle" };
 
@@ -36,23 +37,13 @@ export function PinActionForm({
   const [state, formAction, pending] = useActionState(action, initial);
 
   if (state.status === "success") {
-    return (
-      <Card className="mt-8 text-center">
-        <p className="text-xl font-bold">{state.message}</p>
-        <Link
-          href={backHref}
-          className="mt-6 inline-flex min-h-12 items-center justify-center rounded-lg bg-[var(--color-button)] px-6 py-3 text-base font-semibold text-[var(--color-button-ink)]"
-        >
-          Done
-        </Link>
-      </Card>
-    );
+    return <KioskSuccess message={state.message} backHref={backHref} />;
   }
 
   return (
-    <Card className="mt-6">
-      <h1 className="text-2xl font-bold">{heading}</h1>
-      <div className="mt-2 text-[var(--color-muted)]">{details}</div>
+    <div className={`mt-2 ${kioskCls.card}`}>
+      <h1 className={kioskCls.heading}>{heading}</h1>
+      <div className={`mt-2 text-[14px] ${kioskCls.muted}`}>{details}</div>
 
       {state.status === "error" ? (
         <div className="mt-4">
@@ -60,10 +51,10 @@ export function PinActionForm({
         </div>
       ) : null}
 
-      <form action={formAction} className="mt-4 space-y-4">
+      <form action={formAction} className="mt-5 space-y-4">
         <input type="hidden" name={hiddenName} value={hiddenValue} />
         <label className="block">
-          <span className="mb-1 block text-sm font-semibold">Your PIN</span>
+          <span className={kioskCls.label}>Your PIN</span>
           <input
             name="pin"
             type="password"
@@ -74,22 +65,19 @@ export function PinActionForm({
             required
             autoFocus
             placeholder="••••"
-            className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-center text-2xl tracking-[0.5em]"
+            className={kioskCls.pin}
             aria-label="Your 4-digit PIN"
           />
         </label>
         <div className="flex gap-3">
-          <Button type="submit" disabled={pending} className="flex-1">
+          <button type="submit" disabled={pending} className={kioskCls.primary}>
             {pending ? "Please wait…" : submitLabel}
-          </Button>
-          <Link
-            href={backHref}
-            className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-5 py-3 text-base font-semibold"
-          >
+          </button>
+          <Link href={backHref} className={kioskCls.cancel}>
             Cancel
           </Link>
         </div>
       </form>
-    </Card>
+    </div>
   );
 }

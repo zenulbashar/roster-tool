@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useActionState } from "react";
 import type { LeaveSubmitResult } from "@/lib/leave-submission";
-import { Banner, Button, Card } from "@/components/ui";
+import { Banner } from "@/components/ui";
+import { kioskCls, KioskSuccess } from "@/components/KioskForm";
 
 const initial: LeaveSubmitResult = { status: "idle" };
 
@@ -37,24 +38,14 @@ export function LeaveRequestForm({
   const [state, formAction, pending] = useActionState(action, initial);
 
   if (state.status === "success") {
-    return (
-      <Card className="mt-8 text-center">
-        <p className="text-xl font-bold">{state.message}</p>
-        <Link
-          href={backHref}
-          className="mt-6 inline-flex min-h-12 items-center justify-center rounded-lg bg-[var(--color-button)] px-6 py-3 text-base font-semibold text-[var(--color-button-ink)]"
-        >
-          Done
-        </Link>
-      </Card>
-    );
+    return <KioskSuccess message={state.message} backHref={backHref} />;
   }
 
   return (
-    <Card className="mt-6">
-      <h1 className="text-2xl font-bold">Request leave</h1>
-      <p className="mt-1 text-[var(--color-muted)]">
-        {staffName}, ask {""}your manager for time off. They&apos;ll approve or
+    <div className={`mt-2 ${kioskCls.card}`}>
+      <h1 className={kioskCls.heading}>Request leave</h1>
+      <p className={kioskCls.sub}>
+        {staffName}, ask your manager for time off. They&apos;ll approve or
         decline it.
       </p>
 
@@ -64,15 +55,15 @@ export function LeaveRequestForm({
         </div>
       ) : null}
 
-      <form action={formAction} className="mt-4 space-y-4">
+      <form action={formAction} className="mt-5 space-y-4">
         <input type="hidden" name="staffId" value={staffId} />
         <label className="block">
-          <span className="mb-1 block text-sm font-semibold">Type</span>
+          <span className={kioskCls.label}>Type</span>
           <select
             name="leaveType"
             defaultValue="annual"
             aria-label="Leave type"
-            className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-base"
+            className={kioskCls.input}
           >
             {LEAVE_TYPES.map((t) => (
               <option key={t.value} value={t.value}>
@@ -83,37 +74,35 @@ export function LeaveRequestForm({
         </label>
         <div className="flex gap-3">
           <label className="block flex-1">
-            <span className="mb-1 block text-sm font-semibold">First day</span>
+            <span className={kioskCls.label}>First day</span>
             <input
               type="date"
               name="startDate"
               required
-              className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-base"
+              className={kioskCls.input}
             />
           </label>
           <label className="block flex-1">
-            <span className="mb-1 block text-sm font-semibold">Last day</span>
+            <span className={kioskCls.label}>Last day</span>
             <input
               type="date"
               name="endDate"
               required
-              className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-base"
+              className={kioskCls.input}
             />
           </label>
         </div>
         <label className="block">
-          <span className="mb-1 block text-sm font-semibold">
-            Note (optional)
-          </span>
+          <span className={kioskCls.label}>Note (optional)</span>
           <input
             name="note"
             maxLength={500}
             placeholder="e.g. Family wedding"
-            className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-base"
+            className={kioskCls.input}
           />
         </label>
         <label className="block">
-          <span className="mb-1 block text-sm font-semibold">Your PIN</span>
+          <span className={kioskCls.label}>Your PIN</span>
           <input
             name="pin"
             type="password"
@@ -123,22 +112,19 @@ export function LeaveRequestForm({
             maxLength={4}
             required
             placeholder="••••"
-            className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-center text-2xl tracking-[0.5em]"
+            className={kioskCls.pin}
             aria-label="Your 4-digit PIN"
           />
         </label>
         <div className="flex gap-3">
-          <Button type="submit" disabled={pending} className="flex-1">
+          <button type="submit" disabled={pending} className={kioskCls.primary}>
             {pending ? "Sending…" : "Send request"}
-          </Button>
-          <Link
-            href={backHref}
-            className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-5 py-3 text-base font-semibold"
-          >
+          </button>
+          <Link href={backHref} className={kioskCls.cancel}>
             Cancel
           </Link>
         </div>
       </form>
-    </Card>
+    </div>
   );
 }

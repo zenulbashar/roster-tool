@@ -110,10 +110,10 @@ export default async function PersonalClockPage({
       return (
         <>
           <header className="mb-4 text-center">
-            <h1 className="text-2xl font-bold">
+            <h1 className="font-archivo text-2xl font-extrabold text-white">
               {selected.name}&apos;s shifts
             </h1>
-            <p className="mt-1 text-[var(--color-muted)]">
+            <p className="mt-1 text-[#9CA3AF]">
               Offer up a shift you can&apos;t make. You stay on it until your
               manager confirms a replacement.
             </p>
@@ -133,8 +133,10 @@ export default async function PersonalClockPage({
       return (
         <>
           <header className="mb-4 text-center">
-            <h1 className="text-2xl font-bold">Open shifts</h1>
-            <p className="mt-1 text-[var(--color-muted)]">
+            <h1 className="font-archivo text-2xl font-extrabold text-white">
+              Open shifts
+            </h1>
+            <p className="mt-1 text-[#9CA3AF]">
               Shifts up for grabs. Claim one and your manager will confirm it.
             </p>
           </header>
