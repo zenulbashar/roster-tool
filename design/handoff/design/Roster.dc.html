@@ -1,0 +1,1647 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{font-family:'Public Sans',sans-serif;-webkit-font-smoothing:antialiased;color:#111827;background:#F9FAFB;}
+  ::-webkit-scrollbar{height:10px;width:10px;}
+  ::-webkit-scrollbar-thumb{background:#D1D5DB;border-radius:8px;border:2px solid transparent;background-clip:content-box;}
+  ::-webkit-scrollbar-thumb:hover{background:#9CA3AF;background-clip:content-box;}
+  @keyframes rosterPulse{0%,100%{transform:scale(1);opacity:.55;}50%{transform:scale(1.9);opacity:0;}}
+  @keyframes rosterToast{from{transform:translateY(14px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+  @keyframes rosterFade{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
+  @keyframes rosterShimmer{0%{background-position:-360px 0;}100%{background-position:360px 0;}}
+</style>
+</helmet>
+
+<div style="display:flex;height:100vh;width:100vw;overflow:hidden;background:#F9FAFB;">
+
+  <aside style="width:264px;flex-shrink:0;height:100vh;overflow-y:auto;background:#FFFFFF;border-right:1px solid #E5E7EB;display:flex;flex-direction:column;">
+    <div style="padding:18px 18px 14px;border-bottom:1px solid #F1F3F5;">
+      <div style="display:flex;align-items:center;gap:9px;">
+        <div style="width:28px;height:28px;border-radius:8px;background:#111827;display:flex;align-items:center;justify-content:center;">
+          <span style="font:18px 'Material Symbols Rounded';color:#76b900;">grid_view</span>
+        </div>
+        <span style="font-family:'Archivo',sans-serif;font-weight:800;font-size:18px;letter-spacing:.04em;color:#111827;">ROSTER</span>
+        <span style="margin-left:auto;font-family:'Archivo',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.08em;color:#76b900;background:#F4F8E9;padding:3px 7px;border-radius:5px;">PROTOTYPE</span>
+      </div>
+      <div style="margin-top:9px;font-size:11px;color:#9CA3AF;line-height:1.4;">Click any screen to preview the full ROSTER flow — desktop owner area and staff mobile.</div>
+    </div>
+    <nav style="flex:1;padding:10px 10px 20px;">
+      <sc-for list="{{ railGroups }}" as="group" hint-placeholder-count="6">
+        <div style="margin-top:13px;">
+          <div style="padding:0 9px 6px;font-family:'Archivo',sans-serif;font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#9CA3AF;">{{ group.title }}</div>
+          <sc-for list="{{ group.items }}" as="it" hint-placeholder-count="3">
+            <button onClick="{{ it.go }}" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:none;background:none;cursor:pointer;padding:8px 9px;border-radius:8px;font-family:'Public Sans',sans-serif;font-size:13px;margin-bottom:1px;transition:background .12s;{{ it.style }}" style-hover="background:#F3F4F6;">
+              <span style="font:18px 'Material Symbols Rounded';{{ it.iconStyle }}">{{ it.icon }}</span>
+              <span style="flex:1;">{{ it.label }}</span>
+            </button>
+          </sc-for>
+        </div>
+      </sc-for>
+    </nav>
+    <div style="padding:14px 18px;border-top:1px solid #F1F3F5;font-size:10.5px;color:#9CA3AF;">Roster by Zaleit IT · roster.zaleit.com.au</div>
+  </aside>
+
+  <main id="rosterStage" style="flex:1;height:100vh;overflow-y:auto;position:relative;background:#F9FAFB;">
+
+    <sc-if value="{{ chromeOwner }}" hint-placeholder-val="{{ true }}">
+      <header style="position:sticky;top:0;z-index:50;height:60px;background:#111827;display:flex;align-items:center;padding:0 16px 0 20px;box-shadow:0 1px 0 #1F2937;">
+        <div onClick="{{ goDashboard }}" style="display:flex;align-items:center;gap:9px;cursor:pointer;margin-right:6px;">
+          <div style="width:26px;height:26px;border-radius:7px;background:#76b900;display:flex;align-items:center;justify-content:center;">
+            <span style="font:17px 'Material Symbols Rounded';color:#111827;">grid_view</span>
+          </div>
+          <span style="font-family:'Archivo',sans-serif;font-weight:800;font-size:18px;letter-spacing:.05em;color:#76b900;">ROSTER</span>
+        </div>
+        <span style="font-size:12.5px;color:#9CA3AF;border-left:1px solid #374151;padding-left:13px;margin-left:7px;">Troy's Kebabs</span>
+        <nav style="display:flex;align-items:stretch;margin-left:18px;height:60px;">
+          <sc-for list="{{ navGroups }}" as="g" hint-placeholder-count="4">
+            <div onMouseEnter="{{ g.onEnter }}" onMouseLeave="{{ g.onLeave }}" style="position:relative;display:flex;align-items:stretch;">
+              <button onClick="{{ g.onClick }}" style="background:none;border:none;cursor:pointer;height:60px;padding:0 14px;font-family:'Public Sans',sans-serif;font-weight:600;font-size:13.5px;display:inline-flex;align-items:center;gap:4px;{{ g.triggerStyle }}">
+                {{ g.label }}<span style="font:16px 'Material Symbols Rounded';opacity:.7;">expand_more</span>
+              </button>
+              <sc-if value="{{ g.open }}">
+                <div style="position:absolute;top:54px;left:8px;min-width:196px;background:#fff;border:1px solid #E5E7EB;border-radius:12px;box-shadow:0 18px 40px rgba(17,24,39,.20);padding:6px;z-index:70;animation:rosterFade .14s ease;">
+                  <sc-for list="{{ g.items }}" as="it" hint-placeholder-count="4">
+                    <button onClick="{{ it.go }}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:none;padding:9px 11px;border-radius:8px;font-family:'Public Sans',sans-serif;font-size:13px;color:#374151;cursor:pointer;" style-hover="background:#F4F8E9;color:#3F6212;">
+                      <span style="font:17px 'Material Symbols Rounded';color:#9CA3AF;">{{ it.icon }}</span>{{ it.label }}
+                    </button>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+        </nav>
+        <div style="flex:1;"></div>
+        <div style="position:relative;display:flex;align-items:center;gap:6px;">
+          <button onClick="{{ toggleBell }}" style="position:relative;background:none;border:none;cursor:pointer;width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#D1D5DB;" style-hover="background:#1F2937;color:#fff;">
+            <span style="font:23px 'Material Symbols Rounded';">notifications</span>
+            <sc-if value="{{ unreadCount }}">
+              <span style="position:absolute;top:5px;right:6px;width:17px;height:17px;border-radius:50%;background:#DC2626;pointer-events:none;animation:rosterPulse 2.2s ease-out infinite;"></span>
+              <span style="position:absolute;top:5px;right:6px;min-width:17px;height:17px;padding:0 4px;background:#DC2626;color:#fff;border-radius:9px;font-family:'Archivo',sans-serif;font-weight:700;font-size:10px;display:flex;align-items:center;justify-content:center;border:2px solid #111827;">{{ unreadCount }}</span>
+            </sc-if>
+          </button>
+          <sc-if value="{{ bellOpen }}">
+            <div style="position:absolute;top:50px;right:-4px;width:376px;background:#fff;border:1px solid #E5E7EB;border-radius:14px;box-shadow:0 22px 52px rgba(17,24,39,.24);z-index:70;overflow:hidden;animation:rosterFade .15s ease;">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #F1F3F5;">
+                <span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;color:#111827;">Notifications</span>
+                <button onClick="{{ markAll }}" style="background:none;border:none;cursor:pointer;font-size:12.5px;font-weight:600;color:#4D7C0F;font-family:'Public Sans',sans-serif;">Mark all read</button>
+              </div>
+              <div style="max-height:340px;overflow-y:auto;">
+                <sc-for list="{{ notifList }}" as="n" hint-placeholder-count="4">
+                  <button onClick="{{ n.go }}" style="display:flex;gap:12px;width:100%;text-align:left;border:none;cursor:pointer;padding:13px 15px;border-bottom:1px solid #F3F4F6;font-family:'Public Sans',sans-serif;{{ n.rowStyle }}" style-hover="background:#F9FAFB;">
+                    <span style="flex-shrink:0;width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;{{ n.iconWrap }}"><span style="font:18px 'Material Symbols Rounded';{{ n.iconColor }}">{{ n.icon }}</span></span>
+                    <span style="flex:1;min-width:0;">
+                      <span style="display:block;font-weight:700;font-size:13px;color:#111827;">{{ n.title }}</span>
+                      <span style="display:block;font-size:12.5px;color:#4B5563;line-height:1.35;margin-top:1px;">{{ n.body }}</span>
+                      <span style="display:block;font-size:11px;color:#9CA3AF;margin-top:3px;">{{ n.time }}</span>
+                    </span>
+                  </button>
+                </sc-for>
+              </div>
+              <button onClick="{{ goNotifAll }}" style="display:block;width:100%;text-align:center;padding:12px;background:#F9FAFB;border:none;border-top:1px solid #F1F3F5;cursor:pointer;font-size:12.5px;font-weight:600;color:#4D7C0F;font-family:'Public Sans',sans-serif;">See all notifications →</button>
+            </div>
+          </sc-if>
+          <button onClick="{{ signOut }}" style="display:flex;align-items:center;gap:6px;background:none;border:1px solid #374151;cursor:pointer;color:#D1D5DB;font-family:'Public Sans',sans-serif;font-size:12.5px;font-weight:600;padding:8px 13px;border-radius:9px;margin-left:4px;" style-hover="background:#1F2937;color:#fff;">
+            <span style="font:17px 'Material Symbols Rounded';">logout</span>Sign out
+          </button>
+        </div>
+      </header>
+      <div style="max-width:1340px;margin:0 auto;padding:26px 30px 80px;">
+
+        <sc-if value="{{ show.builder }}" hint-placeholder-val="{{ true }}">
+          <div>
+            <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:18px;flex-wrap:wrap;margin-bottom:18px;">
+              <div>
+                <div style="display:flex;align-items:center;gap:11px;">
+                  <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:25px;margin:0;color:#111827;letter-spacing:-.015em;">Roster builder</h1>
+                  <sc-if value="{{ rosterDraft }}"><span style="font-family:'Archivo',sans-serif;font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#6B7280;background:#F3F4F6;border:1px solid #E5E7EB;padding:3px 9px;border-radius:6px;">DRAFT</span></sc-if>
+                  <sc-if value="{{ rosterPublished }}"><span style="font-family:'Archivo',sans-serif;font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#16A34A;background:#ECFDF3;border:1px solid #BBF7D0;padding:3px 9px;border-radius:6px;">PUBLISHED</span></sc-if>
+                </div>
+                <div style="margin-top:7px;display:flex;align-items:center;gap:9px;color:#6B7280;font-size:13px;flex-wrap:wrap;">
+                  <button style="display:flex;width:26px;height:26px;align-items:center;justify-content:center;border:1px solid #E5E7EB;background:#fff;border-radius:7px;cursor:pointer;color:#6B7280;" style-hover="background:#F3F4F6;"><span style="font:18px 'Material Symbols Rounded';">chevron_left</span></button>
+                  <span style="font-weight:600;color:#111827;font-size:13.5px;">Week of 23 Jun 2026</span>
+                  <button style="display:flex;width:26px;height:26px;align-items:center;justify-content:center;border:1px solid #E5E7EB;background:#fff;border-radius:7px;cursor:pointer;color:#6B7280;" style-hover="background:#F3F4F6;"><span style="font:18px 'Material Symbols Rounded';">chevron_right</span></button>
+                  <span style="color:#D1D5DB;">·</span><span>{{ staffCount }} staff</span>
+                  <span style="color:#D1D5DB;">·</span><span>{{ shiftCount }} shifts rostered</span>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <button onClick="{{ draftFromLast }}" style="display:inline-flex;align-items:center;gap:7px;background:#fff;border:1px solid #E5E7EB;color:#374151;font-family:'Public Sans',sans-serif;font-weight:600;font-size:13px;padding:10px 14px;border-radius:10px;cursor:pointer;" style-hover="background:#F9FAFB;border-color:#D1D5DB;">
+                  <span style="font:18px 'Material Symbols Rounded';color:#76b900;">auto_awesome</span>Draft from last week
+                </button>
+                <sc-if value="{{ rosterDraft }}">
+                  <button onClick="{{ publish }}" style="display:inline-flex;align-items:center;gap:7px;background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:13.5px;padding:11px 18px;border-radius:10px;cursor:pointer;box-shadow:0 1px 2px rgba(17,24,39,.10);" style-hover="background:#6aa600;">
+                    <span style="font:18px 'Material Symbols Rounded';">send</span>Publish roster
+                  </button>
+                </sc-if>
+                <sc-if value="{{ rosterPublished }}">
+                  <button style="display:inline-flex;align-items:center;gap:7px;background:#ECFDF3;border:1px solid #BBF7D0;color:#15803D;font-family:'Archivo',sans-serif;font-weight:700;font-size:13.5px;padding:11px 16px;border-radius:10px;cursor:default;">
+                    <span style="font:18px 'Material Symbols Rounded';">check_circle</span>Published
+                  </button>
+                  <button onClick="{{ share }}" style="display:flex;width:42px;height:42px;align-items:center;justify-content:center;background:#fff;border:1px solid #E5E7EB;border-radius:10px;cursor:pointer;color:#374151;" style-hover="background:#F9FAFB;"><span style="font:19px 'Material Symbols Rounded';">link</span></button>
+                </sc-if>
+              </div>
+            </div>
+
+            <div style="border:1px solid #E5E7EB;border-radius:16px;overflow:hidden;background:#fff;box-shadow:0 1px 3px rgba(17,24,39,.05);">
+              <div style="overflow:auto;max-height:560px;">
+                <div style="min-width:1060px;display:grid;grid-template-columns:216px repeat(7, minmax(132px,1fr));">
+                  <div style="position:sticky;left:0;top:0;z-index:6;background:#fff;border-bottom:1px solid #E5E7EB;border-right:1px solid #E5E7EB;padding:12px 14px;display:flex;align-items:flex-end;">
+                    <span style="font-family:'Archivo',sans-serif;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#9CA3AF;">Staff member</span>
+                  </div>
+                  <sc-for list="{{ days }}" as="d" hint-placeholder-count="7">
+                    <div style="position:sticky;top:0;z-index:4;background:#FAFBFC;border-bottom:1px solid #E5E7EB;border-right:1px solid #F1F3F5;padding:11px 11px;">
+                      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                        <span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:13px;color:#111827;">{{ d.name }} <span style="color:#9CA3AF;font-weight:600;">{{ d.date }}</span></span>
+                        <span title="staff on shift" style="font-family:'Archivo',sans-serif;font-size:10.5px;font-weight:700;color:#5A7D17;background:#F0F6E2;border-radius:20px;padding:2px 8px;">{{ d.count }}</span>
+                      </div>
+                    </div>
+                  </sc-for>
+
+                  <sc-for list="{{ staffRows }}" as="row" hint-placeholder-count="6">
+                    <div style="position:sticky;left:0;z-index:3;background:#fff;border-bottom:1px solid #F1F3F5;border-right:1px solid #E5E7EB;padding:9px 13px;display:flex;align-items:center;gap:10px;">
+                      <div style="width:31px;height:31px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Archivo',sans-serif;font-weight:700;font-size:12px;flex-shrink:0;background:{{ row.color }};">{{ row.initials }}</div>
+                      <div style="min-width:0;">
+                        <div style="font-weight:600;font-size:13px;color:#111827;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ row.name }}</div>
+                        <div style="font-size:11px;color:#6B7280;">{{ row.role }}</div>
+                      </div>
+                    </div>
+                    <sc-for list="{{ row.cells }}" as="cell" hint-placeholder-count="7">
+                      <div style="border-right:1px solid #F1F3F5;border-bottom:1px solid #F1F3F5;padding:5px;background:#fff;min-height:76px;">
+                        <sc-if value="{{ cell.isShift }}">
+                          <div style="position:relative;border-radius:8px;padding:8px 9px 9px;min-height:62px;cursor:pointer;transition:box-shadow .14s,transform .14s;{{ cell.style }}" style-hover="box-shadow:0 5px 14px rgba(17,24,39,.11);transform:translateY(-1px);">
+                            <div title="{{ cell.dotTitle }}" style="position:absolute;top:8px;right:8px;width:9px;height:9px;border-radius:50%;{{ cell.dotStyle }}"></div>
+                            <div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:12.5px;letter-spacing:.01em;{{ cell.labelColor }}">{{ cell.label }}</div>
+                            <div style="font-size:11px;font-weight:500;margin-top:3px;{{ cell.timeColor }}">{{ cell.time }}</div>
+                          </div>
+                        </sc-if>
+                        <sc-if value="{{ cell.isLeave }}">
+                          <div style="min-height:62px;border-radius:8px;padding:8px 9px;background:repeating-linear-gradient(135deg,#F4F5F7,#F4F5F7 7px,#EAECEF 7px,#EAECEF 14px);border:1px solid #EAECEF;display:flex;flex-direction:column;justify-content:center;">
+                            <div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:11px;color:#9097A1;text-transform:uppercase;letter-spacing:.05em;">On leave</div>
+                            <div style="font-size:10.5px;color:#A8AEB8;margin-top:2px;">Approved</div>
+                          </div>
+                        </sc-if>
+                        <sc-if value="{{ cell.isOpen }}">
+                          <div style="min-height:62px;border-radius:8px;padding:8px 9px;border:1.5px dashed #CBD5E1;background:repeating-linear-gradient(135deg,#fff,#fff 9px,#FAFBFC 9px,#FAFBFC 18px);display:flex;flex-direction:column;gap:2px;cursor:pointer;transition:border-color .14s,background .14s;" style-hover="border-color:#76b900;background:#F8FAF4;">
+                            <div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:12px;color:#475569;">Open · {{ cell.label }}</div>
+                            <div style="font-size:11px;color:#94A3B8;">{{ cell.time }}</div>
+                            <div style="margin-top:auto;font-size:10.5px;font-weight:700;color:#4D7C0F;">0 claimed · tap to assign</div>
+                          </div>
+                        </sc-if>
+                        <sc-if value="{{ cell.isEmpty }}">
+                          <div style="height:100%;min-height:62px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#E2E5EA;font-size:20px;cursor:pointer;transition:.12s;" style-hover="background:#F8FAF4;color:#A6C64D;">+</div>
+                        </sc-if>
+                      </div>
+                    </sc-for>
+                  </sc-for>
+
+                  <div style="position:sticky;left:0;z-index:3;background:#FCFCFB;border-top:1px solid #E5E7EB;border-right:1px solid #E5E7EB;padding:9px 13px;display:flex;align-items:center;gap:10px;">
+                    <div style="width:31px;height:31px;border-radius:50%;border:1.5px dashed #CBD5E1;display:flex;align-items:center;justify-content:center;color:#94A3B8;flex-shrink:0;"><span style="font:18px 'Material Symbols Rounded';">add</span></div>
+                    <div>
+                      <div style="font-weight:700;font-size:13px;color:#475569;">Open shifts</div>
+                      <div style="font-size:11px;color:#9CA3AF;">Unassigned</div>
+                    </div>
+                  </div>
+                  <sc-for list="{{ openRow.cells }}" as="cell" hint-placeholder-count="7">
+                    <div style="border-right:1px solid #F1F3F5;border-top:1px solid #E5E7EB;padding:5px;background:#FCFCFB;min-height:76px;">
+                      <sc-if value="{{ cell.isOpen }}">
+                        <div style="min-height:62px;border-radius:8px;padding:8px 9px;border:1.5px dashed #CBD5E1;background:repeating-linear-gradient(135deg,#fff,#fff 9px,#FAFBFC 9px,#FAFBFC 18px);display:flex;flex-direction:column;gap:2px;cursor:pointer;transition:border-color .14s,background .14s;" style-hover="border-color:#76b900;background:#F8FAF4;">
+                          <div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:12px;color:#475569;">Open · {{ cell.label }}</div>
+                          <div style="font-size:11px;color:#94A3B8;">{{ cell.time }}</div>
+                          <div style="margin-top:auto;font-size:10.5px;font-weight:700;color:#4D7C0F;">0 claimed · tap to assign</div>
+                        </div>
+                      </sc-if>
+                      <sc-if value="{{ cell.isEmpty }}">
+                        <div style="height:100%;min-height:62px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#E2E5EA;font-size:20px;cursor:pointer;transition:.12s;" style-hover="background:#F8FAF4;color:#A6C64D;">+</div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:18px;margin-top:15px;font-size:12px;color:#6B7280;">
+              <div style="display:flex;align-items:center;gap:7px;"><span style="width:13px;height:13px;border-radius:4px;background:#F4F8E9;border-left:3px solid #76b900;"></span>Morning</div>
+              <div style="display:flex;align-items:center;gap:7px;"><span style="width:13px;height:13px;border-radius:4px;background:#F2EEFB;border-left:3px solid #7C5CBF;"></span>Arvo</div>
+              <div style="display:flex;align-items:center;gap:7px;"><span style="width:13px;height:13px;border-radius:4px;background:#EEF1F5;border-left:3px solid #1E293B;"></span>Close</div>
+              <div style="display:flex;align-items:center;gap:7px;"><span style="width:13px;height:13px;border-radius:4px;background:#FDF2E3;border-left:3px solid #D97706;"></span>Split</div>
+              <span style="width:1px;height:14px;background:#E5E7EB;"></span>
+              <div style="display:flex;align-items:center;gap:6px;"><span style="width:9px;height:9px;border-radius:50%;background:#16A34A;"></span>Available</div>
+              <div style="display:flex;align-items:center;gap:6px;"><span style="width:9px;height:9px;border-radius:50%;background:#D97706;"></span>Partial</div>
+              <div style="display:flex;align-items:center;gap:6px;"><span style="width:9px;height:9px;border-radius:50%;background:#9CA3AF;"></span>No response</div>
+              <span style="width:1px;height:14px;background:#E5E7EB;"></span>
+              <div style="display:flex;align-items:center;gap:7px;"><span style="width:14px;height:13px;border-radius:4px;background:repeating-linear-gradient(135deg,#F4F5F7,#F4F5F7 4px,#EAECEF 4px,#EAECEF 8px);border:1px solid #EAECEF;"></span>On leave</div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ show.dashboard }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:20px;">
+            <div style="font-size:12px;color:#9CA3AF;display:flex;align-items:center;gap:7px;"><span style="font:16px 'Material Symbols Rounded';">visibility</span>Prototype: toggle dashboard state</div>
+            <div style="display:inline-flex;background:#F3F4F6;border:1px solid #E5E7EB;border-radius:11px;padding:3px;gap:2px;">
+              <button onClick="{{ setDashNew }}" style="border:none;cursor:pointer;font-family:'Public Sans',sans-serif;font-weight:600;font-size:12.5px;padding:7px 14px;border-radius:8px;{{ dashNewTab }}">New owner</button>
+              <button onClick="{{ setDashEst }}" style="border:none;cursor:pointer;font-family:'Public Sans',sans-serif;font-weight:600;font-size:12.5px;padding:7px 14px;border-radius:8px;{{ dashEstTab }}">Established</button>
+            </div>
+          </div>
+
+          <sc-if value="{{ dashNew }}">
+            <div style="max-width:720px;">
+              <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:27px;margin:0;color:#111827;letter-spacing:-.015em;">Welcome to Roster, Troy.</h1>
+              <p style="margin:8px 0 24px;color:#4B5563;font-size:15px;line-height:1.5;">You're <strong style="color:#3F6212;">3 steps</strong> away from your first published roster. Knock these out and you're rostering in minutes.</p>
+              <div style="background:#fff;border:1px solid #E5E7EB;border-radius:16px;box-shadow:0 1px 3px rgba(17,24,39,.05);overflow:hidden;">
+                <div style="padding:18px 22px;border-bottom:1px solid #F1F3F5;display:flex;align-items:center;justify-content:space-between;gap:14px;">
+                  <div>
+                    <div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:16px;color:#111827;">Get set up</div>
+                    <div style="font-size:12.5px;color:#6B7280;margin-top:2px;">1 of 4 core steps done</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:11px;">
+                    <div style="width:120px;height:8px;background:#F3F4F6;border-radius:6px;overflow:hidden;"><div style="width:25%;height:100%;background:#76b900;border-radius:6px;"></div></div>
+                    <span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:13px;color:#3F6212;">25%</span>
+                  </div>
+                </div>
+                <div style="padding:6px 10px;">
+                  <div style="display:flex;align-items:center;gap:13px;padding:13px 12px;border-radius:10px;">
+                    <span style="font:24px 'Material Symbols Rounded';color:#16A34A;font-variation-settings:'FILL' 1;">check_circle</span>
+                    <span style="flex:1;font-size:14.5px;color:#9CA3AF;text-decoration:line-through;">Add your first staff member</span>
+                    <span style="font-size:11.5px;font-weight:700;color:#16A34A;background:#ECFDF3;padding:3px 9px;border-radius:6px;">DONE</span>
+                  </div>
+                  <button onClick="{{ goShiftTypes }}" style="display:flex;align-items:center;gap:13px;padding:13px 12px;border-radius:10px;width:100%;text-align:left;background:none;border:none;cursor:pointer;" style-hover="background:#F9FAFB;">
+                    <span style="font:24px 'Material Symbols Rounded';color:#D1D5DB;">radio_button_unchecked</span>
+                    <span style="flex:1;font-size:14.5px;color:#111827;font-weight:500;">Create a shift type</span>
+                    <span style="display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:600;color:#4D7C0F;">Start<span style="font:18px 'Material Symbols Rounded';">arrow_forward</span></span>
+                  </button>
+                  <button onClick="{{ goBuilder }}" style="display:flex;align-items:center;gap:13px;padding:13px 12px;border-radius:10px;width:100%;text-align:left;background:none;border:none;cursor:pointer;" style-hover="background:#F9FAFB;">
+                    <span style="font:24px 'Material Symbols Rounded';color:#D1D5DB;">radio_button_unchecked</span>
+                    <span style="flex:1;font-size:14.5px;color:#111827;font-weight:500;">Build your first roster</span>
+                    <span style="display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:600;color:#4D7C0F;">Start<span style="font:18px 'Material Symbols Rounded';">arrow_forward</span></span>
+                  </button>
+                  <button onClick="{{ goSettings }}" style="display:flex;align-items:center;gap:13px;padding:13px 12px;border-radius:10px;width:100%;text-align:left;background:none;border:none;cursor:pointer;" style-hover="background:#F9FAFB;">
+                    <span style="font:24px 'Material Symbols Rounded';color:#D1D5DB;">radio_button_unchecked</span>
+                    <span style="flex:1;font-size:14.5px;color:#111827;font-weight:500;">Set up clock-in</span>
+                    <span style="display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:600;color:#4D7C0F;">Start<span style="font:18px 'Material Symbols Rounded';">arrow_forward</span></span>
+                  </button>
+                </div>
+                <div style="padding:14px 22px;background:#FAFBFC;border-top:1px solid #F1F3F5;">
+                  <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:8px;">Optional — set up later</div>
+                  <div style="display:flex;gap:22px;flex-wrap:wrap;">
+                    <span style="display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:#6B7280;"><span style="font:20px 'Material Symbols Rounded';color:#CBD5E1;">radio_button_unchecked</span>Add a supplier</span>
+                    <span style="display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:#6B7280;"><span style="font:20px 'Material Symbols Rounded';color:#CBD5E1;">radio_button_unchecked</span>Add items</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ dashEstablished }}">
+            <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:18px;">
+              <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:27px;margin:0;color:#111827;letter-spacing:-.015em;">Good morning, Troy.</h1>
+              <span style="color:#6B7280;font-size:15px;">Week of 23 Jun</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:18px;">
+              <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;padding:18px;box-shadow:0 1px 2px rgba(17,24,39,.04);">
+                <div style="display:flex;align-items:center;justify-content:space-between;"><span style="font-size:12.5px;color:#6B7280;font-weight:600;">Hours this week</span><span style="font:20px 'Material Symbols Rounded';color:#9CA3AF;">schedule</span></div>
+                <div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:30px;color:#3F6212;margin-top:8px;line-height:1;">142h</div>
+                <div style="font-size:12.5px;color:#6B7280;margin-top:7px;">approved · <span style="color:#D97706;font-weight:600;">+18h pending</span></div>
+              </div>
+              <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;padding:18px;box-shadow:0 1px 2px rgba(17,24,39,.04);">
+                <div style="display:flex;align-items:center;justify-content:space-between;"><span style="font-size:12.5px;color:#6B7280;font-weight:600;">Est. labour cost</span><span style="font:20px 'Material Symbols Rounded';color:#9CA3AF;">payments</span></div>
+                <div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:30px;color:#111827;margin-top:8px;line-height:1;">~$4,820</div>
+                <div style="font-size:12px;color:#9CA3AF;margin-top:7px;">estimate only — not payroll</div>
+              </div>
+              <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;padding:18px;box-shadow:0 1px 2px rgba(17,24,39,.04);">
+                <div style="display:flex;align-items:center;justify-content:space-between;"><span style="font-size:12.5px;color:#6B7280;font-weight:600;">On leave today</span><span style="font:20px 'Material Symbols Rounded';color:#9CA3AF;">beach_access</span></div>
+                <div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:30px;color:#111827;margin-top:8px;line-height:1;">2</div>
+                <div style="font-size:12.5px;color:#6B7280;margin-top:7px;">Marcus · Liam</div>
+              </div>
+              <button onClick="{{ goCerts }}" style="text-align:left;background:#fff;border:1px solid #E5E7EB;border-radius:14px;padding:18px;box-shadow:0 1px 2px rgba(17,24,39,.04);cursor:pointer;" style-hover="border-color:#BFDBFE;background:#FBFDFF;">
+                <div style="display:flex;align-items:center;justify-content:space-between;"><span style="font-size:12.5px;color:#6B7280;font-weight:600;">Certs expiring</span><span style="font:20px 'Material Symbols Rounded';color:#2563EB;">verified</span></div>
+                <div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:30px;color:#2563EB;margin-top:8px;line-height:1;">3</div>
+                <div style="font-size:12.5px;color:#6B7280;margin-top:7px;">this month →</div>
+              </button>
+            </div>
+            <div style="display:flex;gap:11px;flex-wrap:wrap;margin-bottom:22px;">
+              <button onClick="{{ goBuilder }}" style="display:inline-flex;align-items:center;gap:8px;background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:13.5px;padding:11px 17px;border-radius:10px;cursor:pointer;" style-hover="background:#6aa600;"><span style="font:19px 'Material Symbols Rounded';">grid_view</span>Build roster</button>
+              <button onClick="{{ goTimesheets }}" style="display:inline-flex;align-items:center;gap:8px;background:#fff;border:1px solid #E5E7EB;color:#374151;font-family:'Public Sans',sans-serif;font-weight:600;font-size:13.5px;padding:11px 16px;border-radius:10px;cursor:pointer;" style-hover="background:#F9FAFB;"><span style="font:19px 'Material Symbols Rounded';color:#6B7280;">schedule</span>View timesheets</button>
+              <button onClick="{{ goLeave }}" style="display:inline-flex;align-items:center;gap:8px;background:#fff;border:1px solid #E5E7EB;color:#374151;font-family:'Public Sans',sans-serif;font-weight:600;font-size:13.5px;padding:11px 16px;border-radius:10px;cursor:pointer;" style-hover="background:#F9FAFB;"><span style="font:19px 'Material Symbols Rounded';color:#6B7280;">beach_access</span>Approve leave<span style="background:#FEF3E2;color:#B45309;font-weight:700;font-size:11px;padding:2px 7px;border-radius:20px;">1</span></button>
+            </div>
+            <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;box-shadow:0 1px 2px rgba(17,24,39,.04);overflow:hidden;max-width:680px;">
+              <div style="padding:14px 18px;border-bottom:1px solid #F1F3F5;display:flex;align-items:center;justify-content:space-between;">
+                <span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;color:#111827;">Recent activity</span>
+                <button onClick="{{ goNotifAll }}" style="background:none;border:none;cursor:pointer;font-size:12.5px;font-weight:600;color:#4D7C0F;">View all →</button>
+              </div>
+              <sc-for list="{{ dashNotifs }}" as="n" hint-placeholder-count="3">
+                <button onClick="{{ n.go }}" style="display:flex;gap:12px;width:100%;text-align:left;border:none;cursor:pointer;padding:14px 18px;border-bottom:1px solid #F3F4F6;background:#fff;font-family:'Public Sans',sans-serif;" style-hover="background:#F9FAFB;">
+                  <span style="flex-shrink:0;width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;{{ n.iconWrap }}"><span style="font:18px 'Material Symbols Rounded';{{ n.iconColor }}">{{ n.icon }}</span></span>
+                  <span style="flex:1;min-width:0;"><span style="display:block;font-weight:700;font-size:13px;color:#111827;">{{ n.title }}</span><span style="display:block;font-size:12.5px;color:#4B5563;margin-top:1px;">{{ n.body }}</span></span>
+                  <span style="font-size:11px;color:#9CA3AF;white-space:nowrap;">{{ n.time }}</span>
+                </button>
+              </sc-for>
+            </div>
+          </sc-if>
+        </sc-if>
+
+        <sc-if value="{{ show.rosterlist }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px;">
+            <div>
+              <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:25px;margin:0;color:#111827;letter-spacing:-.015em;">Roster periods</h1>
+              <p style="margin:6px 0 0;color:#6B7280;font-size:13.5px;">Each week is a period — collect availability, build, then publish to your team.</p>
+            </div>
+            <button onClick="{{ newPeriod }}" style="display:inline-flex;align-items:center;gap:7px;background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:13.5px;padding:11px 16px;border-radius:10px;cursor:pointer;" style-hover="background:#6aa600;"><span style="font:19px 'Material Symbols Rounded';">add</span>New roster period</button>
+          </div>
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;box-shadow:0 1px 2px rgba(17,24,39,.04);overflow:hidden;">
+            <sc-for list="{{ periods }}" as="p" hint-placeholder-count="4">
+              <div style="display:flex;align-items:center;gap:16px;padding:16px 20px;border-bottom:1px solid #F3F4F6;">
+                <div style="width:42px;height:42px;border-radius:11px;background:#F4F8E9;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><span style="font:22px 'Material Symbols Rounded';color:#5A7D17;">calendar_month</span></div>
+                <div style="min-width:150px;">
+                  <div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:15.5px;color:#111827;">{{ p.week }}</div>
+                  <div style="font-size:12px;color:#9CA3AF;margin-top:2px;">{{ p.sub }}</div>
+                </div>
+                <div style="flex:1;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+                  <span style="font-family:'Archivo',sans-serif;font-size:10px;font-weight:700;letter-spacing:.05em;padding:4px 10px;border-radius:6px;{{ p.badgeStyle }}">{{ p.badgeLabel }}</span>
+                  <span style="font-size:12.5px;color:#6B7280;display:inline-flex;align-items:center;gap:5px;"><span style="font:16px 'Material Symbols Rounded';color:#9CA3AF;">group</span>{{ p.staff }} staff</span>
+                  <span style="font-size:12.5px;color:#9CA3AF;">{{ p.responses }}</span>
+                </div>
+                <sc-if value="{{ p.isBuild }}"><button onClick="{{ p.go }}" style="display:inline-flex;align-items:center;gap:6px;background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:13px;padding:9px 16px;border-radius:9px;cursor:pointer;" style-hover="background:#6aa600;">Build<span style="font:17px 'Material Symbols Rounded';">arrow_forward</span></button></sc-if>
+                <sc-if value="{{ p.isView }}"><button onClick="{{ p.go }}" style="display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #E5E7EB;color:#374151;font-family:'Public Sans',sans-serif;font-weight:600;font-size:13px;padding:9px 16px;border-radius:9px;cursor:pointer;" style-hover="background:#F9FAFB;">View</button></sc-if>
+              </div>
+            </sc-for>
+            <div style="padding:14px 20px;background:#FAFBFC;font-size:12.5px;color:#9CA3AF;display:flex;align-items:center;gap:7px;"><span style="font:17px 'Material Symbols Rounded';">history</span>Older periods are archived automatically after 12 weeks.</div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ show.shifttypes }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px;">
+            <div>
+              <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:25px;margin:0;color:#111827;letter-spacing:-.015em;">Shift types</h1>
+              <p style="margin:6px 0 0;color:#6B7280;font-size:13.5px;">Reusable templates with set times and a colour. Drop them onto the roster grid.</p>
+            </div>
+            <button onClick="{{ addShiftType }}" style="display:inline-flex;align-items:center;gap:7px;background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:13.5px;padding:11px 16px;border-radius:10px;cursor:pointer;" style-hover="background:#6aa600;"><span style="font:19px 'Material Symbols Rounded';">add</span>Add shift type</button>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;">
+            <sc-for list="{{ shiftTypes }}" as="st" hint-placeholder-count="4">
+              <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;overflow:hidden;box-shadow:0 1px 2px rgba(17,24,39,.04);">
+                <div style="height:8px;background:{{ st.color }};"></div>
+                <div style="padding:18px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;">
+                    <div style="display:flex;align-items:center;gap:10px;"><span style="width:14px;height:14px;border-radius:5px;background:{{ st.color }};"></span><span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:16px;color:#111827;">{{ st.name }}</span></div>
+                    <button onClick="{{ addShiftType }}" style="font-size:12.5px;font-weight:600;color:#4D7C0F;background:none;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:3px;"><span style="font:16px 'Material Symbols Rounded';">edit</span>Edit</button>
+                  </div>
+                  <div style="margin-top:12px;display:inline-flex;align-items:center;gap:7px;background:{{ st.tint }};border-radius:8px;padding:7px 11px;"><span style="font:17px 'Material Symbols Rounded';color:#6B7280;">schedule</span><span style="font-family:'Archivo',sans-serif;font-weight:600;font-size:13.5px;color:#374151;">{{ st.time }}</span></div>
+                  <div style="margin-top:12px;font-size:12px;color:#9CA3AF;">{{ st.count }}</div>
+                </div>
+              </div>
+            </sc-for>
+            <button onClick="{{ addShiftType }}" style="background:#FAFBFC;border:1.5px dashed #D1D5DB;border-radius:14px;padding:18px;cursor:pointer;display:flex;flex-direction:column;align-items:flex-start;gap:12px;text-align:left;" style-hover="border-color:#76b900;background:#F8FAF4;">
+              <div style="display:flex;align-items:center;gap:9px;"><span style="width:34px;height:34px;border-radius:9px;background:#F4F8E9;display:flex;align-items:center;justify-content:center;"><span style="font:20px 'Material Symbols Rounded';color:#5A7D17;">add</span></span><span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;color:#111827;">New shift type</span></div>
+              <div style="font-size:12.5px;color:#6B7280;">Pick a name, times and colour</div>
+              <div style="display:flex;gap:7px;">
+                <span style="width:18px;height:18px;border-radius:5px;background:#76b900;"></span><span style="width:18px;height:18px;border-radius:5px;background:#7C5CBF;"></span><span style="width:18px;height:18px;border-radius:5px;background:#1E293B;"></span><span style="width:18px;height:18px;border-radius:5px;background:#D97706;"></span><span style="width:18px;height:18px;border-radius:5px;background:#2563EB;"></span><span style="width:18px;height:18px;border-radius:5px;background:#16A34A;"></span>
+              </div>
+            </button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ show.timesheets }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px;">
+            <div>
+              <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:25px;margin:0;color:#111827;letter-spacing:-.015em;">Timesheets</h1>
+              <p style="margin:6px 0 0;color:#6B7280;font-size:13.5px;">Clock-in records from the kiosk and staff phones. Approve hours before export.</p>
+            </div>
+            <div style="text-align:right;">
+              <button onClick="{{ exportCsv }}" style="display:inline-flex;align-items:center;gap:7px;background:#fff;border:1px solid #E5E7EB;color:#374151;font-family:'Public Sans',sans-serif;font-weight:600;font-size:13px;padding:10px 15px;border-radius:10px;cursor:pointer;" style-hover="background:#F9FAFB;"><span style="font:18px 'Material Symbols Rounded';color:#5A7D17;">download</span>Export approved hours (CSV)</button>
+              <div style="font-size:11px;color:#9CA3AF;margin-top:7px;max-width:280px;line-height:1.4;">Export shows approved hours × entered rates. Estimate only — not a payroll calculation.</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+            <div style="display:inline-flex;align-items:center;gap:8px;background:#fff;border:1px solid #E5E7EB;border-radius:9px;padding:8px 13px;font-size:13px;color:#374151;font-weight:500;cursor:pointer;"><span style="font:17px 'Material Symbols Rounded';color:#9CA3AF;">date_range</span>23 – 29 Jun<span style="font:16px 'Material Symbols Rounded';color:#9CA3AF;">expand_more</span></div>
+            <div style="display:inline-flex;align-items:center;gap:8px;background:#fff;border:1px solid #E5E7EB;border-radius:9px;padding:8px 13px;font-size:13px;color:#374151;font-weight:500;cursor:pointer;"><span style="font:17px 'Material Symbols Rounded';color:#9CA3AF;">filter_list</span>All statuses<span style="font:16px 'Material Symbols Rounded';color:#9CA3AF;">expand_more</span></div>
+            <div style="flex:1;"></div>
+            <div style="display:inline-flex;align-items:center;gap:14px;background:#fff;border:1px solid #E5E7EB;border-radius:9px;padding:8px 14px;font-size:12.5px;"><span style="color:#6B7280;"><strong style="color:#15803D;">6</strong> approved</span><span style="color:#6B7280;"><strong style="color:#B45309;">4</strong> pending</span><span style="color:#6B7280;"><strong style="color:#B91C1C;">1</strong> needs fix</span></div>
+          </div>
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;box-shadow:0 1px 2px rgba(17,24,39,.04);overflow:hidden;">
+            <div style="overflow-x:auto;">
+              <div style="min-width:880px;">
+                <div style="display:grid;grid-template-columns:1.7fr .8fr .9fr .9fr .7fr 1fr 1.5fr;gap:0;background:#FAFBFC;border-bottom:1px solid #E5E7EB;padding:11px 18px;font-family:'Archivo',sans-serif;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9CA3AF;">
+                  <span>Staff</span><span>Day</span><span>Clock in</span><span>Clock out</span><span>Hours</span><span>Shift</span><span style="text-align:right;">Status</span>
+                </div>
+                <sc-for list="{{ timesheets }}" as="t" hint-placeholder-count="12">
+                  <div style="display:grid;grid-template-columns:1.7fr .8fr .9fr .9fr .7fr 1fr 1.5fr;gap:0;align-items:center;padding:11px 18px;border-bottom:1px solid #F3F4F6;font-size:13px;color:#374151;">
+                    <div style="display:flex;align-items:center;gap:10px;min-width:0;"><div style="width:28px;height:28px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Archivo',sans-serif;font-weight:700;font-size:11px;flex-shrink:0;background:{{ t.color }};">{{ t.initials }}</div><span style="font-weight:600;color:#111827;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ t.name }}</span></div>
+                    <span style="color:#6B7280;">{{ t.day }}</span>
+                    <span style="font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:5px;">{{ t.in }}<sc-if value="{{ t.gps }}"><span title="Clocked in 320m outside the 200m radius" style="font:16px 'Material Symbols Rounded';color:#D97706;">wrong_location</span></sc-if></span>
+                    <span style="font-variant-numeric:tabular-nums;color:#374151;">{{ t.out }}</span>
+                    <span style="font-variant-numeric:tabular-nums;font-weight:700;font-family:'Archivo',sans-serif;color:#111827;">{{ t.hours }}</span>
+                    <span style="font-size:12px;color:#6B7280;">{{ t.shift }}</span>
+                    <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;">
+                      <sc-if value="{{ t.pending }}"><button onClick="{{ approveTimesheet }}" style="font-size:12px;font-weight:700;color:#15803D;background:none;border:none;cursor:pointer;font-family:'Public Sans',sans-serif;">Approve</button></sc-if>
+                      <span style="font-family:'Archivo',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.04em;padding:4px 9px;border-radius:6px;white-space:nowrap;{{ t.badgeStyle }}">{{ t.badgeLabel }}</span>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ show.reports }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-bottom:18px;">
+            <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:25px;margin:0;color:#111827;letter-spacing:-.015em;">Labour &amp; hours</h1>
+            <p style="margin:6px 0 14px;color:#6B7280;font-size:13.5px;">Approved hours and an estimated labour cost. Always an estimate — never a payroll figure.</p>
+            <div style="display:inline-flex;background:#F3F4F6;border:1px solid #E5E7EB;border-radius:10px;padding:3px;gap:2px;">
+              <span style="background:#fff;color:#111827;box-shadow:0 1px 2px rgba(17,24,39,.10);font-weight:600;font-size:12.5px;padding:7px 14px;border-radius:8px;cursor:pointer;">This week</span>
+              <span style="color:#6B7280;font-weight:600;font-size:12.5px;padding:7px 14px;border-radius:8px;cursor:pointer;">Last 4 weeks</span>
+              <span style="color:#6B7280;font-weight:600;font-size:12.5px;padding:7px 14px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">Custom range<span style="font:15px 'Material Symbols Rounded';">expand_more</span></span>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:18px;">
+            <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;padding:18px;box-shadow:0 1px 2px rgba(17,24,39,.04);">
+              <div style="font-size:12.5px;color:#6B7280;font-weight:600;">Total approved hours</div>
+              <div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:30px;color:#3F6212;margin-top:8px;line-height:1;">142h</div>
+              <div style="font-size:12px;color:#9CA3AF;margin-top:7px;">across 6 staff</div>
+            </div>
+            <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;padding:18px;box-shadow:0 1px 2px rgba(17,24,39,.04);">
+              <div style="font-size:12.5px;color:#6B7280;font-weight:600;">Estimated labour cost</div>
+              <div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:30px;color:#111827;margin-top:8px;line-height:1;">$4,820</div>
+              <div style="font-size:11.5px;color:#D97706;margin-top:7px;display:flex;align-items:center;gap:4px;"><span style="font:15px 'Material Symbols Rounded';">warning</span>Estimate — hours × rates only</div>
+            </div>
+            <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;padding:18px;box-shadow:0 1px 2px rgba(17,24,39,.04);">
+              <div style="font-size:12.5px;color:#6B7280;font-weight:600;">Pending (not costed)</div>
+              <div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:30px;color:#B45309;margin-top:8px;line-height:1;">+18h</div>
+              <div style="font-size:12px;color:#9CA3AF;margin-top:7px;">awaiting approval</div>
+            </div>
+            <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;padding:18px;box-shadow:0 1px 2px rgba(17,24,39,.04);">
+              <div style="font-size:12.5px;color:#6B7280;font-weight:600;">Staff without rates</div>
+              <div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:30px;color:#111827;margin-top:8px;line-height:1;display:flex;align-items:center;gap:7px;">2<span style="font:22px 'Material Symbols Rounded';color:#D97706;">warning</span></div>
+              <div style="font-size:12px;color:#9CA3AF;margin-top:7px;">cost not estimated</div>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1.15fr;gap:16px;align-items:start;">
+            <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;padding:20px;box-shadow:0 1px 2px rgba(17,24,39,.04);">
+              <div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;color:#111827;margin-bottom:18px;">Approved hours by week</div>
+              <sc-for list="{{ trend }}" as="w" hint-placeholder-count="4">
+                <div style="margin-bottom:16px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;"><span style="font-size:12.5px;color:#374151;font-weight:600;">{{ w.label }}</span><span style="font-size:12px;color:#6B7280;font-variant-numeric:tabular-nums;"><strong style="font-family:'Archivo',sans-serif;color:#111827;">{{ w.hoursLabel }}</strong> · {{ w.costLabel }}</span></div>
+                  <div style="height:12px;background:#F3F4F6;border-radius:7px;overflow:hidden;"><div style="height:100%;border-radius:7px;{{ w.barStyle }}"></div></div>
+                </div>
+              </sc-for>
+              <div style="font-size:11.5px;color:#9CA3AF;margin-top:4px;border-top:1px solid #F3F4F6;padding-top:12px;">Costs are estimates (approved hours × entered rates). Pending hours are not included.</div>
+            </div>
+            <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;box-shadow:0 1px 2px rgba(17,24,39,.04);overflow:hidden;">
+              <div style="display:grid;grid-template-columns:1.6fr .9fr .9fr .9fr;gap:0;background:#FAFBFC;border-bottom:1px solid #E5E7EB;padding:11px 18px;font-family:'Archivo',sans-serif;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9CA3AF;"><span>Staff</span><span>Rate</span><span style="text-align:right;">Hours</span><span style="text-align:right;">Est. cost</span></div>
+              <sc-for list="{{ reportStaff }}" as="r" hint-placeholder-count="7">
+                <div style="display:grid;grid-template-columns:1.6fr .9fr .9fr .9fr;gap:0;align-items:center;padding:11px 18px;border-bottom:1px solid #F3F4F6;font-size:13px;">
+                  <div style="display:flex;align-items:center;gap:9px;min-width:0;"><div style="width:26px;height:26px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Archivo',sans-serif;font-weight:700;font-size:10.5px;flex-shrink:0;background:{{ r.color }};">{{ r.initials }}</div><span style="font-weight:600;color:#111827;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ r.name }}</span></div>
+                  <sc-if value="{{ r.noRate }}"><span style="font-size:11px;font-weight:700;color:#B45309;background:#FEF3E2;border:1px solid #FED7AA;padding:2px 7px;border-radius:6px;">No rate set</span></sc-if>
+                  <sc-if value="{{ r.hasRate }}"><span style="font-variant-numeric:tabular-nums;color:#374151;">{{ r.rate }}</span></sc-if>
+                  <span style="text-align:right;font-variant-numeric:tabular-nums;font-weight:700;font-family:'Archivo',sans-serif;color:#111827;">{{ r.hours }}</span>
+                  <span style="text-align:right;font-variant-numeric:tabular-nums;color:#374151;">{{ r.cost }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ show.staff }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-bottom:18px;">
+            <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:25px;margin:0;color:#111827;letter-spacing:-.015em;">Staff</h1>
+            <p style="margin:6px 0 0;color:#6B7280;font-size:13.5px;">Your team, their rates, certifications and documents — all in one place.</p>
+          </div>
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:13px;padding:14px;margin-bottom:18px;box-shadow:0 1px 2px rgba(17,24,39,.04);display:flex;align-items:center;gap:11px;flex-wrap:wrap;">
+            <span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:13px;color:#111827;display:inline-flex;align-items:center;gap:7px;"><span style="font:19px 'Material Symbols Rounded';color:#5A7D17;">person_add</span>Add someone</span>
+            <input placeholder="Full name" style="flex:1;min-width:150px;border:1px solid #D1D5DB;border-radius:9px;padding:9px 12px;font-family:'Public Sans',sans-serif;font-size:13.5px;outline:none;" style-focus="border-color:#76b900;box-shadow:0 0 0 3px rgba(118,185,0,.15);">
+            <input placeholder="Email address" style="flex:1;min-width:170px;border:1px solid #D1D5DB;border-radius:9px;padding:9px 12px;font-family:'Public Sans',sans-serif;font-size:13.5px;outline:none;" style-focus="border-color:#76b900;box-shadow:0 0 0 3px rgba(118,185,0,.15);">
+            <button onClick="{{ addStaff }}" style="background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:13px;padding:9px 16px;border-radius:9px;cursor:pointer;" style-hover="background:#6aa600;">Add to team</button>
+          </div>
+          <div style="display:grid;grid-template-columns:340px 1fr;gap:18px;align-items:start;">
+            <div style="display:flex;flex-direction:column;gap:9px;">
+              <sc-for list="{{ staffList }}" as="s" hint-placeholder-count="6">
+                <button onClick="{{ s.select }}" style="text-align:left;border:1px solid;border-radius:13px;padding:13px 14px;cursor:pointer;display:flex;align-items:center;gap:12px;{{ s.selStyle }}" style-hover="border-color:#76b900;">
+                  <div style="width:38px;height:38px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Archivo',sans-serif;font-weight:700;font-size:13px;flex-shrink:0;background:{{ s.color }};">{{ s.initials }}</div>
+                  <div style="flex:1;min-width:0;">
+                    <div style="font-weight:700;font-size:14px;color:#111827;">{{ s.name }}</div>
+                    <div style="font-size:12px;color:#6B7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ s.role }} · {{ s.email }}</div>
+                    <div style="display:flex;gap:6px;margin-top:6px;">
+                      <sc-if value="{{ s.onLeave }}"><span style="font-size:9.5px;font-weight:700;letter-spacing:.03em;color:#6B7280;background:#F3F4F6;border:1px solid #E5E7EB;padding:2px 7px;border-radius:5px;">ON LEAVE</span></sc-if>
+                      <sc-if value="{{ s.certWarn }}"><span style="font-size:9.5px;font-weight:700;letter-spacing:.03em;color:#B45309;background:#FEF3E2;border:1px solid #FED7AA;padding:2px 7px;border-radius:5px;display:inline-flex;align-items:center;gap:3px;"><span style="font:13px 'Material Symbols Rounded';">warning</span>CERT</span></sc-if>
+                    </div>
+                  </div>
+                  <span style="font:20px 'Material Symbols Rounded';color:#D1D5DB;">chevron_right</span>
+                </button>
+              </sc-for>
+            </div>
+
+            <div style="background:#fff;border:1px solid #E5E7EB;border-radius:16px;box-shadow:0 1px 3px rgba(17,24,39,.05);overflow:hidden;">
+              <div style="padding:22px;border-bottom:1px solid #F1F3F5;display:flex;align-items:center;gap:15px;">
+                <div style="width:54px;height:54px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Archivo',sans-serif;font-weight:700;font-size:19px;flex-shrink:0;background:{{ staffDetail.color }};">{{ staffDetail.initials }}</div>
+                <div style="flex:1;">
+                  <div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:20px;color:#111827;">{{ staffDetail.name }}</div>
+                  <div style="font-size:13px;color:#6B7280;margin-top:2px;">{{ staffDetail.role }} · {{ staffDetail.email }}</div>
+                </div>
+                <div style="display:flex;gap:8px;">
+                  <button onClick="{{ generatePin }}" style="display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #E5E7EB;color:#374151;font-family:'Public Sans',sans-serif;font-weight:600;font-size:12.5px;padding:8px 13px;border-radius:9px;cursor:pointer;" style-hover="background:#F9FAFB;"><span style="font:17px 'Material Symbols Rounded';color:#6B7280;">pin</span>Generate PIN</button>
+                </div>
+              </div>
+              <div style="padding:22px;display:grid;grid-template-columns:1fr 1fr;gap:22px;">
+                <div>
+                  <div style="font-family:'Archivo',sans-serif;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:9px;">Pay rate</div>
+                  <div style="display:flex;align-items:baseline;gap:6px;"><span style="font-family:'Archivo',sans-serif;font-weight:800;font-size:24px;color:#111827;">{{ staffDetail.rate }}</span><span style="font-size:13px;color:#6B7280;">/ hour</span></div>
+                  <div style="font-size:12.5px;color:#6B7280;margin-top:4px;">{{ staffDetail.rateType }} · <span style="color:#9CA3AF;">rate label, informational only</span></div>
+                </div>
+                <div>
+                  <div style="font-family:'Archivo',sans-serif;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:9px;">Staff notices</div>
+                  <button onClick="{{ copyNotices }}" style="display:inline-flex;align-items:center;gap:7px;background:#F4F8E9;border:1px solid #D6E8B0;color:#3F6212;font-family:'Public Sans',sans-serif;font-weight:600;font-size:13px;padding:9px 13px;border-radius:9px;cursor:pointer;" style-hover="background:#EAF3D8;"><span style="font:17px 'Material Symbols Rounded';">link</span>Copy notices link</button>
+                  <div style="font-size:11.5px;color:#9CA3AF;margin-top:6px;">PIN-gated /me link for them to check shifts</div>
+                </div>
+              </div>
+              <div style="padding:0 22px 18px;">
+                <div style="font-family:'Archivo',sans-serif;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:11px;">Certifications</div>
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                  <sc-for list="{{ staffDetail.certs }}" as="c" hint-placeholder-count="3">
+                    <div style="display:flex;align-items:center;gap:11px;padding:11px 13px;border:1px solid #F1F3F5;border-radius:10px;">
+                      <span style="font:21px 'Material Symbols Rounded';{{ c.iconColor }}">{{ c.icon }}</span>
+                      <span style="flex:1;font-weight:600;font-size:13.5px;color:#111827;">{{ c.name }}</span>
+                      <span style="font-size:12.5px;color:#6B7280;">{{ c.detail }}</span>
+                      <span style="font-family:'Archivo',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.04em;padding:3px 8px;border-radius:6px;{{ c.badgeStyle }}">{{ c.badgeLabel }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="padding:18px 22px;background:#FAFBFC;border-top:1px solid #F1F3F5;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;">
+                  <div style="font-family:'Archivo',sans-serif;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF;">Documents</div>
+                  <sc-if value="{{ staffDrive }}"><span style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:#15803D;font-weight:600;"><span style="width:7px;height:7px;border-radius:50%;background:#16A34A;"></span>Drive connected · owner@gmail.com</span></sc-if>
+                </div>
+                <sc-if value="{{ driveDocs }}">
+                  <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:12px;">
+                    <sc-for list="{{ staffDetail.docs }}" as="d" hint-placeholder-count="2">
+                      <div style="display:flex;align-items:center;gap:11px;background:#fff;border:1px solid #E5E7EB;border-radius:9px;padding:10px 13px;">
+                        <span style="font:20px 'Material Symbols Rounded';color:#2563EB;">description</span>
+                        <span style="flex:1;font-size:13px;font-weight:500;color:#111827;">{{ d.name }}</span>
+                        <a style="font-size:12px;font-weight:600;color:#4D7C0F;cursor:pointer;display:inline-flex;align-items:center;gap:3px;"><span style="font:15px 'Material Symbols Rounded';">open_in_new</span>Open</a>
+                        <button style="background:none;border:none;cursor:pointer;color:#9CA3AF;display:flex;" style-hover="color:#DC2626;"><span style="font:18px 'Material Symbols Rounded';">delete</span></button>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ driveEmpty }}">
+                  <div style="font-size:12.5px;color:#9CA3AF;margin-bottom:12px;padding:10px 0;">No documents yet. Upload a contract or certificate to keep it in your Drive.</div>
+                </sc-if>
+                <sc-if value="{{ staffDrive }}">
+                  <div style="display:flex;align-items:center;gap:10px;">
+                    <button onClick="{{ uploadDoc }}" style="display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #E5E7EB;color:#374151;font-family:'Public Sans',sans-serif;font-weight:600;font-size:12.5px;padding:8px 13px;border-radius:9px;cursor:pointer;" style-hover="background:#F4F8E9;border-color:#D6E8B0;"><span style="font:17px 'Material Symbols Rounded';color:#5A7D17;">upload_file</span>Upload document</button>
+                    <button onClick="{{ toggleStaffDrive }}" style="background:none;border:none;color:#9CA3AF;font-size:12px;font-weight:600;cursor:pointer;" style-hover="color:#DC2626;">Disconnect Drive</button>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ staffNoDrive }}">
+                  <div style="background:#fff;border:1px dashed #D1D5DB;border-radius:11px;padding:16px;display:flex;align-items:center;gap:14px;">
+                    <span style="font:26px 'Material Symbols Rounded';color:#9CA3AF;">add_to_drive</span>
+                    <div style="flex:1;"><div style="font-weight:600;font-size:13px;color:#111827;">Connect Google Drive</div><div style="font-size:12px;color:#6B7280;margin-top:2px;">Store staff documents in your own Drive — contracts, certificates, ID stay in your account.</div></div>
+                    <button onClick="{{ toggleStaffDrive }}" style="background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:12.5px;padding:9px 14px;border-radius:9px;cursor:pointer;white-space:nowrap;" style-hover="background:#6aa600;">Connect Drive</button>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ show.leave }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px;">
+            <div>
+              <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:25px;margin:0;color:#111827;letter-spacing:-.015em;">Leave requests</h1>
+              <p style="margin:6px 0 0;color:#6B7280;font-size:13.5px;">Approve or deny — staff get notified instantly and the roster updates.</p>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:11px;padding:11px 15px;margin-bottom:18px;">
+            <span style="font:19px 'Material Symbols Rounded';color:#2563EB;">info</span>
+            <span style="font-size:12.5px;color:#1E40AF;">Leave is recorded for scheduling purposes. Balances and accruals are managed by your payroll provider.</span>
+          </div>
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;box-shadow:0 1px 2px rgba(17,24,39,.04);overflow:hidden;">
+            <sc-for list="{{ leaveList }}" as="l" hint-placeholder-count="5">
+              <div style="display:flex;align-items:center;gap:15px;padding:15px 20px;border-bottom:1px solid #F3F4F6;flex-wrap:wrap;">
+                <div style="display:flex;align-items:center;gap:11px;min-width:180px;">
+                  <div style="width:36px;height:36px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Archivo',sans-serif;font-weight:700;font-size:12.5px;flex-shrink:0;background:{{ l.color }};">{{ l.initials }}</div>
+                  <div><div style="font-weight:700;font-size:14px;color:#111827;">{{ l.name }}</div><div style="font-size:12px;color:#6B7280;">{{ l.type }} leave</div></div>
+                </div>
+                <div style="min-width:130px;">
+                  <div style="font-family:'Archivo',sans-serif;font-weight:600;font-size:13.5px;color:#111827;">{{ l.dates }}</div>
+                  <div style="font-size:12px;color:#9CA3AF;">{{ l.days }}</div>
+                </div>
+                <div style="flex:1;min-width:120px;font-size:12.5px;color:#6B7280;"><sc-if value="{{ l.hasReason }}">“{{ l.reason }}”</sc-if></div>
+                <sc-if value="{{ l.isPending }}">
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <button onClick="{{ l.deny }}" style="display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid #FECACA;color:#B91C1C;font-family:'Public Sans',sans-serif;font-weight:600;font-size:12.5px;padding:8px 14px;border-radius:9px;cursor:pointer;" style-hover="background:#FEF2F2;"><span style="font:16px 'Material Symbols Rounded';">close</span>Deny</button>
+                    <button onClick="{{ l.approve }}" style="display:inline-flex;align-items:center;gap:5px;background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:12.5px;padding:8px 15px;border-radius:9px;cursor:pointer;" style-hover="background:#6aa600;"><span style="font:16px 'Material Symbols Rounded';">check</span>Approve</button>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ l.isDecided }}">
+                  <span style="font-family:'Archivo',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.04em;padding:5px 11px;border-radius:6px;{{ l.badgeStyle }}">{{ l.badgeLabel }}</span>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ show.certs }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px;">
+            <div>
+              <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:25px;margin:0;color:#111827;letter-spacing:-.015em;">Certifications</h1>
+              <p style="margin:6px 0 0;color:#6B7280;font-size:13.5px;">RSA, Food Safety, First Aid — tracked per staff so nothing lapses on a shift.</p>
+            </div>
+            <span style="display:inline-flex;align-items:center;gap:7px;background:#F4F8E9;border:1px solid #D6E8B0;color:#3F6212;font-size:12px;font-weight:600;padding:7px 13px;border-radius:20px;"><span style="font:16px 'Material Symbols Rounded';">mark_email_read</span>Reminder emails sent automatically</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+            <button onClick="{{ toggleCertFilter }}" style="display:inline-flex;align-items:center;gap:8px;font-family:'Public Sans',sans-serif;font-weight:600;font-size:13px;padding:9px 14px;border-radius:9px;cursor:pointer;{{ certFilterStyle }}">
+              <span style="font:18px 'Material Symbols Rounded';">filter_alt</span>Show expiring &amp; expired only
+            </button>
+            <sc-if value="{{ certFilter }}"><span style="font-size:12.5px;color:#B45309;font-weight:600;">Showing items that need attention</span></sc-if>
+          </div>
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;box-shadow:0 1px 2px rgba(17,24,39,.04);overflow:hidden;">
+            <div style="overflow-x:auto;"><div style="min-width:720px;">
+              <div style="display:grid;grid-template-columns:1.5fr 1.1fr 1fr 1.2fr .9fr;gap:0;background:#FAFBFC;border-bottom:1px solid #E5E7EB;padding:11px 18px;font-family:'Archivo',sans-serif;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9CA3AF;"><span>Staff</span><span>Certification</span><span>Expiry</span><span>Status</span><span style="text-align:right;">Days left</span></div>
+              <sc-for list="{{ certRows }}" as="c" hint-placeholder-count="10">
+                <div style="display:grid;grid-template-columns:1.5fr 1.1fr 1fr 1.2fr .9fr;gap:0;align-items:center;padding:12px 18px;border-bottom:1px solid #F3F4F6;font-size:13px;">
+                  <div style="display:flex;align-items:center;gap:10px;min-width:0;"><div style="width:28px;height:28px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Archivo',sans-serif;font-weight:700;font-size:11px;flex-shrink:0;background:{{ c.color }};">{{ c.initials }}</div><span style="font-weight:600;color:#111827;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ c.name }}</span></div>
+                  <span style="color:#374151;font-weight:500;">{{ c.cert }}</span>
+                  <span style="color:#6B7280;font-variant-numeric:tabular-nums;">{{ c.expiry }}</span>
+                  <span style="display:inline-flex;align-items:center;gap:7px;"><span style="font:18px 'Material Symbols Rounded';{{ c.iconColor }}">{{ c.icon }}</span><span style="font-family:'Archivo',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.04em;padding:3px 8px;border-radius:6px;{{ c.badgeStyle }}">{{ c.badgeLabel }}</span></span>
+                  <span style="text-align:right;font-variant-numeric:tabular-nums;color:#6B7280;">{{ c.days }}</span>
+                </div>
+              </sc-for>
+            </div></div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ show.stock }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px;">
+            <div>
+              <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:25px;margin:0;color:#111827;letter-spacing:-.015em;">Stock levels</h1>
+              <p style="margin:6px 0 0;color:#6B7280;font-size:13.5px;">Results from staff stock checks. Items below threshold are flagged for ordering.</p>
+            </div>
+            <span style="display:inline-flex;align-items:center;gap:7px;background:#FEECEC;border:1px solid #FECACA;color:#B91C1C;font-size:12.5px;font-weight:700;padding:7px 13px;border-radius:20px;"><span style="font:16px 'Material Symbols Rounded';">error</span>{{ stockNeeds }} need ordering</span>
+          </div>
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;box-shadow:0 1px 2px rgba(17,24,39,.04);overflow:hidden;">
+            <div style="overflow-x:auto;"><div style="min-width:820px;">
+              <div style="display:grid;grid-template-columns:1.5fr 1.3fr 1.1fr 1.1fr 1.3fr;gap:0;background:#FAFBFC;border-bottom:1px solid #E5E7EB;padding:11px 18px;font-family:'Archivo',sans-serif;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9CA3AF;"><span>Item</span><span>Supplier</span><span>Checked by</span><span>Checked at</span><span style="text-align:right;">Status</span></div>
+              <sc-for list="{{ stock }}" as="s" hint-placeholder-count="8">
+                <div style="display:grid;grid-template-columns:1.5fr 1.3fr 1.1fr 1.1fr 1.3fr;gap:0;align-items:center;padding:12px 18px;border-bottom:1px solid #F3F4F6;font-size:13px;{{ s.rowStyle }}">
+                  <span style="font-weight:700;color:#111827;">{{ s.item }}</span>
+                  <span style="color:#6B7280;">{{ s.supplier }}</span>
+                  <span style="color:#374151;display:inline-flex;align-items:center;gap:7px;"><span style="width:22px;height:22px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Archivo',sans-serif;font-weight:700;font-size:9px;background:{{ s.byColor }};">{{ s.by }}</span>{{ s.by }}</span>
+                  <span style="color:#6B7280;font-variant-numeric:tabular-nums;">{{ s.at }}</span>
+                  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;">
+                    <span style="font-family:'Archivo',sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.04em;padding:4px 9px;border-radius:6px;{{ s.badgeStyle }}">{{ s.badgeLabel }}</span>
+                    <sc-if value="{{ s.reminder }}"><span style="font-size:10px;color:#5A7D17;font-weight:600;display:inline-flex;align-items:center;gap:3px;"><span style="font:13px 'Material Symbols Rounded';">mark_email_read</span>Order reminder sent</span></sc-if>
+                  </div>
+                </div>
+              </sc-for>
+            </div></div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ show.items }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px;">
+            <div>
+              <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:25px;margin:0;color:#111827;letter-spacing:-.015em;">Items</h1>
+              <p style="margin:6px 0 0;color:#6B7280;font-size:13.5px;">Your product catalogue — SKUs, categories, suppliers and reorder thresholds.</p>
+            </div>
+            <div style="display:flex;gap:10px;">
+              <button onClick="{{ openCsv }}" style="display:inline-flex;align-items:center;gap:7px;background:#fff;border:1px solid #E5E7EB;color:#374151;font-family:'Public Sans',sans-serif;font-weight:600;font-size:13px;padding:10px 14px;border-radius:10px;cursor:pointer;" style-hover="background:#F9FAFB;"><span style="font:18px 'Material Symbols Rounded';color:#6B7280;">upload_file</span>Import from CSV</button>
+              <button onClick="{{ addItem }}" style="display:inline-flex;align-items:center;gap:7px;background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:13.5px;padding:10px 15px;border-radius:10px;cursor:pointer;" style-hover="background:#6aa600;"><span style="font:19px 'Material Symbols Rounded';">add</span>Add item</button>
+            </div>
+          </div>
+          <sc-if value="{{ csvPreview }}">
+            <div style="background:#fff;border:1px solid #76b900;border-radius:14px;box-shadow:0 6px 20px rgba(17,24,39,.10);overflow:hidden;margin-bottom:18px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:#F4F8E9;border-bottom:1px solid #D6E8B0;">
+                <div style="display:flex;align-items:center;gap:9px;"><span style="font:20px 'Material Symbols Rounded';color:#5A7D17;">table_view</span><span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:14px;color:#111827;">Preview import — <span style="color:#3F6212;">kebab-stock.csv</span></span></div>
+                <button onClick="{{ cancelCsv }}" style="background:none;border:none;cursor:pointer;color:#6B7280;display:flex;"><span style="font:20px 'Material Symbols Rounded';">close</span></button>
+              </div>
+              <div style="padding:6px 0;">
+                <div style="display:grid;grid-template-columns:2fr 1.2fr 1.2fr;padding:8px 18px;font-family:'Archivo',sans-serif;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9CA3AF;"><span>Item</span><span>SKU</span><span>Category</span></div>
+                <sc-for list="{{ csvRows }}" as="r" hint-placeholder-count="4">
+                  <div style="display:grid;grid-template-columns:2fr 1.2fr 1.2fr;align-items:center;padding:9px 18px;border-top:1px solid #F3F4F6;font-size:13px;"><span style="font-weight:600;color:#111827;display:inline-flex;align-items:center;gap:8px;"><span style="font:16px 'Material Symbols Rounded';color:#16A34A;">add_circle</span>{{ r.name }}</span><span style="font-family:ui-monospace,monospace;font-size:12px;color:#6B7280;">{{ r.sku }}</span><span><span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:5px;{{ r.catStyle }}">{{ r.cat }}</span></span></div>
+                </sc-for>
+                <div style="padding:10px 18px;font-size:12px;color:#9CA3AF;border-top:1px solid #F3F4F6;">…and 20 more items ready to import</div>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:14px 18px;background:#FAFBFC;border-top:1px solid #F1F3F5;">
+                <button onClick="{{ cancelCsv }}" style="background:none;border:1px solid #E5E7EB;color:#374151;font-family:'Public Sans',sans-serif;font-weight:600;font-size:13px;padding:9px 16px;border-radius:9px;cursor:pointer;" style-hover="background:#F3F4F6;">Cancel</button>
+                <button onClick="{{ confirmCsv }}" style="display:inline-flex;align-items:center;gap:7px;background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:13.5px;padding:9px 18px;border-radius:9px;cursor:pointer;" style-hover="background:#6aa600;"><span style="font:18px 'Material Symbols Rounded';">check</span>Import 24 items</button>
+              </div>
+            </div>
+          </sc-if>
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;box-shadow:0 1px 2px rgba(17,24,39,.04);overflow:hidden;">
+            <div style="overflow-x:auto;"><div style="min-width:840px;">
+              <div style="display:grid;grid-template-columns:1.6fr 1fr 1fr 1.4fr .9fr .8fr;gap:0;background:#FAFBFC;border-bottom:1px solid #E5E7EB;padding:11px 18px;font-family:'Archivo',sans-serif;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9CA3AF;"><span>Item</span><span>SKU</span><span>Category</span><span>Supplier</span><span style="text-align:right;">Reorder</span><span style="text-align:right;">Unit</span></div>
+              <sc-for list="{{ items }}" as="it" hint-placeholder-count="11">
+                <div style="display:grid;grid-template-columns:1.6fr 1fr 1fr 1.4fr .9fr .8fr;gap:0;align-items:center;padding:11px 18px;border-bottom:1px solid #F3F4F6;font-size:13px;">
+                  <span style="font-weight:600;color:#111827;">{{ it.name }}</span>
+                  <span style="font-family:ui-monospace,monospace;font-size:12px;color:#6B7280;">{{ it.sku }}</span>
+                  <span><span style="font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:6px;{{ it.catStyle }}">{{ it.cat }}</span></span>
+                  <span style="color:#6B7280;">{{ it.supplier }}</span>
+                  <span style="text-align:right;font-variant-numeric:tabular-nums;color:#374151;font-weight:600;">{{ it.reorder }}</span>
+                  <span style="text-align:right;color:#9CA3AF;">{{ it.unit }}</span>
+                </div>
+              </sc-for>
+            </div></div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ show.suppliers }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px;">
+            <div>
+              <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:25px;margin:0;color:#111827;letter-spacing:-.015em;">Suppliers</h1>
+              <p style="margin:6px 0 0;color:#6B7280;font-size:13.5px;">Who you order from and which days they deliver. Drives the daily order reminders.</p>
+            </div>
+            <button onClick="{{ addSupplier }}" style="display:inline-flex;align-items:center;gap:7px;background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:13.5px;padding:11px 16px;border-radius:10px;cursor:pointer;" style-hover="background:#6aa600;"><span style="font:19px 'Material Symbols Rounded';">add</span>Add supplier</button>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;">
+            <sc-for list="{{ suppliers }}" as="sp" hint-placeholder-count="4">
+              <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;padding:20px;box-shadow:0 1px 2px rgba(17,24,39,.04);">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
+                  <div style="display:flex;align-items:center;gap:12px;">
+                    <div style="width:42px;height:42px;border-radius:11px;background:#F4F8E9;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><span style="font:23px 'Material Symbols Rounded';color:#5A7D17;">local_shipping</span></div>
+                    <div>
+                      <div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:16px;color:#111827;">{{ sp.name }}</div>
+                      <span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:5px;display:inline-block;margin-top:3px;{{ sp.catStyle }}">{{ sp.cat }}</span>
+                    </div>
+                  </div>
+                  <button onClick="{{ addSupplier }}" style="background:none;border:none;cursor:pointer;color:#9CA3AF;display:flex;" style-hover="color:#4D7C0F;"><span style="font:19px 'Material Symbols Rounded';">edit</span></button>
+                </div>
+                <div style="margin-top:14px;display:flex;flex-direction:column;gap:6px;">
+                  <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#6B7280;"><span style="font:17px 'Material Symbols Rounded';color:#9CA3AF;">mail</span>{{ sp.contact }}</div>
+                  <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#6B7280;"><span style="font:17px 'Material Symbols Rounded';color:#9CA3AF;">call</span>{{ sp.phone }}</div>
+                </div>
+                <div style="margin-top:16px;">
+                  <div style="font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#9CA3AF;margin-bottom:8px;">Delivery days</div>
+                  <div style="display:flex;gap:6px;">
+                    <sc-for list="{{ sp.dayChips }}" as="d" hint-placeholder-count="7">
+                      <span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:11px;padding:6px 0;border-radius:7px;width:38px;text-align:center;{{ d.style }}">{{ d.day }}</span>
+                    </sc-for>
+                  </div>
+                </div>
+              </div>
+            </sc-for>
+            <div style="background:#FAFBFC;border:1.5px dashed #D1D5DB;border-radius:14px;padding:20px;">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;"><span style="width:34px;height:34px;border-radius:9px;background:#F4F8E9;display:flex;align-items:center;justify-content:center;"><span style="font:20px 'Material Symbols Rounded';color:#5A7D17;">add</span></span><span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;color:#111827;">Add a supplier</span></div>
+              <input placeholder="Supplier name" style="width:100%;border:1px solid #D1D5DB;border-radius:9px;padding:10px 12px;font-family:'Public Sans',sans-serif;font-size:13.5px;outline:none;margin-bottom:9px;" style-focus="border-color:#76b900;box-shadow:0 0 0 3px rgba(118,185,0,.15);">
+              <input placeholder="Email or phone" style="width:100%;border:1px solid #D1D5DB;border-radius:9px;padding:10px 12px;font-family:'Public Sans',sans-serif;font-size:13.5px;outline:none;margin-bottom:12px;" style-focus="border-color:#76b900;box-shadow:0 0 0 3px rgba(118,185,0,.15);">
+              <div style="font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#9CA3AF;margin-bottom:8px;">Delivery days</div>
+              <div style="display:flex;gap:6px;margin-bottom:14px;">
+                <span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:11px;padding:6px 0;border-radius:7px;width:38px;text-align:center;background:#F9FAFB;color:#CBD0D8;border:1px solid #F1F3F5;cursor:pointer;">Mon</span><span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:11px;padding:6px 0;border-radius:7px;width:38px;text-align:center;background:#F9FAFB;color:#CBD0D8;border:1px solid #F1F3F5;cursor:pointer;">Tue</span><span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:11px;padding:6px 0;border-radius:7px;width:38px;text-align:center;background:#F9FAFB;color:#CBD0D8;border:1px solid #F1F3F5;cursor:pointer;">Wed</span><span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:11px;padding:6px 0;border-radius:7px;width:38px;text-align:center;background:#F9FAFB;color:#CBD0D8;border:1px solid #F1F3F5;cursor:pointer;">Thu</span><span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:11px;padding:6px 0;border-radius:7px;width:38px;text-align:center;background:#F9FAFB;color:#CBD0D8;border:1px solid #F1F3F5;cursor:pointer;">Fri</span>
+              </div>
+              <button onClick="{{ addSupplier }}" style="width:100%;background:#111827;border:none;color:#fff;font-family:'Archivo',sans-serif;font-weight:700;font-size:13.5px;padding:11px;border-radius:10px;cursor:pointer;" style-hover="background:#1F2937;">Add supplier</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ show.settings }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-bottom:18px;">
+            <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:25px;margin:0;color:#111827;letter-spacing:-.015em;">Settings</h1>
+            <p style="margin:6px 0 0;color:#6B7280;font-size:13.5px;">Clock-in links, what you get notified about, and where documents are stored.</p>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start;">
+            <div style="display:flex;flex-direction:column;gap:18px;">
+              <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;box-shadow:0 1px 2px rgba(17,24,39,.04);overflow:hidden;">
+                <div style="padding:14px 18px;border-bottom:1px solid #F1F3F5;font-family:'Archivo',sans-serif;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#9CA3AF;">Account</div>
+                <div style="padding:18px;">
+                  <div style="display:flex;align-items:center;gap:11px;margin-bottom:14px;"><span style="width:38px;height:38px;border-radius:50%;background:#111827;color:#76b900;display:flex;align-items:center;justify-content:center;font-family:'Archivo',sans-serif;font-weight:700;font-size:13px;">TK</span><div><div style="font-weight:700;font-size:14px;color:#111827;">support@zaleit.com.au</div><div style="font-size:12px;color:#6B7280;">Signed in</div></div></div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid #F3F4F6;padding-top:13px;"><span style="font-size:13px;color:#6B7280;">Business</span><span style="font-weight:600;font-size:13.5px;color:#111827;">Troy's Kebabs</span></div>
+                  <div style="margin-top:12px;font-size:11.5px;color:#9CA3AF;">Display only — contact support to change account details.</div>
+                </div>
+              </div>
+
+              <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;box-shadow:0 1px 2px rgba(17,24,39,.04);overflow:hidden;">
+                <div style="padding:14px 18px;border-bottom:1px solid #F1F3F5;font-family:'Archivo',sans-serif;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#9CA3AF;">Clock-in</div>
+                <div style="padding:18px;">
+                  <div style="font-size:12.5px;font-weight:600;color:#374151;margin-bottom:7px;">Kiosk link</div>
+                  <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+                    <input readonly value="roster.zaleit.com.au/kiosk/troys-k2f9" style="flex:1;min-width:160px;border:1px solid #E5E7EB;background:#F9FAFB;border-radius:9px;padding:9px 12px;font-family:ui-monospace,monospace;font-size:12px;color:#6B7280;outline:none;">
+                    <button onClick="{{ copyKiosk }}" style="background:#fff;border:1px solid #E5E7EB;color:#374151;font-weight:600;font-size:12.5px;padding:9px 13px;border-radius:9px;cursor:pointer;font-family:'Public Sans',sans-serif;" style-hover="background:#F3F4F6;">Copy</button>
+                    <button onClick="{{ genKiosk }}" style="background:#fff;border:1px solid #E5E7EB;color:#374151;font-weight:600;font-size:12.5px;padding:9px 13px;border-radius:9px;cursor:pointer;font-family:'Public Sans',sans-serif;" style-hover="background:#F3F4F6;">Generate new</button>
+                  </div>
+                  <div style="font-size:12.5px;font-weight:600;color:#374151;margin-bottom:7px;">Personal phone link</div>
+                  <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;">
+                    <input readonly value="roster.zaleit.com.au/clock/troys-p7x3" style="flex:1;min-width:160px;border:1px solid #E5E7EB;background:#F9FAFB;border-radius:9px;padding:9px 12px;font-family:ui-monospace,monospace;font-size:12px;color:#6B7280;outline:none;">
+                    <button onClick="{{ copyPhone }}" style="background:#fff;border:1px solid #E5E7EB;color:#374151;font-weight:600;font-size:12.5px;padding:9px 13px;border-radius:9px;cursor:pointer;font-family:'Public Sans',sans-serif;" style-hover="background:#F3F4F6;">Copy</button>
+                    <button onClick="{{ regenPhone }}" style="background:#fff;border:1px solid #E5E7EB;color:#374151;font-weight:600;font-size:12.5px;padding:9px 13px;border-radius:9px;cursor:pointer;font-family:'Public Sans',sans-serif;" style-hover="background:#F3F4F6;">Regenerate</button>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-top:1px solid #F3F4F6;">
+                    <div><div style="font-size:13.5px;font-weight:600;color:#111827;">Require GPS</div><div style="font-size:12px;color:#9CA3AF;">Block clock-ins outside the radius</div></div>
+                    <div style="display:flex;align-items:center;gap:12px;">
+                      <select style="border:1px solid #E5E7EB;border-radius:8px;padding:7px 10px;font-family:'Public Sans',sans-serif;font-size:12.5px;color:#374151;background:#fff;cursor:pointer;"><option>100 m</option><option selected="selected">200 m</option><option>500 m</option></select>
+                      <button onClick="{{ toggleGps }}" style="width:44px;height:26px;border-radius:14px;border:none;cursor:pointer;position:relative;flex-shrink:0;{{ settingsGpsTog.track }}"><span style="position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:transform .16s;{{ settingsGpsTog.knob }}"></span></button>
+                    </div>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-top:1px solid #F3F4F6;">
+                    <div><div style="font-size:13.5px;font-weight:600;color:#111827;">Require photo on clock-in</div><div style="font-size:12px;color:#9CA3AF;">Snap a photo to confirm identity</div></div>
+                    <button onClick="{{ togglePhoto }}" style="width:44px;height:26px;border-radius:14px;border:none;cursor:pointer;position:relative;flex-shrink:0;{{ settingsPhotoTog.track }}"><span style="position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:transform .16s;{{ settingsPhotoTog.knob }}"></span></button>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-top:1px solid #F3F4F6;">
+                    <div><div style="font-size:13.5px;font-weight:600;color:#111827;">Photo retention</div><div style="font-size:12px;color:#9CA3AF;">Auto-delete clock-in photos after</div></div>
+                    <select style="border:1px solid #E5E7EB;border-radius:8px;padding:7px 10px;font-family:'Public Sans',sans-serif;font-size:12.5px;color:#374151;background:#fff;cursor:pointer;"><option selected="selected">7 days</option><option>30 days</option><option>90 days</option></select>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:18px;">
+              <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;box-shadow:0 1px 2px rgba(17,24,39,.04);overflow:hidden;">
+                <div style="padding:14px 18px;border-bottom:1px solid #F1F3F5;font-family:'Archivo',sans-serif;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#9CA3AF;">Notifications</div>
+                <div style="padding:6px 18px 10px;">
+                  <sc-for list="{{ notifSettings }}" as="n" hint-placeholder-count="6">
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid #F3F4F6;">
+                      <span style="font-size:13.5px;color:#111827;font-weight:500;">{{ n.label }}</span>
+                      <button onClick="{{ n.toggle }}" style="width:44px;height:26px;border-radius:14px;border:none;cursor:pointer;position:relative;flex-shrink:0;{{ n.track }}"><span style="position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:transform .16s;{{ n.knob }}"></span></button>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+
+              <div style="background:#fff;border:1px solid #E5E7EB;border-radius:14px;box-shadow:0 1px 2px rgba(17,24,39,.04);overflow:hidden;">
+                <div style="padding:14px 18px;border-bottom:1px solid #F1F3F5;font-family:'Archivo',sans-serif;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#9CA3AF;">Google Drive</div>
+                <div style="padding:18px;">
+                  <sc-if value="{{ settingsDrive }}">
+                    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;"><span style="width:42px;height:42px;border-radius:11px;background:#ECFDF3;display:flex;align-items:center;justify-content:center;"><span style="font:24px 'Material Symbols Rounded';color:#16A34A;">check_circle</span></span><div><div style="font-weight:700;font-size:14px;color:#111827;">Connected as owner@gmail.com</div><div style="font-size:12.5px;color:#6B7280;">Folder: “Roster Documents” in your Google Drive</div></div></div>
+                    <div style="display:flex;align-items:center;gap:12px;border-top:1px solid #F3F4F6;padding-top:14px;">
+                      <button onClick="{{ toggleSettingsDrive }}" style="background:#fff;border:1px solid #FECACA;color:#B91C1C;font-family:'Public Sans',sans-serif;font-weight:600;font-size:13px;padding:9px 15px;border-radius:9px;cursor:pointer;" style-hover="background:#FEF2F2;">Disconnect</button>
+                      <span style="font-size:11.5px;color:#9CA3AF;flex:1;">Disconnecting stops new uploads but keeps files already in your Drive.</span>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{ settingsNoDrive }}">
+                    <div style="display:flex;align-items:flex-start;gap:13px;"><span style="width:42px;height:42px;border-radius:11px;background:#F3F4F6;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><span style="font:24px 'Material Symbols Rounded';color:#9CA3AF;">add_to_drive</span></span><div style="flex:1;"><div style="font-weight:700;font-size:14px;color:#111827;">Connect Google Drive</div><div style="font-size:12.5px;color:#6B7280;line-height:1.5;margin-top:3px;">Store staff documents securely in your own Drive. Contracts, RSA certificates, ID — everything stays in your account, not ours.</div></div></div>
+                    <button onClick="{{ toggleSettingsDrive }}" style="margin-top:14px;width:100%;background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:13.5px;padding:12px;border-radius:10px;cursor:pointer;" style-hover="background:#6aa600;">Connect Google Drive</button>
+                  </sc-if>
+                </div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!--OWNER_SCREENS_END-->
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ chromeBare }}">
+      <div>
+        <sc-if value="{{ show.landing }}" hint-placeholder-val="{{ true }}">
+          <div style="background:#111827;">
+            <div style="max-width:1180px;margin:0 auto;padding:0 28px;">
+              <div style="height:72px;display:flex;align-items:center;gap:10px;">
+                <div style="width:28px;height:28px;border-radius:8px;background:#76b900;display:flex;align-items:center;justify-content:center;"><span style="font:18px 'Material Symbols Rounded';color:#111827;">grid_view</span></div>
+                <span style="font-family:'Archivo',sans-serif;font-weight:800;font-size:19px;letter-spacing:.05em;color:#76b900;">ROSTER</span>
+                <div style="flex:1;"></div>
+                <span style="display:none;"></span>
+                <a style="color:#D1D5DB;font-size:13.5px;font-weight:600;margin-right:22px;cursor:pointer;text-decoration:none;">Features</a>
+                <a style="color:#D1D5DB;font-size:13.5px;font-weight:600;margin-right:22px;cursor:pointer;text-decoration:none;">Pricing</a>
+                <button onClick="{{ signOut }}" style="background:none;border:none;color:#fff;font-family:'Public Sans',sans-serif;font-size:13.5px;font-weight:600;cursor:pointer;margin-right:14px;">Sign in</button>
+                <button onClick="{{ signOut }}" style="background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:13.5px;padding:9px 16px;border-radius:9px;cursor:pointer;" style-hover="background:#6aa600;">Start free</button>
+              </div>
+              <div style="text-align:center;padding:54px 0 18px;">
+                <div style="display:inline-flex;align-items:center;gap:8px;background:#1F2937;border:1px solid #374151;border-radius:30px;padding:6px 14px;margin-bottom:22px;"><span style="width:7px;height:7px;border-radius:50%;background:#76b900;"></span><span style="font-size:12.5px;color:#9CA3AF;font-weight:600;">Built for Australian hospitality</span></div>
+                <h1 style="font-family:'Archivo',sans-serif;font-weight:900;font-size:54px;line-height:1.05;letter-spacing:-.025em;color:#fff;margin:0;max-width:760px;margin-left:auto;margin-right:auto;">Your whole week,<br><span style="color:#76b900;">sorted in minutes.</span></h1>
+                <p style="color:#9CA3AF;font-size:17px;line-height:1.55;max-width:560px;margin:20px auto 28px;">Rostering that works as hard as your team. Build the week, track clock-ins, manage leave and stock — one tool, no fuss, no aggregator cut.</p>
+                <div style="display:flex;gap:12px;justify-content:center;align-items:center;flex-wrap:wrap;">
+                  <button onClick="{{ signOut }}" style="display:inline-flex;align-items:center;gap:8px;background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;padding:14px 26px;border-radius:11px;cursor:pointer;box-shadow:0 8px 24px rgba(118,185,0,.28);" style-hover="background:#6aa600;">Start free<span style="font:20px 'Material Symbols Rounded';">arrow_forward</span></button>
+                  <button onClick="{{ goBuilder }}" style="display:inline-flex;align-items:center;gap:8px;background:#1F2937;border:1px solid #374151;color:#fff;font-family:'Public Sans',sans-serif;font-weight:600;font-size:15px;padding:14px 22px;border-radius:11px;cursor:pointer;" style-hover="background:#283445;">See the roster builder</button>
+                </div>
+                <div style="margin-top:16px;font-size:12.5px;color:#6B7280;">No credit card · Flat monthly fee · Cancel anytime</div>
+              </div>
+            </div>
+            <div style="max-width:1140px;margin:0 auto;padding:14px 28px 0;">
+              <div style="background:#fff;border-radius:16px 16px 0 0;box-shadow:0 -2px 40px rgba(0,0,0,.4);overflow:hidden;border:1px solid #E5E7EB;border-bottom:none;">
+                <div style="height:40px;background:#F9FAFB;border-bottom:1px solid #E5E7EB;display:flex;align-items:center;padding:0 16px;gap:7px;">
+                  <span style="width:11px;height:11px;border-radius:50%;background:#E5E7EB;"></span><span style="width:11px;height:11px;border-radius:50%;background:#E5E7EB;"></span><span style="width:11px;height:11px;border-radius:50%;background:#E5E7EB;"></span>
+                  <span style="margin-left:14px;font-size:12px;color:#9CA3AF;display:inline-flex;align-items:center;gap:6px;"><span style="font:14px 'Material Symbols Rounded';">lock</span>roster.zaleit.com.au</span>
+                  <div style="flex:1;"></div>
+                  <span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:12.5px;color:#111827;">Troy's Kebabs · Week of 23 Jun</span>
+                </div>
+                <div style="padding:16px;overflow-x:auto;">
+                  <div style="min-width:980px;display:grid;grid-template-columns:170px repeat(7,minmax(112px,1fr));border:1px solid #EEF0F2;border-radius:12px;overflow:hidden;">
+                    <div style="background:#FAFBFC;border-bottom:1px solid #EEF0F2;border-right:1px solid #EEF0F2;padding:9px 12px;font-family:'Archivo',sans-serif;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9CA3AF;display:flex;align-items:flex-end;">Staff</div>
+                    <sc-for list="{{ days }}" as="d" hint-placeholder-count="7">
+                      <div style="background:#FAFBFC;border-bottom:1px solid #EEF0F2;border-right:1px solid #EEF0F2;padding:9px 10px;display:flex;align-items:center;justify-content:space-between;">
+                        <span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:12px;color:#111827;">{{ d.name }} <span style="color:#9CA3AF;font-weight:600;">{{ d.date }}</span></span>
+                        <span style="font-family:'Archivo',sans-serif;font-size:10px;font-weight:700;color:#5A7D17;background:#F0F6E2;border-radius:20px;padding:1px 7px;">{{ d.count }}</span>
+                      </div>
+                    </sc-for>
+                    <sc-for list="{{ staffRows }}" as="row" hint-placeholder-count="6">
+                      <div style="border-bottom:1px solid #F3F4F6;border-right:1px solid #EEF0F2;padding:7px 11px;display:flex;align-items:center;gap:9px;background:#fff;">
+                        <div style="width:26px;height:26px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Archivo',sans-serif;font-weight:700;font-size:10.5px;flex-shrink:0;background:{{ row.color }};">{{ row.initials }}</div>
+                        <div style="min-width:0;"><div style="font-weight:600;font-size:12px;color:#111827;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ row.name }}</div><div style="font-size:10px;color:#9CA3AF;">{{ row.role }}</div></div>
+                      </div>
+                      <sc-for list="{{ row.cells }}" as="cell" hint-placeholder-count="7">
+                        <div style="border-right:1px solid #F3F4F6;border-bottom:1px solid #F3F4F6;padding:4px;background:#fff;min-height:54px;">
+                          <sc-if value="{{ cell.isShift }}">
+                            <div style="position:relative;border-radius:6px;padding:6px 7px;min-height:46px;{{ cell.style }}">
+                              <div style="position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;{{ cell.dotStyle }}"></div>
+                              <div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:11px;{{ cell.labelColor }}">{{ cell.label }}</div>
+                              <div style="font-size:9.5px;font-weight:500;margin-top:2px;{{ cell.timeColor }}">{{ cell.time }}</div>
+                            </div>
+                          </sc-if>
+                          <sc-if value="{{ cell.isLeave }}">
+                            <div style="min-height:46px;border-radius:6px;padding:6px 7px;background:repeating-linear-gradient(135deg,#F4F5F7,#F4F5F7 6px,#EAECEF 6px,#EAECEF 12px);border:1px solid #EAECEF;display:flex;align-items:center;"><span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:9.5px;color:#9097A1;text-transform:uppercase;letter-spacing:.04em;">On leave</span></div>
+                          </sc-if>
+                          <sc-if value="{{ cell.isOpen }}">
+                            <div style="min-height:46px;border-radius:6px;padding:6px 7px;border:1.5px dashed #CBD5E1;display:flex;flex-direction:column;justify-content:center;"><span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:10.5px;color:#475569;">Open</span><span style="font-size:9px;font-weight:700;color:#4D7C0F;margin-top:2px;">0 claimed</span></div>
+                          </sc-if>
+                          <sc-if value="{{ cell.isEmpty }}"><div style="min-height:46px;"></div></sc-if>
+                        </div>
+                      </sc-for>
+                    </sc-for>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style="background:#fff;">
+            <div style="max-width:1080px;margin:0 auto;padding:64px 28px 10px;">
+              <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;">
+                <div style="text-align:center;padding:8px;"><div style="width:46px;height:46px;border-radius:13px;background:#F4F8E9;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;"><span style="font:24px 'Material Symbols Rounded';color:#5A7D17;">grid_view</span></div><div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:14.5px;color:#111827;">Schedule</div><div style="font-size:12px;color:#6B7280;margin-top:3px;line-height:1.4;">Build the week in minutes</div></div>
+                <div style="text-align:center;padding:8px;"><div style="width:46px;height:46px;border-radius:13px;background:#F4F8E9;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;"><span style="font:24px 'Material Symbols Rounded';color:#5A7D17;">fingerprint</span></div><div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:14.5px;color:#111827;">Attendance</div><div style="font-size:12px;color:#6B7280;margin-top:3px;line-height:1.4;">PIN &amp; GPS clock-in</div></div>
+                <div style="text-align:center;padding:8px;"><div style="width:46px;height:46px;border-radius:13px;background:#F4F8E9;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;"><span style="font:24px 'Material Symbols Rounded';color:#5A7D17;">beach_access</span></div><div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:14.5px;color:#111827;">Leave</div><div style="font-size:12px;color:#6B7280;margin-top:3px;line-height:1.4;">Approve in one tap</div></div>
+                <div style="text-align:center;padding:8px;"><div style="width:46px;height:46px;border-radius:13px;background:#F4F8E9;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;"><span style="font:24px 'Material Symbols Rounded';color:#5A7D17;">inventory_2</span></div><div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:14.5px;color:#111827;">Inventory</div><div style="font-size:12px;color:#6B7280;margin-top:3px;line-height:1.4;">Stock checks &amp; orders</div></div>
+                <div style="text-align:center;padding:8px;"><div style="width:46px;height:46px;border-radius:13px;background:#F4F8E9;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;"><span style="font:24px 'Material Symbols Rounded';color:#5A7D17;">monitoring</span></div><div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:14.5px;color:#111827;">Analytics</div><div style="font-size:12px;color:#6B7280;margin-top:3px;line-height:1.4;">Hours &amp; labour at a glance</div></div>
+              </div>
+            </div>
+
+            <div style="max-width:1080px;margin:0 auto;padding:60px 28px;">
+              <div style="text-align:center;margin-bottom:38px;">
+                <div style="font-family:'Archivo',sans-serif;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#76b900;">How it works</div>
+                <h2 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:34px;color:#111827;margin:10px 0 0;letter-spacing:-.02em;">Three steps. No manual.</h2>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:20px;">
+                <div style="border:1px solid #E5E7EB;border-radius:16px;padding:26px;"><div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:13px;color:#76b900;">01</div><div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:19px;color:#111827;margin:8px 0 6px;">Add your team</div><div style="font-size:14px;color:#6B7280;line-height:1.55;">Name, email, pay rate. Send them a sign-in link — done in two minutes.</div></div>
+                <div style="border:1px solid #E5E7EB;border-radius:16px;padding:26px;"><div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:13px;color:#76b900;">02</div><div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:19px;color:#111827;margin:8px 0 6px;">Build your roster</div><div style="font-size:14px;color:#6B7280;line-height:1.55;">Drag shifts onto the week, or draft from last week. See availability as you go.</div></div>
+                <div style="border:1px solid #E5E7EB;border-radius:16px;padding:26px;"><div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:13px;color:#76b900;">03</div><div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:19px;color:#111827;margin:8px 0 6px;">Publish &amp; go</div><div style="font-size:14px;color:#6B7280;line-height:1.55;">Staff get their shifts on their phone. They clock in by PIN. You get your night back.</div></div>
+              </div>
+            </div>
+
+            <div style="background:#F4F8E9;">
+              <div style="max-width:1080px;margin:0 auto;padding:56px 28px;">
+                <div style="background:#111827;border-radius:22px;padding:44px;display:flex;align-items:center;justify-content:space-between;gap:30px;flex-wrap:wrap;">
+                  <div style="max-width:520px;">
+                    <h2 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:30px;color:#fff;margin:0;letter-spacing:-.02em;line-height:1.15;">Flat monthly fee.<br><span style="color:#76b900;">No per-shift charges. No aggregator cut.</span></h2>
+                    <p style="color:#9CA3AF;font-size:15px;margin:16px 0 0;line-height:1.55;">You run the shop, you keep the margin. One price covers your whole venue — every staff member, every shift, every clock-in.</p>
+                  </div>
+                  <div style="background:#1F2937;border:1px solid #374151;border-radius:18px;padding:30px;text-align:center;min-width:230px;">
+                    <div style="display:flex;align-items:baseline;justify-content:center;gap:4px;"><span style="font-family:'Archivo',sans-serif;font-weight:900;font-size:46px;color:#fff;">$49</span><span style="color:#9CA3AF;font-size:15px;font-weight:600;">/mo</span></div>
+                    <div style="font-size:12.5px;color:#9CA3AF;margin-top:4px;">flat — unlimited staff</div>
+                    <button onClick="{{ signOut }}" style="margin-top:18px;width:100%;background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:14.5px;padding:13px;border-radius:11px;cursor:pointer;" style-hover="background:#6aa600;">Start free</button>
+                    <div style="font-size:11.5px;color:#6B7280;margin-top:10px;">14-day trial · no card</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style="background:#111827;">
+              <div style="max-width:1080px;margin:0 auto;padding:48px 28px 36px;">
+                <div style="display:flex;justify-content:space-between;gap:40px;flex-wrap:wrap;">
+                  <div style="max-width:300px;">
+                    <div style="display:flex;align-items:center;gap:9px;margin-bottom:12px;"><div style="width:26px;height:26px;border-radius:7px;background:#76b900;display:flex;align-items:center;justify-content:center;"><span style="font:17px 'Material Symbols Rounded';color:#111827;">grid_view</span></div><span style="font-family:'Archivo',sans-serif;font-weight:800;font-size:17px;letter-spacing:.05em;color:#76b900;">ROSTER</span></div>
+                    <div style="color:#9CA3AF;font-size:13px;line-height:1.6;">Rostering that works as hard as your team. Made in Australia for cafes, kebab shops and small kitchens.</div>
+                  </div>
+                  <div style="display:flex;gap:54px;flex-wrap:wrap;">
+                    <div><div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:12px;color:#fff;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px;">Product</div><div style="display:flex;flex-direction:column;gap:9px;"><a style="color:#9CA3AF;font-size:13.5px;text-decoration:none;cursor:pointer;">Rosters</a><a style="color:#9CA3AF;font-size:13.5px;text-decoration:none;cursor:pointer;">Timesheets</a><a style="color:#9CA3AF;font-size:13.5px;text-decoration:none;cursor:pointer;">Stock</a><a style="color:#9CA3AF;font-size:13.5px;text-decoration:none;cursor:pointer;">Pricing</a></div></div>
+                    <div><div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:12px;color:#fff;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px;">Support</div><div style="display:flex;flex-direction:column;gap:9px;"><a style="color:#9CA3AF;font-size:13.5px;text-decoration:none;cursor:pointer;">Help centre</a><a style="color:#9CA3AF;font-size:13.5px;text-decoration:none;cursor:pointer;">support@zaleit.com.au</a><a style="color:#9CA3AF;font-size:13.5px;text-decoration:none;cursor:pointer;">Status</a></div></div>
+                  </div>
+                </div>
+                <div style="border-top:1px solid #1F2937;margin-top:34px;padding-top:20px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;"><span style="color:#6B7280;font-size:12.5px;">© 2026 Zaleit IT · roster.zaleit.com.au</span><div style="display:flex;gap:22px;"><a style="color:#6B7280;font-size:12.5px;text-decoration:none;cursor:pointer;">Privacy</a><a style="color:#6B7280;font-size:12.5px;text-decoration:none;cursor:pointer;">Terms</a></div></div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ show.signin }}" hint-placeholder-val="{{ true }}">
+          <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#F9FAFB;padding:40px 20px;background-image:radial-gradient(circle at 50% 0,#F4F8E9,#F9FAFB 60%);">
+            <div style="width:100%;max-width:412px;">
+              <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:26px;">
+                <div style="width:32px;height:32px;border-radius:9px;background:#111827;display:flex;align-items:center;justify-content:center;"><span style="font:20px 'Material Symbols Rounded';color:#76b900;">grid_view</span></div>
+                <span style="font-family:'Archivo',sans-serif;font-weight:800;font-size:22px;letter-spacing:.05em;color:#111827;">ROSTER</span>
+              </div>
+              <div style="background:#fff;border:1px solid #E5E7EB;border-radius:18px;box-shadow:0 8px 30px rgba(17,24,39,.07);padding:30px;">
+                <sc-if value="{{ signinNotSent }}">
+                  <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:22px;color:#111827;margin:0;text-align:center;">Sign in to Roster</h1>
+                  <p style="text-align:center;color:#6B7280;font-size:14px;margin:8px 0 24px;line-height:1.5;">Enter your email and we'll send you a sign-in link. No password to remember.</p>
+                  <label style="display:block;font-size:12.5px;font-weight:600;color:#374151;margin-bottom:7px;">Email address</label>
+                  <input value="owner@zaleit.com.au" style="width:100%;border:1px solid #D1D5DB;border-radius:11px;padding:13px 14px;font-family:'Public Sans',sans-serif;font-size:14.5px;color:#111827;outline:none;" style-focus="border-color:#76b900;box-shadow:0 0 0 3px rgba(118,185,0,.16);">
+                  <button onClick="{{ sendLink }}" style="width:100%;margin-top:14px;background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;padding:14px;border-radius:11px;cursor:pointer;" style-hover="background:#6aa600;">Send sign-in link</button>
+                  <div style="margin-top:20px;padding-top:18px;border-top:1px solid #F1F3F5;text-align:center;font-size:12.5px;color:#6B7280;line-height:1.55;">Signed in as <strong style="color:#374151;">owner@zaleit.com.au</strong> — not you?<br><a style="color:#4D7C0F;font-weight:600;cursor:pointer;">Sign out and use a different email</a></div>
+                </sc-if>
+                <sc-if value="{{ signinSent }}">
+                  <div style="text-align:center;">
+                    <div style="width:58px;height:58px;border-radius:50%;background:#F4F8E9;display:flex;align-items:center;justify-content:center;margin:6px auto 18px;"><span style="font:30px 'Material Symbols Rounded';color:#5A7D17;">mark_email_read</span></div>
+                    <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:22px;color:#111827;margin:0;">Check your email</h1>
+                    <p style="color:#6B7280;font-size:14px;margin:10px 0 0;line-height:1.55;">We've sent a sign-in link to <strong style="color:#374151;">owner@zaleit.com.au</strong>. The link works once and expires soon for your security.</p>
+                    <button onClick="{{ goDashboard }}" style="width:100%;margin-top:22px;background:#111827;border:none;color:#fff;font-family:'Archivo',sans-serif;font-weight:700;font-size:14.5px;padding:13px;border-radius:11px;cursor:pointer;" style-hover="background:#1F2937;">Open the demo link →</button>
+                    <div style="margin-top:16px;font-size:12.5px;color:#6B7280;">Didn't get it? <a onClick="{{ resetSignin }}" style="color:#4D7C0F;font-weight:600;cursor:pointer;">Use a different email</a></div>
+                  </div>
+                </sc-if>
+              </div>
+              <div style="text-align:center;margin-top:18px;font-size:12px;color:#9CA3AF;">Roster by Zaleit IT · roster.zaleit.com.au</div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ show.onboarding }}" hint-placeholder-val="{{ true }}">
+          <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#F9FAFB;padding:40px 20px;background-image:radial-gradient(circle at 50% 0,#F4F8E9,#F9FAFB 60%);">
+            <div style="width:100%;max-width:460px;">
+              <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:22px;">
+                <div style="width:32px;height:32px;border-radius:9px;background:#111827;display:flex;align-items:center;justify-content:center;"><span style="font:20px 'Material Symbols Rounded';color:#76b900;">grid_view</span></div>
+                <span style="font-family:'Archivo',sans-serif;font-weight:800;font-size:22px;letter-spacing:.05em;color:#111827;">ROSTER</span>
+              </div>
+              <div style="background:#fff;border:1px solid #E5E7EB;border-radius:18px;box-shadow:0 8px 30px rgba(17,24,39,.07);overflow:hidden;">
+                <div style="display:flex;align-items:center;gap:10px;background:#FAFBFC;border-bottom:1px solid #F1F3F5;padding:13px 18px;">
+                  <span style="font:20px 'Material Symbols Rounded';color:#9CA3AF;">account_circle</span>
+                  <div style="flex:1;font-size:12.5px;color:#6B7280;line-height:1.45;">You're signed in as <strong style="color:#374151;">support@zaleit.com.au</strong>. Used Roster before? You may have signed in with a different address.</div>
+                  <a style="font-size:12.5px;font-weight:600;color:#4D7C0F;cursor:pointer;white-space:nowrap;">Sign out</a>
+                </div>
+                <div style="padding:30px;">
+                  <div style="font-family:'Archivo',sans-serif;font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#76b900;">Step 1 of 1 — almost there</div>
+                  <h1 style="font-family:'Archivo',sans-serif;font-weight:800;font-size:25px;color:#111827;margin:10px 0 6px;letter-spacing:-.01em;">Let's set up your business.</h1>
+                  <p style="color:#6B7280;font-size:14px;margin:0 0 22px;line-height:1.5;">Just a name to start. You can add staff, shifts and suppliers next.</p>
+                  <label style="display:block;font-size:12.5px;font-weight:600;color:#374151;margin-bottom:7px;">Business name</label>
+                  <input value="Troy's Kebabs" style="width:100%;border:1px solid #D1D5DB;border-radius:11px;padding:13px 14px;font-family:'Public Sans',sans-serif;font-size:14.5px;color:#111827;outline:none;" style-focus="border-color:#76b900;box-shadow:0 0 0 3px rgba(118,185,0,.16);">
+                  <button onClick="{{ createBusiness }}" style="width:100%;margin-top:16px;background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;padding:14px;border-radius:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;" style-hover="background:#6aa600;">Create my business<span style="font:20px 'Material Symbols Rounded';">arrow_forward</span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!--BARE_SCREENS_END-->
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ chromePhone }}">
+      <div style="min-height:100vh;background:#0E1320;background-image:radial-gradient(circle at 20% 10%,#1b2436,#0E1320 60%);display:flex;align-items:center;justify-content:center;padding:40px 20px;">
+        <div style="width:390px;background:#0B0B0C;border-radius:46px;padding:11px;box-shadow:0 40px 90px rgba(0,0,0,.5),inset 0 0 0 2px #2a2a2e;">
+          <div style="position:relative;background:#fff;border-radius:36px;overflow:hidden;height:792px;display:flex;flex-direction:column;">
+            <div style="position:absolute;top:0;left:0;right:0;height:46px;display:flex;align-items:center;justify-content:space-between;padding:0 26px;z-index:30;pointer-events:none;">
+              <span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:14px;color:{{ phoneStatusColor }};">11:42</span>
+              <div style="display:flex;align-items:center;gap:5px;">
+                <span style="font:16px 'Material Symbols Rounded';color:{{ phoneStatusColor }};">signal_cellular_alt</span>
+                <span style="font:16px 'Material Symbols Rounded';color:{{ phoneStatusColor }};">wifi</span>
+                <span style="font:16px 'Material Symbols Rounded';color:{{ phoneStatusColor }};">battery_full</span>
+              </div>
+            </div>
+            <div style="position:absolute;top:13px;left:50%;transform:translateX(-50%);width:108px;height:26px;background:#0B0B0C;border-radius:16px;z-index:31;"></div>
+            <div style="flex:1;overflow-y:auto;">
+              <!--PHONE_SCREENS_END-->
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ chromeKiosk }}">
+      <div>
+        <sc-if value="{{ show.kiosk }}" hint-placeholder-val="{{ true }}">
+          <div style="min-height:100vh;background:#0E1320;background-image:radial-gradient(circle at 50% -10%,#1a2335,#0E1320 55%);display:flex;flex-direction:column;align-items:center;padding:34px 24px 44px;color:#fff;">
+            <div style="width:100%;max-width:620px;display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+              <div style="display:flex;align-items:center;gap:9px;"><div style="width:26px;height:26px;border-radius:7px;background:#76b900;display:flex;align-items:center;justify-content:center;"><span style="font:17px 'Material Symbols Rounded';color:#111827;">grid_view</span></div><span style="font-family:'Archivo',sans-serif;font-weight:800;font-size:16px;letter-spacing:.05em;color:#76b900;">ROSTER</span></div>
+              <span style="font-size:13px;color:#9CA3AF;">Kiosk</span>
+            </div>
+            <div style="width:100%;max-width:620px;text-align:center;margin-bottom:26px;">
+              <div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:22px;color:#fff;">Troy's Kebabs</div>
+              <div style="font-size:14px;color:#9CA3AF;margin-top:3px;">Mon 23 Jun · 11:42 am</div>
+            </div>
+
+            <sc-if value="{{ kiosk.isPick }}">
+              <div style="width:100%;max-width:620px;">
+                <div style="text-align:center;color:#CBD5E1;font-size:15px;margin-bottom:20px;">Tap your name to start</div>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">
+                  <sc-for list="{{ kioskStaff }}" as="s" hint-placeholder-count="6">
+                    <button onClick="{{ s.go }}" style="background:#1C2433;border:1px solid #2A3344;border-radius:18px;padding:22px 14px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:11px;transition:.14s;" style-hover="border-color:#76b900;background:#222C3D;">
+                      <div style="width:52px;height:52px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Archivo',sans-serif;font-weight:700;font-size:18px;background:{{ s.color }};">{{ s.initials }}</div>
+                      <span style="font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;color:#fff;">{{ s.first }}</span>
+                    </button>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ kiosk.isPin }}">
+              <div style="width:100%;max-width:340px;text-align:center;">
+                <div style="color:#CBD5E1;font-size:15px;margin-bottom:6px;">Enter your PIN</div>
+                <div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:20px;color:#76b900;margin-bottom:20px;">{{ kiosk.first }}</div>
+                <div style="display:flex;justify-content:center;gap:14px;margin-bottom:26px;">
+                  <sc-for list="{{ kiosk.dots }}" as="dot" hint-placeholder-count="4">
+                    <span style="width:16px;height:16px;border-radius:50%;border:2px solid #4B5563;display:inline-flex;"><sc-if value="{{ dot.on }}"><span style="display:block;width:100%;height:100%;border-radius:50%;background:#76b900;margin:-2px;"></span></sc-if></span>
+                  </sc-for>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+                  <sc-for list="{{ kpad }}" as="k" hint-placeholder-count="9">
+                    <button onClick="{{ k.press }}" style="height:70px;background:#1C2433;border:1px solid #2A3344;border-radius:16px;color:#fff;font-family:'Archivo',sans-serif;font-weight:700;font-size:25px;cursor:pointer;transition:.1s;" style-hover="background:#252F40;">{{ k.d }}</button>
+                  </sc-for>
+                  <button onClick="{{ kReset }}" style="height:70px;background:none;border:none;color:#6B7280;font-size:13px;font-weight:600;cursor:pointer;font-family:'Public Sans',sans-serif;">Cancel</button>
+                  <button onClick="{{ k0 }}" style="height:70px;background:#1C2433;border:1px solid #2A3344;border-radius:16px;color:#fff;font-family:'Archivo',sans-serif;font-weight:700;font-size:25px;cursor:pointer;" style-hover="background:#252F40;">0</button>
+                  <button onClick="{{ kDel }}" style="height:70px;background:none;border:1px solid #2A3344;border-radius:16px;color:#9CA3AF;cursor:pointer;display:flex;align-items:center;justify-content:center;" style-hover="background:#1C2433;"><span style="font:24px 'Material Symbols Rounded';">backspace</span></button>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ kiosk.isActions }}">
+              <div style="width:100%;max-width:420px;text-align:center;">
+                <div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:22px;color:#fff;margin-bottom:4px;">Hi {{ kiosk.first }} 👋</div>
+                <div style="color:#9CA3AF;font-size:14px;margin-bottom:24px;">What would you like to do?</div>
+                <button onClick="{{ kClockIn }}" style="width:100%;background:#76b900;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:800;font-size:19px;padding:22px;border-radius:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:14px;" style-hover="background:#6aa600;"><span style="font:26px 'Material Symbols Rounded';">login</span>Clock In</button>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                  <button onClick="{{ kClockOut }}" style="background:#1C2433;border:1px solid #2A3344;color:#fff;font-family:'Archivo',sans-serif;font-weight:700;font-size:14.5px;padding:18px;border-radius:15px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:7px;" style-hover="border-color:#4B5563;"><span style="font:24px 'Material Symbols Rounded';color:#9CA3AF;">logout</span>Clock Out</button>
+                  <button onClick="{{ kReqLeave }}" style="background:#1C2433;border:1px solid #2A3344;color:#fff;font-family:'Archivo',sans-serif;font-weight:700;font-size:14.5px;padding:18px;border-radius:15px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:7px;" style-hover="border-color:#4B5563;"><span style="font:24px 'Material Symbols Rounded';color:#9CA3AF;">beach_access</span>Request Leave</button>
+                  <button onClick="{{ kStock }}" style="background:#1C2433;border:1px solid #2A3344;color:#fff;font-family:'Archivo',sans-serif;font-weight:700;font-size:14.5px;padding:18px;border-radius:15px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:7px;" style-hover="border-color:#4B5563;"><span style="font:24px 'Material Symbols Rounded';color:#9CA3AF;">inventory</span>Stock Check</button>
+                  <button onClick="{{ kSwap }}" style="background:#1C2433;border:1px solid #2A3344;color:#fff;font-family:'Archivo',sans-serif;font-weight:700;font-size:14.5px;padding:18px;border-radius:15px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:7px;" style-hover="border-color:#4B5563;"><span style="font:24px 'Material Symbols Rounded';color:#9CA3AF;">swap_horiz</span>Shift Swap</button>
+                </div>
+                <button onClick="{{ kReset }}" style="margin-top:18px;background:none;border:none;color:#6B7280;font-size:13px;font-weight:600;cursor:pointer;font-family:'Public Sans',sans-serif;">← Not you? Start over</button>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ kiosk.isConfirm }}">
+              <div style="width:100%;max-width:420px;text-align:center;background:#14532D;border:1px solid #166534;border-radius:22px;padding:40px 30px;">
+                <div style="width:72px;height:72px;border-radius:50%;background:#76b900;display:flex;align-items:center;justify-content:center;margin:0 auto 18px;"><span style="font:42px 'Material Symbols Rounded';color:#111827;font-variation-settings:'FILL' 1;">check</span></div>
+                <div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:24px;color:#fff;">Clocked in</div>
+                <div style="font-size:16px;color:#BBF7D0;margin-top:6px;">{{ kiosk.name }} · 11:42 am</div>
+                <button onClick="{{ kReset }}" style="margin-top:24px;background:#fff;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;padding:13px 30px;border-radius:12px;cursor:pointer;">Done</button>
+                <div style="font-size:12.5px;color:#86EFAC;margin-top:14px;">Returning to start in {{ kiosk.count }}s…</div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ kiosk.isGps }}">
+              <div style="width:100%;max-width:420px;text-align:center;background:#3B1414;border:1px solid #7F1D1D;border-radius:22px;padding:40px 30px;">
+                <div style="width:72px;height:72px;border-radius:50%;background:#DC2626;display:flex;align-items:center;justify-content:center;margin:0 auto 18px;"><span style="font:40px 'Material Symbols Rounded';color:#fff;">wrong_location</span></div>
+                <div style="font-family:'Archivo',sans-serif;font-weight:800;font-size:21px;color:#fff;">Clock-in blocked</div>
+                <div style="font-size:14.5px;color:#FCA5A5;margin-top:10px;line-height:1.5;">You appear to be outside the clock-in area — <strong style="color:#fff;">320m away</strong>, limit 200m. Please see your manager.</div>
+                <button onClick="{{ kReset }}" style="margin-top:24px;background:#fff;border:none;color:#111827;font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;padding:13px 30px;border-radius:12px;cursor:pointer;">Back to start</button>
+              </div>
+            </sc-if>
+          </div>
+        </sc-if>
+
+        <!--KIOSK_SCREENS_END-->
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ toast }}">
+      <div style="position:fixed;bottom:26px;right:26px;z-index:300;background:#111827;color:#fff;padding:14px 18px;border-radius:12px;box-shadow:0 16px 40px rgba(0,0,0,.28);display:flex;align-items:center;gap:11px;font-size:13.5px;font-weight:500;animation:rosterToast .26s ease;max-width:360px;">
+        <span style="font:21px 'Material Symbols Rounded';color:#76b900;">check_circle</span>
+        <span>{{ toast }}</span>
+      </div>
+    </sc-if>
+
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {
+    screen: 'builder',
+    openNav: null,
+    bellOpen: false,
+    toast: null,
+    rosterPublished: false,
+    dashView: 'established',
+    signinSent: false,
+    selectedStaff: 0,
+    staffDrive: true,
+    leaveStatus: {},
+    certFilter: false,
+    csvPreview: false,
+    setGps: true,
+    setPhoto: false,
+    setDrive: true,
+    notifToggles: { leave:true, shift:true, stock:true, certs:true, avail:true, notices:true },
+    kiosk: { step:'pick', name:'', pin:'', count:5 },
+    phonePin: '', phoneView: 'idle',
+    mePin: '', meUnlocked: false, meRead: {1:false,2:false,3:false},
+    availDays: { Mon:null, Tue:null, Wed:null, Thu:null, Fri:null, Sat:null, Sun:null }, availSubmitted: false,
+    notifs: [
+      { id:1, icon:'event_busy',      accent:'#D97706', tint:'#FEF3E2', title:'Leave request', body:'Sarah Hassan requested 3 days leave (Tue–Thu)', time:'2 minutes ago', target:'leave',        unread:true },
+      { id:2, icon:'swap_horiz',      accent:'#16A34A', tint:'#ECFDF3', title:'Shift swap',    body:'Jake Thornton claimed an open shift Saturday',   time:'1 hour ago',   target:'builder',      unread:true },
+      { id:3, icon:'inventory_2',     accent:'#DC2626', tint:'#FEECEC', title:'Stock alert',   body:'Marcus flagged Pita Bread as needs ordering',    time:'3 hours ago',  target:'stock',        unread:true },
+      { id:4, icon:'event_available', accent:'#16A34A', tint:'#ECFDF3', title:'Availability',  body:'Aisha sent her availability for next week',      time:'Yesterday',    target:'availability', unread:false },
+    ],
+  };
+
+  ME_NOTICES = [
+    {id:1, icon:'check_circle', color:'#16A34A', tint:'#ECFDF3', title:'Leave approved', body:'Your leave 10–12 Jun was approved', detail:'', time:'2 days ago'},
+    {id:2, icon:'event', color:'#2563EB', tint:'#EFF6FF', title:'Rostered', body:"You're on the roster for the week of 23 Jun", detail:'Mon 8:00am–2:00pm · Tue 8:00am–2:00pm', time:'3 days ago'},
+    {id:3, icon:'alarm', color:'#D97706', tint:'#FEF3E2', title:'Shift reminder', body:'You work tomorrow, Tue 24 Jun', detail:'Morning · 8:00am – 2:00pm', time:'Just now'},
+  ];
+  KIOSK_STAFF = ['Sarah Hassan','Jake Thornton','Marcus Webb','Aisha Khan','Tom Nguyen','Priya Patel'];
+
+  kPick(name){ this.setState({kiosk:{...this.state.kiosk, step:'pin', name, pin:''}}); }
+  kPin(d){ const k=this.state.kiosk; if(k.pin.length>=4) return; const pin=k.pin+d; this.setState({kiosk:{...k,pin}}); if(pin.length===4){ setTimeout(()=>this.setState({kiosk:{...this.state.kiosk, step:'actions'}}),200); } }
+  kDel(){ const k=this.state.kiosk; this.setState({kiosk:{...k,pin:k.pin.slice(0,-1)}}); }
+  kClockIn(){ const k=this.state.kiosk; if(k.name==='Marcus Webb'){ this.setState({kiosk:{...k,step:'gps'}}); return; } this.setState({kiosk:{...k,step:'confirm',count:5}}); this.kCountdown(); }
+  kCountdown(){ clearInterval(this._kt); this._kt=setInterval(()=>{ const c=this.state.kiosk.count-1; if(c<=0){ this.kReset(); } else { this.setState({kiosk:{...this.state.kiosk,count:c}}); } },1000); }
+  kReset(){ clearInterval(this._kt); this.setState({kiosk:{step:'pick',name:'',pin:'',count:5}}); }
+  pPin(d){ if(this.state.phoneView!=='idle') return; const p=this.state.phonePin; if(p.length>=4) return; this.setState({phonePin:p+d}); }
+  pDel(){ this.setState({phonePin:this.state.phonePin.slice(0,-1)}); }
+  pClock(v){ this.setState({phoneView:v}); }
+  pReset(){ this.setState({phoneView:'idle',phonePin:''}); }
+  mePinPress(d){ const p=this.state.mePin; if(p.length>=4) return; const np=p+d; this.setState({mePin:np}); if(np.length===4){ setTimeout(()=>this.setState({meUnlocked:true}),200); } }
+  mePinDel(){ this.setState({mePin:this.state.mePin.slice(0,-1)}); }
+  availSet(day,val){ this.setState({availDays:{...this.state.availDays,[day]:val}}); }
+
+  SHIFT = {
+    morning: { name:'Morning', stripe:'#76b900', bg:'#F4F8E9', label:'#3F6212', time:'#5A7D17' },
+    arvo:    { name:'Arvo',    stripe:'#7C5CBF', bg:'#F2EEFB', label:'#5B43A6', time:'#6E57B8' },
+    close:   { name:'Close',   stripe:'#1E293B', bg:'#EEF1F5', label:'#1E293B', time:'#566476' },
+    split:   { name:'Split',   stripe:'#D97706', bg:'#FDF2E3', label:'#B45309', time:'#C26A0C' },
+  };
+  AVAIL = { g:{c:'#16A34A',t:'Available'}, a:{c:'#D97706',t:'Partial availability'}, n:{c:'#9CA3AF',t:'No response'} };
+
+  DAYS = [
+    {name:'Mon',date:'23'},{name:'Tue',date:'24'},{name:'Wed',date:'25'},
+    {name:'Thu',date:'26'},{name:'Fri',date:'27'},{name:'Sat',date:'28'},{name:'Sun',date:'29'},
+  ];
+
+  STAFF = [
+    { name:'Sarah Hassan', role:'Chef',         initials:'SH', color:'#C2683B', shifts:[
+      {t:'morning',s:'8:00am',e:'2:00pm',a:'g'},{t:'morning',s:'8:00am',e:'2:00pm',a:'g'},null,{t:'morning',s:'8:00am',e:'2:00pm',a:'g'},{t:'morning',s:'8:00am',e:'2:00pm',a:'g'},{t:'arvo',s:'12:00pm',e:'8:00pm',a:'a'},null ]},
+    { name:'Jake Thornton', role:'Griller',     initials:'JT', color:'#5B6B7B', shifts:[
+      {t:'arvo',s:'2:00pm',e:'10:00pm',a:'g'},{t:'arvo',s:'2:00pm',e:'10:00pm',a:'g'},{t:'arvo',s:'2:00pm',e:'10:00pm',a:'g'},null,{t:'close',s:'5:00pm',e:'11:00pm',a:'g'},{t:'close',s:'5:00pm',e:'11:00pm',a:'g'},{t:'close',s:'5:00pm',e:'11:00pm',a:'g'} ]},
+    { name:'Marcus Webb', role:'Kitchen Hand',  initials:'MW', color:'#A67C00', shifts:[
+      {t:'morning',s:'10:00am',e:'4:00pm',a:'g'},{leave:true},{t:'morning',s:'10:00am',e:'4:00pm',a:'g'},{t:'arvo',s:'2:00pm',e:'10:00pm',a:'g'},null,{t:'morning',s:'10:00am',e:'4:00pm',a:'g'},null ]},
+    { name:'Aisha Khan', role:'Cashier',        initials:'AK', color:'#8E5A9E', shifts:[
+      null,{t:'arvo',s:'4:00pm',e:'10:00pm',a:'a'},{t:'arvo',s:'4:00pm',e:'10:00pm',a:'g'},{t:'arvo',s:'4:00pm',e:'10:00pm',a:'g'},{t:'arvo',s:'4:00pm',e:'10:00pm',a:'g'},{t:'arvo',s:'12:00pm',e:'8:00pm',a:'g'},null ]},
+    { name:'Tom Nguyen', role:'Cook',           initials:'TN', color:'#2F7D6B', shifts:[
+      {t:'close',s:'5:00pm',e:'11:00pm',a:'g'},{t:'close',s:'5:00pm',e:'11:00pm',a:'g'},null,{t:'close',s:'5:00pm',e:'11:00pm',a:'g'},{t:'arvo',s:'2:00pm',e:'10:00pm',a:'g'},{t:'close',s:'5:00pm',e:'11:00pm',a:'g'},null ]},
+    { name:'Priya Patel', role:'Supervisor',    initials:'PP', color:'#B5524E', shifts:[
+      {t:'morning',s:'8:00am',e:'4:00pm',a:'g'},{t:'morning',s:'8:00am',e:'4:00pm',a:'g'},{t:'morning',s:'8:00am',e:'4:00pm',a:'g'},null,{t:'morning',s:'8:00am',e:'4:00pm',a:'g'},{t:'morning',s:'8:00am',e:'4:00pm',a:'g'},{t:'arvo',s:'12:00pm',e:'8:00pm',a:'n'} ]},
+  ];
+  OPEN_ROW = { shifts:[ null,null,null,null,null,null,{open:true,t:'close',s:'5:00pm',e:'11:00pm'} ] };
+
+  BADGE = {
+    published:{label:'PUBLISHED',bg:'#ECFDF3',color:'#15803D',border:'#BBF7D0'},
+    draft:{label:'DRAFT',bg:'#F3F4F6',color:'#6B7280',border:'#E5E7EB'},
+    collecting:{label:'COLLECTING AVAILABILITY',bg:'#FEF3E2',color:'#B45309',border:'#FED7AA'},
+    approved:{label:'APPROVED',bg:'#ECFDF3',color:'#15803D',border:'#BBF7D0'},
+    pending:{label:'PENDING',bg:'#FEF3E2',color:'#B45309',border:'#FED7AA'},
+    stillin:{label:'STILL CLOCKED IN',bg:'#EFF6FF',color:'#1D4ED8',border:'#BFDBFE'},
+    noout:{label:'NO CLOCK-OUT',bg:'#FEECEC',color:'#B91C1C',border:'#FECACA'},
+    denied:{label:'DENIED',bg:'#FEECEC',color:'#B91C1C',border:'#FECACA'},
+    needsorder:{label:'NEEDS ORDER',bg:'#FEECEC',color:'#B91C1C',border:'#FECACA'},
+    ok:{label:'OK',bg:'#F0F6E2',color:'#5A7D17',border:'#D6E8B0'},
+    valid:{label:'VALID',bg:'#ECFDF3',color:'#15803D',border:'#BBF7D0'},
+    expiring:{label:'EXPIRING SOON',bg:'#FEF3E2',color:'#B45309',border:'#FED7AA'},
+    expired:{label:'EXPIRED',bg:'#FEECEC',color:'#B91C1C',border:'#FECACA'},
+  };
+  badgeStyle(t){ const b=this.BADGE[t]; return `background:${b.bg};color:${b.color};border:1px solid ${b.border};`; }
+
+  ROSTER_PERIODS = [
+    {week:'30 Jun – 6 Jul', sub:'Next week', type:'collecting', staff:6, action:'Build', responses:'4 of 6 replied'},
+    {week:'23 – 29 Jun', sub:'This week', type:'draft', staff:6, action:'Build', responses:'31 shifts rostered'},
+    {week:'16 – 22 Jun', sub:'Last week', type:'published', staff:6, action:'View', responses:'Published 19 Jun'},
+    {week:'9 – 15 Jun', sub:'', type:'published', staff:5, action:'View', responses:'Published 12 Jun'},
+  ];
+
+  SHIFT_TYPES = [
+    {name:'Morning', time:'6:00am – 2:00pm', color:'#76b900', tint:'#F4F8E9', count:'Used in 9 shifts'},
+    {name:'Afternoon', time:'2:00pm – 10:00pm', color:'#7C5CBF', tint:'#F2EEFB', count:'Used in 8 shifts'},
+    {name:'Close', time:'6:00pm – close', color:'#1E293B', tint:'#EEF1F5', count:'Used in 6 shifts'},
+    {name:'Split', time:'Varies', color:'#D97706', tint:'#FDF2E3', count:'Used in 2 shifts'},
+  ];
+
+  TIMESHEETS = [
+    {name:'Sarah Hassan', initials:'SH', color:'#C2683B', day:'Mon 23', in:'7:58am', out:'2:04pm', hours:'6.1h', shift:'Morning', status:'approved'},
+    {name:'Aisha Khan', initials:'AK', color:'#8E5A9E', day:'Tue 24', in:'3:58pm', out:'—', hours:'4.0h', shift:'Arvo', status:'stillin'},
+    {name:'Jake Thornton', initials:'JT', color:'#5B6B7B', day:'Tue 24', in:'1:52pm', out:'—', hours:'—', shift:'Arvo', status:'noout'},
+    {name:'Marcus Webb', initials:'MW', color:'#A67C00', day:'Mon 23', in:'10:12am', out:'4:01pm', hours:'5.8h', shift:'Morning', status:'pending', gps:true},
+    {name:'Priya Patel', initials:'PP', color:'#B5524E', day:'Mon 23', in:'7:49am', out:'4:06pm', hours:'8.3h', shift:'Morning', status:'pending'},
+    {name:'Tom Nguyen', initials:'TN', color:'#2F7D6B', day:'Mon 23', in:'4:58pm', out:'11:05pm', hours:'6.1h', shift:'Close', status:'pending'},
+    {name:'Jake Thornton', initials:'JT', color:'#5B6B7B', day:'Mon 23', in:'1:55pm', out:'10:02pm', hours:'8.1h', shift:'Arvo', status:'approved'},
+    {name:'Aisha Khan', initials:'AK', color:'#8E5A9E', day:'Mon 23', in:'3:59pm', out:'10:03pm', hours:'6.1h', shift:'Arvo', status:'approved'},
+    {name:'Sarah Hassan', initials:'SH', color:'#C2683B', day:'Tue 24', in:'7:55am', out:'2:01pm', hours:'6.1h', shift:'Morning', status:'approved'},
+    {name:'Priya Patel', initials:'PP', color:'#B5524E', day:'Tue 24', in:'7:51am', out:'4:09pm', hours:'8.3h', shift:'Morning', status:'approved'},
+    {name:'Tom Nguyen', initials:'TN', color:'#2F7D6B', day:'Tue 24', in:'4:55pm', out:'11:01pm', hours:'6.1h', shift:'Close', status:'pending'},
+    {name:'Marcus Webb', initials:'MW', color:'#A67C00', day:'Wed 25', in:'10:02am', out:'4:03pm', hours:'6.0h', shift:'Morning', status:'approved'},
+  ];
+
+  TREND = [
+    {label:'Wk of 2 Jun', hours:128, cost:'$4,180', pct:90},
+    {label:'Wk of 9 Jun', hours:134, cost:'$4,390', pct:94},
+    {label:'Wk of 16 Jun', hours:139, cost:'$4,520', pct:98},
+    {label:'Wk of 23 Jun', hours:142, cost:'$4,820', pct:100, current:true},
+  ];
+
+  REPORT_STAFF = [
+    {name:'Priya Patel', initials:'PP', color:'#B5524E', rate:'$30.00', hours:'33h', cost:'$990', note:''},
+    {name:'Sarah Hassan', initials:'SH', color:'#C2683B', rate:'$26.00', hours:'31h', cost:'$806', note:''},
+    {name:'Jake Thornton', initials:'JT', color:'#5B6B7B', rate:'$24.50', hours:'28h', cost:'$686', note:''},
+    {name:'Aisha Khan', initials:'AK', color:'#8E5A9E', rate:'$23.50', hours:'24h', cost:'$564', note:''},
+    {name:'Tom Nguyen', initials:'TN', color:'#2F7D6B', rate:'$24.50', hours:'22h', cost:'$539', note:''},
+    {name:'Marcus Webb', initials:'MW', color:'#A67C00', rate:'—', hours:'14h', cost:'—', note:'norate'},
+    {name:'Liam Brown', initials:'LB', color:'#6B7280', rate:'—', hours:'9h', cost:'—', note:'norate'},
+  ];
+
+  CERT = {
+    valid:{icon:'check_circle',color:'#16A34A',bg:'#ECFDF3',label:'VALID'},
+    expiring:{icon:'warning',color:'#D97706',bg:'#FEF3E2',label:'EXPIRING SOON'},
+    expired:{icon:'cancel',color:'#DC2626',bg:'#FEECEC',label:'EXPIRED'},
+    none:{icon:'remove',color:'#9CA3AF',bg:'#F3F4F6',label:'NONE RECORDED'},
+  };
+
+  STAFF_PROFILES = [
+    {email:'sarah.hassan@email.com', rate:'$26.00', rateType:'Casual', certs:[
+      {name:'RSA', status:'valid', detail:'Valid to Dec 2026'},
+      {name:'Food Safety', status:'expiring', detail:'Expires in 28 days'},
+      {name:'First Aid', status:'expired', detail:'Expired 3 months ago'}], docs:[{name:'Contract.pdf'},{name:'RSA_Certificate.pdf'}]},
+    {email:'jake.t@email.com', rate:'$24.50', rateType:'Casual', certs:[
+      {name:'RSA', status:'valid', detail:'Valid to Aug 2027'},
+      {name:'Food Safety', status:'valid', detail:'Valid to Mar 2027'}], docs:[{name:'Contract.pdf'}]},
+    {email:'marcus.webb@email.com', rate:'—', rateType:'No rate set', onLeave:true, certs:[
+      {name:'Food Safety', status:'expiring', detail:'Expires in 41 days'},
+      {name:'RSA', status:'none', detail:'Not recorded'}], docs:[]},
+    {email:'aisha.k@email.com', rate:'$23.50', rateType:'Casual', certs:[
+      {name:'RSA', status:'valid', detail:'Valid to Jan 2027'}], docs:[{name:'Contract.pdf'},{name:'ID_Passport.pdf'}]},
+    {email:'tom.n@email.com', rate:'$24.50', rateType:'Casual', certs:[
+      {name:'RSA', status:'valid', detail:'Valid to Nov 2026'},
+      {name:'First Aid', status:'valid', detail:'Valid to Sep 2026'}], docs:[{name:'Contract.pdf'}]},
+    {email:'priya.p@email.com', rate:'$30.00', rateType:'Part-time', certs:[
+      {name:'RSA', status:'valid', detail:'Valid to Feb 2028'},
+      {name:'First Aid', status:'valid', detail:'Valid to Jul 2027'},
+      {name:'Food Safety', status:'valid', detail:'Valid to May 2027'}], docs:[{name:'Contract.pdf'},{name:'Supervisor_Agreement.pdf'}]},
+  ];
+
+  LEAVE = [
+    {id:1, name:'Sarah Hassan', initials:'SH', color:'#C2683B', type:'Annual', dates:'24 – 26 Jun', days:'3 days', reason:'Family wedding interstate', status:'pending'},
+    {id:2, name:'Liam Brown', initials:'LB', color:'#6B7280', type:'Personal', dates:'25 Jun', days:'1 day', reason:'Medical appointment', status:'pending'},
+    {id:3, name:'Marcus Webb', initials:'MW', color:'#A67C00', type:'Annual', dates:'24 Jun', days:'1 day', reason:'', status:'approved'},
+    {id:4, name:'Aisha Khan', initials:'AK', color:'#8E5A9E', type:'Unpaid', dates:'10 – 12 Jun', days:'3 days', reason:'', status:'approved'},
+    {id:5, name:'Tom Nguyen', initials:'TN', color:'#2F7D6B', type:'Personal', dates:'2 Jun', days:'1 day', reason:'', status:'denied'},
+  ];
+
+  CERTS_ALL = [
+    {name:'Sarah Hassan', initials:'SH', color:'#C2683B', cert:'RSA', expiry:'12 Dec 2026', status:'valid', days:'167 days'},
+    {name:'Sarah Hassan', initials:'SH', color:'#C2683B', cert:'Food Safety', expiry:'26 Jul 2026', status:'expiring', days:'28 days'},
+    {name:'Sarah Hassan', initials:'SH', color:'#C2683B', cert:'First Aid', expiry:'14 Mar 2026', status:'expired', days:'-106 days'},
+    {name:'Marcus Webb', initials:'MW', color:'#A67C00', cert:'Food Safety', expiry:'8 Aug 2026', status:'expiring', days:'41 days'},
+    {name:'Marcus Webb', initials:'MW', color:'#A67C00', cert:'RSA', expiry:'—', status:'none', days:'—'},
+    {name:'Jake Thornton', initials:'JT', color:'#5B6B7B', cert:'RSA', expiry:'19 Aug 2027', status:'valid', days:'417 days'},
+    {name:'Aisha Khan', initials:'AK', color:'#8E5A9E', cert:'RSA', expiry:'30 Jan 2027', status:'valid', days:'216 days'},
+    {name:'Aisha Khan', initials:'AK', color:'#8E5A9E', cert:'Food Safety', expiry:'21 Jul 2026', status:'expiring', days:'23 days'},
+    {name:'Tom Nguyen', initials:'TN', color:'#2F7D6B', cert:'First Aid', expiry:'9 Sep 2026', status:'valid', days:'73 days'},
+    {name:'Priya Patel', initials:'PP', color:'#B5524E', cert:'RSA', expiry:'2 Feb 2028', status:'valid', days:'584 days'},
+  ];
+
+  DAYS_FULL = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  CATEGORY = {
+    Meat:{bg:'#FEECEC',color:'#B91C1C'}, Produce:{bg:'#F0F6E2',color:'#5A7D17'},
+    Packaging:{bg:'#EEF1F5',color:'#475569'}, Beverages:{bg:'#EFF6FF',color:'#1D4ED8'}, Bakery:{bg:'#FDF2E3',color:'#B45309'},
+  };
+  STOCK = [
+    {item:'Pita Bread', supplier:'Crust & Co', by:'Marcus', byColor:'#A67C00', at:'Today 9:12am', status:'needsorder', reminder:true},
+    {item:'Halal Chicken', supplier:'Hicks Meats', by:'Sarah', byColor:'#C2683B', at:'Today 8:40am', status:'ok'},
+    {item:'Garlic Sauce', supplier:'Fresh Produce Co', by:'Marcus', byColor:'#A67C00', at:'Today 9:14am', status:'needsorder', reminder:false},
+    {item:'Lamb (doner)', supplier:'Hicks Meats', by:'Sarah', byColor:'#C2683B', at:'Today 8:41am', status:'ok'},
+    {item:'Foil Wraps', supplier:'Allied Packaging', by:'Tom', byColor:'#2F7D6B', at:'Today 9:20am', status:'needsorder', reminder:true},
+    {item:'Tomatoes', supplier:'Fresh Produce Co', by:'Aisha', byColor:'#8E5A9E', at:'Yesterday 4:10pm', status:'ok'},
+    {item:'Chilli Sauce', supplier:'Fresh Produce Co', by:'Marcus', byColor:'#A67C00', at:'Today 9:15am', status:'ok'},
+    {item:'Lettuce', supplier:'Fresh Produce Co', by:'Aisha', byColor:'#8E5A9E', at:'Yesterday 4:12pm', status:'ok'},
+  ];
+  ITEMS = [
+    {name:'Pita Bread', sku:'PB-001', cat:'Bakery', supplier:'Crust & Co', reorder:'50', unit:'packs'},
+    {name:'Halal Chicken', sku:'MT-014', cat:'Meat', supplier:'Hicks Meats', reorder:'20', unit:'kg'},
+    {name:'Lamb Doner', sku:'MT-022', cat:'Meat', supplier:'Hicks Meats', reorder:'15', unit:'kg'},
+    {name:'Garlic Sauce', sku:'SC-003', cat:'Produce', supplier:'Fresh Produce Co', reorder:'10', unit:'tubs'},
+    {name:'Chilli Sauce', sku:'SC-007', cat:'Produce', supplier:'Fresh Produce Co', reorder:'10', unit:'tubs'},
+    {name:'Tomatoes', sku:'PR-101', cat:'Produce', supplier:'Fresh Produce Co', reorder:'8', unit:'kg'},
+    {name:'Lettuce', sku:'PR-104', cat:'Produce', supplier:'Fresh Produce Co', reorder:'6', unit:'kg'},
+    {name:'Onions', sku:'PR-108', cat:'Produce', supplier:'Fresh Produce Co', reorder:'10', unit:'kg'},
+    {name:'Foil Wraps', sku:'PK-201', cat:'Packaging', supplier:'Allied Packaging', reorder:'500', unit:'sheets'},
+    {name:'Containers', sku:'PK-205', cat:'Packaging', supplier:'Allied Packaging', reorder:'200', unit:'units'},
+    {name:'Soft Drinks 375ml', sku:'BV-301', cat:'Beverages', supplier:'Bay Beverages', reorder:'48', unit:'cans'},
+  ];
+  SUPPLIERS = [
+    {name:'Hicks Meats', cat:'Meat', contact:'orders@hicksmeats.com.au', phone:'(03) 9417 8820', days:['Mon','Wed','Fri']},
+    {name:'Fresh Produce Co', cat:'Produce', contact:'sales@freshproduce.com.au', phone:'(03) 9388 1140', days:['Tue','Thu']},
+    {name:'Allied Packaging', cat:'Packaging', contact:'orders@alliedpack.com.au', phone:'(03) 9555 2210', days:['Mon']},
+    {name:'Bay Beverages', cat:'Beverages', contact:'hello@baybev.com.au', phone:'(03) 9670 4400', days:['Wed']},
+  ];
+  NOTIF_EVENTS = [
+    ['leave','Leave requests submitted'],
+    ['shift','Shift released or claimed'],
+    ['stock','Stock marked needs-ordering'],
+    ['certs','Certifications expiring'],
+    ['avail','Availability replies received'],
+    ['notices','Team notices (daily shift reminder for staff)'],
+  ];
+  CSV_PREVIEW = [
+    {name:'Falafel Mix', sku:'MT-031', cat:'Meat'},
+    {name:'Hommus 2kg', sku:'SC-012', cat:'Produce'},
+    {name:'Pickled Turnip', sku:'PR-120', cat:'Produce'},
+    {name:'Large Chips', sku:'PR-130', cat:'Produce'},
+  ];
+
+  SCREENS = [
+    {id:'landing',     label:'Marketing landing', group:'Marketing & auth', chrome:'bare',  icon:'language'},
+    {id:'signin',      label:'Sign in',           group:'Marketing & auth', chrome:'bare',  icon:'login'},
+    {id:'onboarding',  label:'Onboarding setup',  group:'Marketing & auth', chrome:'bare',  icon:'storefront'},
+    {id:'dashboard',   label:'Dashboard (home)',  group:'Owner · home',     chrome:'owner', icon:'home'},
+    {id:'rosterlist',  label:'Roster periods',    group:'Owner · rosters',  chrome:'owner', icon:'calendar_month'},
+    {id:'builder',     label:'Roster builder ★',  group:'Owner · rosters',  chrome:'owner', icon:'grid_view'},
+    {id:'shifttypes',  label:'Shift types',       group:'Owner · rosters',  chrome:'owner', icon:'category'},
+    {id:'timesheets',  label:'Timesheets',        group:'Owner · rosters',  chrome:'owner', icon:'schedule'},
+    {id:'reports',     label:'Reports & analytics',group:'Owner · rosters', chrome:'owner', icon:'monitoring'},
+    {id:'staff',       label:'Staff',             group:'Owner · team',     chrome:'owner', icon:'group'},
+    {id:'leave',       label:'Leave requests',    group:'Owner · team',     chrome:'owner', icon:'beach_access'},
+    {id:'certs',       label:'Certifications',    group:'Owner · team',     chrome:'owner', icon:'verified'},
+    {id:'stock',       label:'Stock levels',      group:'Owner · orders',   chrome:'owner', icon:'inventory'},
+    {id:'items',       label:'Items / SKUs',      group:'Owner · orders',   chrome:'owner', icon:'list_alt'},
+    {id:'suppliers',   label:'Suppliers',         group:'Owner · orders',   chrome:'owner', icon:'local_shipping'},
+    {id:'settings',    label:'Settings',          group:'Owner · system',   chrome:'owner', icon:'settings'},
+    {id:'notifications',label:'Notification bell',group:'Owner · system',   chrome:'owner', icon:'notifications'},
+    {id:'kiosk',       label:'Kiosk clock-in',    group:'Mobile & kiosk',   chrome:'kiosk', icon:'point_of_sale'},
+    {id:'phoneclock',  label:'Phone clock-in',    group:'Mobile & kiosk',   chrome:'phone', icon:'phone_iphone'},
+    {id:'menotices',   label:'Staff notices /me', group:'Mobile & kiosk',   chrome:'phone', icon:'notifications_active'},
+    {id:'publicroster',label:'Public roster /r',  group:'Mobile & kiosk',   chrome:'phone', icon:'public'},
+    {id:'availability',label:'Availability /a',   group:'Mobile & kiosk',   chrome:'phone', icon:'event_available'},
+  ];
+
+  NAV = [
+    {id:'rosters', label:'Rosters',  items:[['Rosters','rosterlist','calendar_month'],['Shift types','shifttypes','category'],['Shifts','builder','grid_view'],['Timesheets','timesheets','schedule'],['Reports','reports','monitoring']]},
+    {id:'team',    label:'Team',     items:[['Staff','staff','group'],['Leave','leave','beach_access'],['Certifications','certs','verified']]},
+    {id:'orders',  label:'Orders',   items:[['Stock levels','stock','inventory'],['Items','items','list_alt'],['Suppliers','suppliers','local_shipping']]},
+    {id:'settings',label:'Settings', items:[['Settings','settings','settings']]},
+  ];
+  SCREEN_NAV = { rosterlist:'rosters', shifttypes:'rosters', builder:'rosters', timesheets:'rosters', reports:'rosters', staff:'team', leave:'team', certs:'team', stock:'orders', items:'orders', suppliers:'orders', settings:'settings' };
+
+  cap(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
+
+  go(id){
+    this.setState({ screen:id, openNav:null, bellOpen: id==='notifications' });
+    const s = document.getElementById('rosterStage'); if(s) s.scrollTop = 0;
+  }
+  showToast(msg){ this.setState({toast:msg}); clearTimeout(this._t); this._t=setTimeout(()=>this.setState({toast:null}),3400); }
+
+  buildCell(spec){
+    if(!spec) return {variant:'empty',isEmpty:true};
+    if(spec.leave) return {variant:'leave',isLeave:true};
+    const meta=this.SHIFT[spec.t]; const time=spec.s+' – '+spec.e;
+    if(spec.open) return {variant:'open',isOpen:true,label:meta.name,time};
+    const av=this.AVAIL[spec.a||'g'];
+    return {variant:'shift',isShift:true,label:meta.name,time,
+      style:`background:${meta.bg};border-left:3px solid ${meta.stripe};`,
+      labelColor:`color:${meta.label};`, timeColor:`color:${meta.time};`,
+      dotStyle:`background:${av.c};`, dotTitle:av.t };
+  }
+  buildRow(s){ return {...s, cells:s.shifts.map(sp=>this.buildCell(sp))}; }
+
+  renderVals(){
+    const screen=this.state.screen;
+    const show={}; this.SCREENS.forEach(s=>{ show[s.id]= screen===s.id; });
+    show.dashboard = screen==='dashboard' || screen==='notifications';
+    const cur=this.SCREENS.find(s=>s.id===screen)||{chrome:'owner'};
+    const chrome=cur.chrome;
+
+    // rail
+    const order=[]; const groups={};
+    this.SCREENS.forEach(s=>{ if(!groups[s.group]){groups[s.group]=[];order.push(s.group);} groups[s.group].push(s); });
+    const railGroups=order.map(g=>({ title:g, items:groups[g].map(s=>{
+      const active = screen===s.id || (s.id==='dashboard'&&screen==='notifications');
+      return { label:s.label, icon:s.icon, go:()=>this.go(s.id),
+        style: active? 'background:#F4F8E9;color:#3F6212;font-weight:600;box-shadow:inset 3px 0 0 #76b900;' : 'color:#374151;font-weight:500;',
+        iconStyle: active? 'color:#76b900;' : 'color:#9CA3AF;' };
+    }) }));
+
+    // header nav
+    const activeNav=this.SCREEN_NAV[screen]||'';
+    const navGroups=this.NAV.map(g=>({
+      label:g.label, open:this.state.openNav===g.id,
+      triggerStyle: activeNav===g.id ? 'color:#76b900;box-shadow:inset 0 -2px 0 #76b900;' : 'color:#C7CDD6;',
+      onEnter:()=>this.setState({openNav:g.id}), onLeave:()=>this.setState({openNav:null}),
+      onClick:()=>this.setState({openNav:this.state.openNav===g.id?null:g.id}),
+      items:g.items.map(([lbl,id,icon])=>({label:lbl,icon,go:()=>this.go(id)})),
+    }));
+
+    // notifications
+    const notifList=this.state.notifs.map(n=>({
+      icon:n.icon, title:n.title, body:n.body, time:n.time,
+      iconWrap:`background:${n.tint};`, iconColor:`color:${n.accent};`,
+      rowStyle: n.unread ? `background:#fff;border-left:3px solid ${n.accent};` : 'background:#fff;border-left:3px solid transparent;opacity:.62;',
+      go:()=>{ this.setState({notifs:this.state.notifs.map(x=>x.id===n.id?{...x,unread:false}:x), bellOpen:false}); this.go(n.target); },
+    }));
+    const unreadCount=this.state.notifs.filter(n=>n.unread).length;
+
+    // builder
+    const staffRows=this.STAFF.map(s=>this.buildRow(s));
+    const openRow=this.buildRow(this.OPEN_ROW);
+    const days=this.DAYS.map((d,i)=>({...d, count:this.STAFF.filter(s=>{const sp=s.shifts[i];return sp&&!sp.leave&&!sp.open;}).length}));
+    let shiftCount=0; this.STAFF.forEach(s=>s.shifts.forEach(sp=>{ if(sp&&!sp.leave) shiftCount++; }));
+
+    // staff
+    const sel=this.state.selectedStaff;
+    const staffList=this.STAFF.map((s,i)=>{ const p=this.STAFF_PROFILES[i]; const warn=p.certs.some(c=>c.status==='expiring'||c.status==='expired'); return {name:s.name,role:s.role,initials:s.initials,color:s.color,email:p.email,rate:p.rate,rateType:p.rateType,onLeave:!!p.onLeave,certWarn:warn,selected:i===sel,selStyle:i===sel?'background:#F4F8E9;border-color:#76b900;':'background:#fff;border-color:#E5E7EB;',select:()=>this.setState({selectedStaff:i})}; });
+    const curStaff=this.STAFF[sel], curProfile=this.STAFF_PROFILES[sel];
+    const staffDetail={ name:curStaff.name, role:curStaff.role, initials:curStaff.initials, color:curStaff.color, email:curProfile.email, rate:curProfile.rate, rateType:curProfile.rateType, onLeave:!!curProfile.onLeave,
+      certs:curProfile.certs.map(c=>{ const m=this.CERT[c.status]; return {name:c.name, detail:c.detail, icon:m.icon, iconColor:`color:${m.color};`, badgeLabel:m.label, badgeStyle:`background:${m.bg};color:${m.color};` }; }),
+      docs:curProfile.docs, hasDocs:curProfile.docs.length>0 };
+    // leave
+    const leaveList=this.LEAVE.map(l=>{ const st=this.state.leaveStatus[l.id]||l.status; return {...l, status:st, isPending:st==='pending', isDecided:st!=='pending', hasReason:!!l.reason, badgeLabel:this.BADGE[st].label, badgeStyle:this.badgeStyle(st), approve:()=>{this.setState({leaveStatus:{...this.state.leaveStatus,[l.id]:'approved'}}); this.showToast('Leave approved — '+l.name.split(' ')[0]+' will be notified');}, deny:()=>{this.setState({leaveStatus:{...this.state.leaveStatus,[l.id]:'denied'}}); this.showToast('Leave denied — '+l.name.split(' ')[0]+' will be notified');} }; });
+    const pendingLeave=leaveList.filter(l=>l.isPending).length;
+    // certs
+    const tog=(on)=>({track:on?'background:#76b900;':'background:#D1D5DB;', knob:on?'transform:translateX(18px);':'transform:translateX(0);'});
+    const certRows=(this.state.certFilter? this.CERTS_ALL.filter(c=>c.status==='expiring'||c.status==='expired'):this.CERTS_ALL).map(c=>{ const m=this.CERT[c.status]; return {...c, icon:m.icon, iconColor:`color:${m.color};`, badgeLabel:m.label, badgeStyle:`background:${m.bg};color:${m.color};border:1px solid ${m.color}22;` }; });
+
+    // ---- mobile ----
+    const ks=this.state.kiosk;
+    const kioskStaff=this.KIOSK_STAFF.map(n=>{ const m=this.STAFF.find(s=>s.name===n)||{}; return {name:n, first:n.split(' ')[0], initials:m.initials||n[0], color:m.color||'#5A7D17', go:()=>this.kPick(n)}; });
+    const kiosk={ step:ks.step, name:ks.name, first:(ks.name||'').split(' ')[0],
+      isPick:ks.step==='pick', isPin:ks.step==='pin', isActions:ks.step==='actions', isConfirm:ks.step==='confirm', isGps:ks.step==='gps',
+      dots:[0,1,2,3].map(i=>({on:ks.pin.length>i})), count:ks.count };
+    const kpad=['1','2','3','4','5','6','7','8','9'].map(d=>({d, press:()=>this.kPin(d)}));
+    const pv=this.state.phoneView;
+    const phone={ isIdle:pv==='idle', isIn:pv==='in', isOut:pv==='out', isLocked:pv==='locked', ready:this.state.phonePin.length===4, dots:[0,1,2,3].map(i=>({on:this.state.phonePin.length>i})) };
+    const ppad=['1','2','3','4','5','6','7','8','9'].map(d=>({d, press:()=>this.pPin(d)}));
+    const meList=this.ME_NOTICES.map(n=>({...n, read:!!this.state.meRead[n.id], hasDetail:!!n.detail, rowStyle:this.state.meRead[n.id]?'opacity:.55;':'', toggle:()=>this.setState({meRead:{...this.state.meRead,[n.id]:true}})}));
+    const me={ unlocked:this.state.meUnlocked, dots:[0,1,2,3].map(i=>({on:this.state.mePin.length>i})) };
+    const mepad=['1','2','3','4','5','6','7','8','9'].map(d=>({d, press:()=>this.mePinPress(d)}));
+    const publicDays=this.DAYS.map((d,i)=>({ name:d.name, date:d.date, people:this.STAFF.filter(s=>{const sp=s.shifts[i];return sp&&!sp.leave&&!sp.open;}).map(s=>{const sp=s.shifts[i];const m=this.SHIFT[sp.t];return {name:s.name, role:s.role, time:sp.s+' – '+sp.e, dot:`background:${m.stripe};`};}) }));
+    const availOpts=[['avail','Available','#16A34A','check_circle'],['partial','Partial','#D97706','schedule'],['none','Off','#DC2626','cancel']];
+    const availRows=this.DAYS.map(d=>{ const val=this.state.availDays[d.name]; return {day:d.name, date:d.date, isPartial:val==='partial', opts:availOpts.map(([v,label,color,icon])=>({label,icon, set:()=>this.availSet(d.name,v), style: val===v?`background:${color};color:#fff;border:1px solid ${color};`:'background:#fff;color:#6B7280;border:1px solid #E5E7EB;' })) }; });
+
+    return {
+      show, chrome, chromeOwner:chrome==='owner', chromeBare:chrome==='bare', chromePhone:chrome==='phone', chromeKiosk:chrome==='kiosk',
+      phoneStatusColor:'#111827',
+      railGroups, navGroups, notifList, unreadCount,
+      bellOpen:this.state.bellOpen, toast:this.state.toast,
+      toggleBell:()=>this.setState({bellOpen:!this.state.bellOpen, openNav:null}),
+      markAll:()=>this.setState({notifs:this.state.notifs.map(x=>({...x,unread:false}))}),
+      goDashboard:()=>this.go('dashboard'), goNotifAll:()=>this.go('notifications'), signOut:()=>this.go('signin'),
+      dashNew:this.state.dashView==='new', dashEstablished:this.state.dashView!=='new',
+      dashNewTab:this.state.dashView==='new'?'background:#fff;color:#111827;box-shadow:0 1px 2px rgba(17,24,39,.12);':'background:none;color:#6B7280;',
+      dashEstTab:this.state.dashView!=='new'?'background:#fff;color:#111827;box-shadow:0 1px 2px rgba(17,24,39,.12);':'background:none;color:#6B7280;',
+      setDashNew:()=>this.setState({dashView:'new'}), setDashEst:()=>this.setState({dashView:'established'}),
+      dashNotifs:notifList.slice(0,3),
+      signinSent:this.state.signinSent, signinNotSent:!this.state.signinSent,
+      sendLink:()=>this.setState({signinSent:true}), resetSignin:()=>this.setState({signinSent:false}),
+      goOnboarding:()=>this.go('onboarding'),
+      createBusiness:()=>{ this.go('dashboard'); this.setState({dashView:'new'}); this.showToast("Troy's Kebabs is set up — let's get rostering"); },
+      goShiftTypes:()=>this.go('shifttypes'), goBuilder:()=>this.go('builder'), goSettings:()=>this.go('settings'), goTimesheets:()=>this.go('timesheets'), goLeave:()=>this.go('leave'), goStaff:()=>this.go('staff'), goRosterList:()=>this.go('rosterlist'), goCerts:()=>this.go('certs'),
+      // builder
+      days, staffRows, openRow, staffCount:this.STAFF.length, shiftCount,
+      rosterPublished:this.state.rosterPublished, rosterDraft:!this.state.rosterPublished,
+      publish:()=>{ this.setState({rosterPublished:true}); this.showToast('Roster published — 6 staff notified'); },
+      share:()=>this.showToast('Share link copied — roster.zaleit.com.au/r/troys-kebabs'),
+      draftFromLast:()=>this.showToast("Drafted from last week's roster — review and publish"),
+      periods:this.ROSTER_PERIODS.map(p=>({...p, badgeLabel:this.BADGE[p.type].label, badgeStyle:this.badgeStyle(p.type), isBuild:p.action==='Build', isView:p.action==='View', go:()=>this.go('builder')})),
+      newPeriod:()=>this.showToast('New roster period created — 30 Jun – 6 Jul'),
+      shiftTypes:this.SHIFT_TYPES,
+      addShiftType:()=>this.showToast('Shift type added'),
+      timesheets:this.TIMESHEETS.map(t=>({...t, badgeLabel:this.BADGE[t.status].label, badgeStyle:this.badgeStyle(t.status), pending:t.status==='pending'})),
+      exportCsv:()=>this.showToast('Exported 9 approved entries to CSV'),
+      approveTimesheet:()=>this.showToast('Timesheet approved'),
+      trend:this.TREND.map(w=>({...w, barStyle:`width:${w.pct}%;background:${w.current?'#76b900':'#C5DC8C'};`, hoursLabel:w.hours+'h', costLabel:w.cost})),
+      reportStaff:this.REPORT_STAFF.map(r=>({...r, noRate:r.note==='norate', hasRate:r.note!=='norate'})),
+      staffList, staffDetail, staffDrive:this.state.staffDrive, staffNoDrive:!this.state.staffDrive,
+      driveDocs:this.state.staffDrive && staffDetail.hasDocs, driveEmpty:this.state.staffDrive && !staffDetail.hasDocs,
+      toggleStaffDrive:()=>this.setState({staffDrive:!this.state.staffDrive}),
+      copyNotices:()=>this.showToast('Notices link copied — roster.zaleit.com.au/me/sh-7f3a'),
+      generatePin:()=>this.showToast('New PIN generated and sent to '+staffDetail.name.split(' ')[0]),
+      uploadDoc:()=>this.showToast('Document uploaded to Google Drive'),
+      addStaff:()=>this.showToast('Team member added — sign-in link sent'),
+      leaveList, pendingLeave,
+      certRows, certFilter:this.state.certFilter, toggleCertFilter:()=>this.setState({certFilter:!this.state.certFilter}),
+      certFilterStyle:this.state.certFilter?'background:#76b900;color:#111827;border:1px solid #76b900;':'background:#fff;color:#374151;border:1px solid #E5E7EB;',
+      stock:this.STOCK.map(s=>({...s, needsOrder:s.status==='needsorder', badgeLabel:this.BADGE[s.status].label, badgeStyle:this.badgeStyle(s.status), rowStyle:s.status==='needsorder'?'background:#FFFBFA;':'background:#fff;'})),
+      stockNeeds:this.STOCK.filter(s=>s.status==='needsorder').length,
+      items:this.ITEMS.map(it=>({...it, catStyle:`background:${this.CATEGORY[it.cat].bg};color:${this.CATEGORY[it.cat].color};`})),
+      suppliers:this.SUPPLIERS.map(sp=>({...sp, catStyle:`background:${this.CATEGORY[sp.cat].bg};color:${this.CATEGORY[sp.cat].color};`, dayChips:this.DAYS_FULL.map(d=>({day:d, style: sp.days.includes(d)?'background:#F0F6E2;color:#5A7D17;border:1px solid #D6E8B0;':'background:#F9FAFB;color:#CBD0D8;border:1px solid #F1F3F5;'}))})),
+      csvPreview:this.state.csvPreview, csvRows:this.CSV_PREVIEW.map(r=>({...r, catStyle:`background:${this.CATEGORY[r.cat].bg};color:${this.CATEGORY[r.cat].color};`})),
+      openCsv:()=>this.setState({csvPreview:true}), cancelCsv:()=>this.setState({csvPreview:false}),
+      confirmCsv:()=>{this.setState({csvPreview:false}); this.showToast('Imported 24 items into your catalogue');},
+      addItem:()=>this.showToast('Item added to catalogue'),
+      addSupplier:()=>this.showToast('Supplier added — delivery days saved'),
+      settingsGpsTog:tog(this.state.setGps), settingsPhotoTog:tog(this.state.setPhoto),
+      toggleGps:()=>this.setState({setGps:!this.state.setGps}), togglePhoto:()=>this.setState({setPhoto:!this.state.setPhoto}),
+      settingsDrive:this.state.setDrive, settingsNoDrive:!this.state.setDrive,
+      toggleSettingsDrive:()=>this.setState({setDrive:!this.state.setDrive}),
+      notifSettings:this.NOTIF_EVENTS.map(([k,label])=>{ const on=this.state.notifToggles[k]; const t=tog(on); return {label, track:t.track, knob:t.knob, toggle:()=>this.setState({notifToggles:{...this.state.notifToggles,[k]:!on}})}; }),
+      copyKiosk:()=>this.showToast('Kiosk link copied to clipboard'),
+      genKiosk:()=>this.showToast('New kiosk link generated — old link disabled'),
+      copyPhone:()=>this.showToast('Personal phone link copied'),
+      regenPhone:()=>this.showToast('Personal phone link regenerated'),
+      kiosk, kioskStaff, kpad, k0:()=>this.kPin('0'), kDel:()=>this.kDel(), kClockIn:()=>this.kClockIn(), kReset:()=>this.kReset(),
+      kClockOut:()=>{this.showToast('Clocked out — Sarah Hassan');this.kReset();}, kReqLeave:()=>{this.showToast('Leave request opened');}, kStock:()=>{this.showToast('Stock check started');}, kSwap:()=>{this.showToast('Shift swap opened');},
+      phone, ppad, p0:()=>this.pPin('0'), pDelete:()=>this.pDel(), pClockIn:()=>this.pClock('in'), pClockOut:()=>this.pClock('out'), pLock:()=>this.pClock('locked'), pReset:()=>this.pReset(),
+      meList, me, mepad, me0:()=>this.mePinPress('0'), mePinDel:()=>this.mePinDel(), meMarkAll:()=>this.setState({meRead:{1:true,2:true,3:true}}), meReset:()=>this.setState({meUnlocked:false,mePin:''}),
+      publicDays,
+      availRows, availSubmitted:this.state.availSubmitted, availSubmit:()=>this.setState({availSubmitted:true}), availReset:()=>this.setState({availSubmitted:false, availDays:{Mon:null,Tue:null,Wed:null,Thu:null,Fri:null,Sat:null,Sun:null}}),
+    };
+  }
+}
+</script>
+</body>
+</html>
