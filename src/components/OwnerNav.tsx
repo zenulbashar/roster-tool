@@ -2,52 +2,60 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
- * Owner-area navigation: four top-level groups (three dropdowns + a standalone
- * Settings link) on the Zaleit-branded dark header. Click-to-open dropdowns
- * (Escape + outside-click to close) on desktop; a real hamburger panel on
- * mobile. Active route is highlighted on both the group and the item.
+ * Owner-area navigation, rendered inline in the dark 60px top bar: three
+ * dropdown groups (Rosters / Team / Orders) + standalone Forms and Settings
+ * links. Dropdowns open on hover AND click (Escape + outside-click to close) on
+ * desktop; a hamburger panel drops below the bar on mobile. The active route is
+ * highlighted on both the group (green underline) and the item.
  *
- * Navigation/labels only — every destination keeps its current URL.
+ * Navigation/labels only — every destination keeps its current URL. "Forms" is
+ * an app feature not present in the design handoff; it's retained here.
  */
 
-type NavItem = { label: string; href: string };
+type NavItem = { label: string; href: string; icon: string };
 type NavGroup = { label: string; items: NavItem[] };
 
 const GROUPS: NavGroup[] = [
   {
     label: "Rosters",
     items: [
-      { label: "Rosters", href: "/app/periods" },
-      { label: "Shift types", href: "/app/templates" },
-      { label: "Shifts", href: "/app/shifts" },
-      { label: "Timesheets", href: "/app/timesheets" },
-      { label: "Reports", href: "/app/reports" },
+      { label: "Rosters", href: "/app/periods", icon: "calendar_month" },
+      { label: "Shift types", href: "/app/templates", icon: "category" },
+      { label: "Shifts", href: "/app/shifts", icon: "grid_view" },
+      { label: "Timesheets", href: "/app/timesheets", icon: "schedule" },
+      { label: "Reports", href: "/app/reports", icon: "monitoring" },
     ],
   },
   {
     label: "Team",
     items: [
-      { label: "Staff", href: "/app/staff" },
-      { label: "Leave", href: "/app/leave" },
-      { label: "Certifications", href: "/app/certifications" },
+      { label: "Staff", href: "/app/staff", icon: "group" },
+      { label: "Leave", href: "/app/leave", icon: "beach_access" },
+      {
+        label: "Certifications",
+        href: "/app/certifications",
+        icon: "verified",
+      },
     ],
   },
   {
     label: "Orders",
     items: [
       // Route is /app/stock; nav label only is "Stock levels".
-      { label: "Stock levels", href: "/app/stock" },
-      { label: "Items", href: "/app/items" },
-      { label: "Suppliers", href: "/app/suppliers" },
+      { label: "Stock levels", href: "/app/stock", icon: "inventory" },
+      { label: "Items", href: "/app/items", icon: "list_alt" },
+      { label: "Suppliers", href: "/app/suppliers", icon: "local_shipping" },
     ],
   },
 ];
 
-const FORMS: NavItem = { label: "Forms", href: "/app/forms" };
-const SETTINGS: NavItem = { label: "Settings", href: "/app/settings" };
+const STANDALONE: NavItem[] = [
+  { label: "Forms", href: "/app/forms", icon: "description" },
+  { label: "Settings", href: "/app/settings", icon: "settings" },
+];
 
 function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -57,12 +65,17 @@ function groupIsActive(pathname: string, group: NavGroup): boolean {
   return group.items.some((item) => isActive(pathname, item.href));
 }
 
+const triggerBase =
+  "flex h-[60px] items-center gap-1 px-[14px] text-[13.5px] font-semibold transition-colors";
+const activeTrigger =
+  "text-[var(--color-accent)] shadow-[inset_0_-2px_0_var(--color-accent)]";
+const idleTrigger = "text-[#C7CDD6] hover:text-white";
+
 export function OwnerNav() {
   const pathname = usePathname();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const navRef = useRef<HTMLElement>(null);
-  const mobilePanelId = useId();
 
   // Close everything when the route changes (e.g. after navigating).
   useEffect(() => {
@@ -70,7 +83,7 @@ export function OwnerNav() {
     setMobileOpen(false);
   }, [pathname]);
 
-  // Escape closes any open menu; outside-click closes desktop dropdowns.
+  // Escape closes any open menu; outside-click closes dropdowns.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -92,15 +105,20 @@ export function OwnerNav() {
   }, []);
 
   return (
-    <nav ref={navRef} aria-label="Main">
-      {/* Desktop: grouped dropdowns. Hidden on small screens. */}
-      <div className="mx-auto hidden max-w-3xl items-center gap-1 px-5 pb-2 text-sm font-medium md:flex">
+    <nav ref={navRef} aria-label="Main" className="contents">
+      {/* Desktop: grouped dropdowns inline in the bar. */}
+      <div className="ml-[18px] hidden h-[60px] items-stretch md:flex">
         {GROUPS.map((group) => {
           const active = groupIsActive(pathname, group);
           const open = openGroup === group.label;
           const menuId = `nav-group-${group.label}`;
           return (
-            <div key={group.label} className="relative">
+            <div
+              key={group.label}
+              className="relative flex items-stretch"
+              onMouseEnter={() => setOpenGroup(group.label)}
+              onMouseLeave={() => setOpenGroup(null)}
+            >
               <button
                 type="button"
                 aria-haspopup="menu"
@@ -111,31 +129,23 @@ export function OwnerNav() {
                     current === group.label ? null : group.label,
                   )
                 }
-                className={`flex items-center gap-1 border-b-[3px] px-3 py-2.5 text-[13.5px] font-semibold text-[var(--color-header-ink)] transition-colors ${
-                  active
-                    ? "border-[var(--color-accent)]"
-                    : "border-transparent hover:border-[var(--color-accent)]"
-                }`}
+                className={`${triggerBase} ${active ? activeTrigger : idleTrigger}`}
               >
                 {group.label}
-                <svg
+                <span
                   aria-hidden="true"
-                  viewBox="0 0 20 20"
-                  className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`}
-                  fill="currentColor"
+                  className={`material-symbols-rounded text-[16px] opacity-70 transition-transform ${
+                    open ? "rotate-180" : ""
+                  }`}
                 >
-                  <path
-                    fillRule="evenodd"
-                    d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.06l3.71-3.83a.75.75 0 1 1 1.08 1.04l-4.25 4.39a.75.75 0 0 1-1.08 0L5.21 8.27a.75.75 0 0 1 .02-1.06Z"
-                    clipRule="evenodd"
-                  />
-                </svg>
+                  expand_more
+                </span>
               </button>
               {open ? (
                 <div
                   id={menuId}
                   role="menu"
-                  className="absolute left-0 top-full z-50 mt-1 min-w-44 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-1 shadow-[var(--shadow-dropdown)] [animation:rosterFade_0.14s_ease]"
+                  className="absolute left-2 top-[54px] z-[70] min-w-[196px] rounded-[12px] border border-[var(--color-border)] bg-[var(--color-surface)] p-1.5 shadow-[0_18px_40px_rgba(17,24,39,0.20)] [animation:rosterFade_0.14s_ease]"
                 >
                   {group.items.map((item) => {
                     const itemActive = isActive(pathname, item.href);
@@ -144,10 +154,15 @@ export function OwnerNav() {
                         key={item.href}
                         href={item.href}
                         role="menuitem"
-                        className={`block rounded-md px-3 py-2 text-[var(--color-ink)] hover:bg-[var(--color-accent-faint)] hover:text-[#3F6212] ${
-                          itemActive ? "font-semibold text-[#3F6212]" : ""
+                        className={`flex items-center gap-2.5 rounded-[8px] px-[11px] py-[9px] text-[13px] hover:bg-[var(--color-accent-faint)] hover:text-[#3F6212] ${
+                          itemActive
+                            ? "bg-[var(--color-accent-faint)] font-semibold text-[#3F6212]"
+                            : "text-[#374151]"
                         }`}
                       >
+                        <span className="material-symbols-rounded text-[17px] text-[var(--color-text-muted)]">
+                          {item.icon}
+                        </span>
                         {item.label}
                       </Link>
                     );
@@ -157,105 +172,68 @@ export function OwnerNav() {
             </div>
           );
         })}
-        <Link
-          href={FORMS.href}
-          className={`border-b-[3px] px-3 py-2.5 text-[13.5px] font-semibold text-[var(--color-header-ink)] transition-colors ${
-            isActive(pathname, FORMS.href)
-              ? "border-[var(--color-accent)]"
-              : "border-transparent hover:border-[var(--color-accent)]"
-          }`}
-        >
-          {FORMS.label}
-        </Link>
-        <Link
-          href={SETTINGS.href}
-          className={`border-b-[3px] px-3 py-2.5 text-[13.5px] font-semibold text-[var(--color-header-ink)] transition-colors ${
-            isActive(pathname, SETTINGS.href)
-              ? "border-[var(--color-accent)]"
-              : "border-transparent hover:border-[var(--color-accent)]"
-          }`}
-        >
-          {SETTINGS.label}
-        </Link>
+        {STANDALONE.map((item) => {
+          const active = isActive(pathname, item.href);
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`${triggerBase} ${active ? activeTrigger : idleTrigger}`}
+            >
+              {item.label}
+            </Link>
+          );
+        })}
       </div>
 
-      {/* Mobile: hamburger toggling a stacked panel. Hidden on md+. */}
-      <div className="mx-auto max-w-3xl px-5 pb-2 md:hidden">
-        <button
-          type="button"
-          aria-expanded={mobileOpen}
-          aria-controls={mobilePanelId}
-          onClick={() => setMobileOpen((open) => !open)}
-          className="flex min-h-12 items-center gap-2 rounded-md px-3 py-2 text-[var(--color-header-ink)] hover:bg-white/10"
+      {/* Mobile: hamburger toggling a panel dropped below the bar. */}
+      <button
+        type="button"
+        aria-expanded={mobileOpen}
+        aria-label="Menu"
+        onClick={() => setMobileOpen((open) => !open)}
+        className="ml-2 flex h-10 w-10 items-center justify-center rounded-[9px] text-[#D1D5DB] hover:bg-[var(--color-header-hover)] md:hidden"
+      >
+        <span
+          aria-hidden="true"
+          className="material-symbols-rounded text-[24px]"
         >
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 24 24"
-            className="h-6 w-6"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          >
-            {mobileOpen ? (
-              <path d="M6 6l12 12M18 6L6 18" />
-            ) : (
-              <path d="M4 7h16M4 12h16M4 17h16" />
-            )}
-          </svg>
-          <span className="text-sm font-medium">Menu</span>
-        </button>
-        {mobileOpen ? (
-          <div id={mobilePanelId} className="mt-2 space-y-3 pb-2">
-            {GROUPS.map((group) => (
-              <div key={group.label}>
-                <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-header-muted)]">
-                  {group.label}
-                </p>
-                <ul>
-                  {group.items.map((item) => {
-                    const itemActive = isActive(pathname, item.href);
-                    return (
-                      <li key={item.href}>
-                        <Link
-                          href={item.href}
-                          className={`flex min-h-12 items-center rounded-md px-3 py-2 text-[var(--color-header-ink)] hover:bg-white/10 ${
-                            itemActive
-                              ? "font-semibold text-[var(--color-accent)]"
-                              : ""
-                          }`}
-                        >
-                          {item.label}
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            ))}
-            <Link
-              href={FORMS.href}
-              className={`flex min-h-12 items-center rounded-md px-3 py-2 text-[var(--color-header-ink)] hover:bg-white/10 ${
-                isActive(pathname, FORMS.href)
-                  ? "font-semibold text-[var(--color-accent)]"
-                  : ""
-              }`}
-            >
-              {FORMS.label}
-            </Link>
-            <Link
-              href={SETTINGS.href}
-              className={`flex min-h-12 items-center rounded-md px-3 py-2 text-[var(--color-header-ink)] hover:bg-white/10 ${
-                isActive(pathname, SETTINGS.href)
-                  ? "font-semibold text-[var(--color-accent)]"
-                  : ""
-              }`}
-            >
-              {SETTINGS.label}
-            </Link>
-          </div>
-        ) : null}
-      </div>
+          {mobileOpen ? "close" : "menu"}
+        </span>
+      </button>
+      {mobileOpen ? (
+        <div className="absolute inset-x-0 top-[60px] z-[60] max-h-[calc(100vh-60px)] overflow-y-auto border-t border-[#1F2937] bg-[var(--color-header)] px-4 pb-4 pt-2 shadow-[0_18px_40px_rgba(0,0,0,0.4)] md:hidden">
+          {[...GROUPS, { label: "More", items: STANDALONE }].map((group) => (
+            <div key={group.label} className="mt-3">
+              <p className="px-3 pb-1 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                {group.label}
+              </p>
+              <ul>
+                {group.items.map((item) => {
+                  const itemActive = isActive(pathname, item.href);
+                  return (
+                    <li key={item.href}>
+                      <Link
+                        href={item.href}
+                        className={`flex min-h-11 items-center gap-3 rounded-[8px] px-3 py-2 text-[14px] hover:bg-white/10 ${
+                          itemActive
+                            ? "font-semibold text-[var(--color-accent)]"
+                            : "text-[var(--color-header-ink)]"
+                        }`}
+                      >
+                        <span className="material-symbols-rounded text-[19px] opacity-80">
+                          {item.icon}
+                        </span>
+                        {item.label}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </nav>
   );
 }

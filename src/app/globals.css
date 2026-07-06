@@ -18,7 +18,7 @@
   --color-brand-ink: #ffffff;
   --color-button: #76b900; /* Zaleit green — primary buttons */
   --color-button-ink: #111827; /* dark text on green, ~7.4:1 on --color-button */
-  --color-ok: #047857; /* green-700 */
+  --color-ok: #15803d; /* success text — matches design badges/banners */
   --color-warn: #b45309; /* amber-700 */
   --color-danger: #b91c1c; /* red-700 */
 
@@ -70,7 +70,8 @@
   --radius-sm: 6px; /* badges, chips */
   --radius-md: 10px; /* buttons, inputs */
   --radius-lg: 12px; /* nav dropdowns */
-  --radius-xl: 16px; /* main cards, roster grid container */
+  --radius-card: 14px; /* standard cards, tables, list containers */
+  --radius-xl: 16px; /* large cards, roster grid container, staff detail panel */
 
   /* Shadows */
   --shadow-card: 0 1px 3px rgba(17, 24, 39, 0.05);
