@@ -6,10 +6,25 @@ import { businesses } from "@/lib/db/schema";
 import { findRequestByToken } from "@/lib/tenant/public-access";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { formatDateOnly, formatTimeOnly, formatDateTime } from "@/lib/time";
+import { shiftColorScheme } from "@/lib/shift-colors";
 import { notifyOwner } from "@/lib/notifications";
-import { Banner, Button, Card } from "@/components/ui";
+import { Banner } from "@/components/ui";
+import { StaffHeader } from "@/components/StaffHeader";
 
 export const dynamic = "force-dynamic";
+
+function LinkError({ children }: { children?: React.ReactNode }) {
+  return (
+    <main id="main" className="mx-auto max-w-md px-5 py-16">
+      <div className="rounded-[16px] border border-[var(--color-border)] bg-white p-7 text-center shadow-[var(--shadow-card)]">
+        <h1 className="font-archivo text-[20px] font-extrabold text-[var(--color-ink)]">
+          This link isn&rsquo;t working
+        </h1>
+        {children}
+      </div>
+    </main>
+  );
+}
 
 export default async function AvailabilityPage({
   params,
@@ -24,15 +39,12 @@ export default async function AvailabilityPage({
   const request = await findRequestByToken(token);
   if (!request) {
     return (
-      <main id="main" className="mx-auto max-w-md px-5 py-16">
-        <Card>
-          <h1 className="text-xl font-bold">This link isn&rsquo;t working</h1>
-          <p className="mt-2 text-[var(--color-muted)]">
-            It may have expired or already been used. Please ask your manager to
-            send you a new one.
-          </p>
-        </Card>
-      </main>
+      <LinkError>
+        <p className="mt-2 text-[var(--color-text-secondary)]">
+          It may have expired or already been used. Please ask your manager to
+          send you a new one.
+        </p>
+      </LinkError>
     );
   }
 
@@ -50,13 +62,7 @@ export default async function AvailabilityPage({
   ]);
 
   if (!period || !staff || !business) {
-    return (
-      <main id="main" className="mx-auto max-w-md px-5 py-16">
-        <Card>
-          <h1 className="text-xl font-bold">This link isn&rsquo;t working</h1>
-        </Card>
-      </main>
-    );
+    return <LinkError />;
   }
 
   // Prefill from any prior answers; default to "Available" to minimise taps.
@@ -107,20 +113,15 @@ export default async function AvailabilityPage({
 
   return (
     <main id="main" className="mx-auto max-w-xl px-5 py-10">
-      <p className="text-sm font-semibold text-[var(--color-brand)]">
-        {business.name}
-      </p>
-      <h1 className="mt-1 text-2xl font-bold tracking-tight">
-        Hi {staff.name}, when can you work?
-      </h1>
-      <p className="mt-2 text-[var(--color-muted)]">
-        Roster: <strong>{period.label}</strong>. Tap the shifts you{" "}
-        <em>can&rsquo;t</em> do — everything starts as &ldquo;I can work&rdquo;.
-        {deadlineText ? ` Please reply by ${deadlineText}.` : ""}
-      </p>
+      <StaffHeader
+        businessName={business.name}
+        eyebrow="Your availability"
+        title={`Hi ${staff.name.split(" ")[0]}, when can you work?`}
+        subtitle={`Roster: ${period.label}. Tap the shifts you can't do — everything starts as "I can work".${deadlineText ? ` Please reply by ${deadlineText}.` : ""}`}
+      />
 
       {saved ? (
-        <div className="mt-4">
+        <div className="mb-4">
           <Banner tone="success">
             Thanks! Your availability has been saved. You can change it any time
             using this link.
@@ -128,32 +129,47 @@ export default async function AvailabilityPage({
         </div>
       ) : null}
 
-      <form action={submit} className="mt-6 space-y-4">
+      <form action={submit} className="space-y-4">
         {[...byDay.entries()].map(([date, dayShifts]) => (
-          <Card key={date}>
-            <h2 className="text-base font-semibold">{formatDateOnly(date)}</h2>
-            <ul className="mt-3 space-y-3">
+          <div
+            key={date}
+            className="overflow-hidden rounded-[14px] border border-[var(--color-border)] bg-white shadow-[var(--shadow-card)]"
+          >
+            <div className="border-b border-[var(--color-border-subtle)] bg-[#FAFBFC] px-4 py-3 font-archivo text-[15px] font-bold text-[var(--color-ink)]">
+              {formatDateOnly(date)}
+            </div>
+            <ul className="divide-y divide-[var(--color-border-subtle)]">
               {dayShifts.map((s) => {
                 const prior = priorById.get(s.id);
                 const cantSelected = prior === false;
+                const scheme = shiftColorScheme(s.label);
                 return (
                   <li
                     key={s.id}
-                    className="flex flex-wrap items-center justify-between gap-3"
+                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
                   >
-                    <span>
-                      <span className="font-medium">{s.label}</span>{" "}
-                      <span className="text-sm text-[var(--color-muted)]">
-                        {formatTimeOnly(s.startTime)} –{" "}
-                        {formatTimeOnly(s.endTime)}
+                    <span className="flex items-center gap-2.5">
+                      <span
+                        aria-hidden="true"
+                        className="h-[10px] w-[10px] flex-shrink-0 rounded-full"
+                        style={{ backgroundColor: scheme.bar }}
+                      />
+                      <span>
+                        <span className="font-archivo text-[14px] font-bold text-[var(--color-ink)]">
+                          {s.label}
+                        </span>{" "}
+                        <span className="text-[12.5px] text-[var(--color-text-secondary)]">
+                          {formatTimeOnly(s.startTime)} –{" "}
+                          {formatTimeOnly(s.endTime)}
+                        </span>
                       </span>
                     </span>
                     <span
-                      className="inline-flex overflow-hidden rounded-lg border border-[var(--color-line)]"
+                      className="inline-flex overflow-hidden rounded-[10px] border border-[var(--color-border)]"
                       role="group"
                       aria-label={`${s.label} ${formatDateOnly(date)}`}
                     >
-                      <label className="cursor-pointer px-3 py-2 text-sm font-medium has-[:checked]:bg-[var(--color-ok)] has-[:checked]:text-white has-[:focus-visible]:outline has-[:focus-visible]:outline-[3px] has-[:focus-visible]:-outline-offset-2 has-[:focus-visible]:outline-[var(--color-brand)]">
+                      <label className="cursor-pointer px-3.5 py-2 text-[13px] font-semibold text-[var(--color-text-secondary)] has-[:checked]:bg-[#16A34A] has-[:checked]:text-white has-[:focus-visible]:outline has-[:focus-visible]:outline-[3px] has-[:focus-visible]:-outline-offset-2 has-[:focus-visible]:outline-[var(--color-brand)]">
                         <input
                           type="radio"
                           name={`shift_${s.id}`}
@@ -163,7 +179,7 @@ export default async function AvailabilityPage({
                         />
                         I can work
                       </label>
-                      <label className="cursor-pointer border-l border-[var(--color-line)] px-3 py-2 text-sm font-medium has-[:checked]:bg-[var(--color-danger)] has-[:checked]:text-white has-[:focus-visible]:outline has-[:focus-visible]:outline-[3px] has-[:focus-visible]:-outline-offset-2 has-[:focus-visible]:outline-[var(--color-brand)]">
+                      <label className="cursor-pointer border-l border-[var(--color-border)] px-3.5 py-2 text-[13px] font-semibold text-[var(--color-text-secondary)] has-[:checked]:bg-[#B91C1C] has-[:checked]:text-white has-[:focus-visible]:outline has-[:focus-visible]:outline-[3px] has-[:focus-visible]:-outline-offset-2 has-[:focus-visible]:outline-[var(--color-brand)]">
                         <input
                           type="radio"
                           name={`shift_${s.id}`}
@@ -178,19 +194,20 @@ export default async function AvailabilityPage({
                 );
               })}
             </ul>
-          </Card>
+          </div>
         ))}
 
         {shifts.length === 0 ? (
-          <Card>
-            <p className="text-[var(--color-muted)]">
-              There are no shifts to choose yet. Please check back later.
-            </p>
-          </Card>
+          <div className="rounded-[14px] border border-[var(--color-border)] bg-white p-6 text-center text-[var(--color-text-secondary)] shadow-[var(--shadow-card)]">
+            There are no shifts to choose yet. Please check back later.
+          </div>
         ) : (
-          <Button type="submit" className="w-full">
+          <button
+            type="submit"
+            className="w-full rounded-[14px] bg-[var(--color-button)] py-3.5 font-archivo text-[15px] font-bold text-[var(--color-button-ink)] hover:bg-[var(--color-accent-dark)]"
+          >
             Save my availability
-          </Button>
+          </button>
         )}
       </form>
     </main>

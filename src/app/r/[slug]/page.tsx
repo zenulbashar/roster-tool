@@ -4,9 +4,24 @@ import { businesses } from "@/lib/db/schema";
 import { findPublishedBySlug } from "@/lib/tenant/public-access";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { formatDateOnly, formatTimeOnly } from "@/lib/time";
-import { Card } from "@/components/ui";
+import { shiftColorScheme } from "@/lib/shift-colors";
+import { StaffHeader } from "@/components/StaffHeader";
 
 export const dynamic = "force-dynamic";
+
+const WEEKDAY = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
+function weekdayOf(date: string): string {
+  return WEEKDAY[new Date(`${date}T00:00:00Z`).getUTCDay()] ?? "";
+}
 
 export default async function PublicRosterPage({
   params,
@@ -18,14 +33,14 @@ export default async function PublicRosterPage({
 
   if (!published) {
     return (
-      <main id="main" className="mx-auto max-w-md px-5 py-16">
-        <Card>
-          <h1 className="text-xl font-bold">Roster not found</h1>
-          <p className="mt-2 text-[var(--color-muted)]">
-            This link may be wrong or the roster hasn&rsquo;t been published.
-          </p>
-        </Card>
-      </main>
+      <div className="mx-auto mt-10 max-w-[420px] rounded-[16px] border border-[var(--color-border)] bg-white p-7 text-center shadow-[var(--shadow-card)]">
+        <h1 className="font-archivo text-[20px] font-extrabold text-[var(--color-ink)]">
+          Roster not found
+        </h1>
+        <p className="mt-2 text-[var(--color-text-secondary)]">
+          This link may be wrong or the roster hasn&rsquo;t been published.
+        </p>
+      </div>
     );
   }
 
@@ -62,45 +77,70 @@ export default async function PublicRosterPage({
 
   return (
     <main id="main" className="mx-auto max-w-2xl px-5 py-10">
-      <p className="text-sm font-semibold text-[var(--color-brand)]">
-        {business?.name}
-      </p>
-      <h1 className="mt-1 text-2xl font-bold tracking-tight">
-        {published.periodLabel}
-      </h1>
-      <p className="mt-1 text-[var(--color-muted)]">
-        {formatDateOnly(published.startDate)} –{" "}
-        {formatDateOnly(published.endDate)}
-      </p>
+      <StaffHeader
+        businessName={business?.name ?? ""}
+        eyebrow="Published roster"
+        title={published.periodLabel}
+        subtitle={`${formatDateOnly(published.startDate)} – ${formatDateOnly(published.endDate)}`}
+      />
 
-      <div className="mt-6 space-y-4">
+      <div className="space-y-4">
         {[...byDay.entries()].map(([date, shiftsForDay]) => (
-          <Card key={date}>
-            <h2 className="text-base font-semibold">{formatDateOnly(date)}</h2>
-            <ul className="mt-2 space-y-2">
-              {[...shiftsForDay.values()].map((g) => (
-                <li key={g.shiftId}>
-                  <div className="flex items-baseline justify-between">
-                    <span className="font-medium">{g.label}</span>
-                    <span className="text-sm text-[var(--color-muted)]">
-                      {g.timeText}
-                    </span>
-                  </div>
-                  <p className="text-sm">
-                    {g.names.length > 0 ? (
-                      g.names.join(", ")
-                    ) : (
-                      <span className="text-[var(--color-muted)]">
-                        Nobody assigned
-                      </span>
-                    )}
-                  </p>
-                </li>
-              ))}
+          <div
+            key={date}
+            className="overflow-hidden rounded-[14px] border border-[var(--color-border)] bg-white shadow-[var(--shadow-card)]"
+          >
+            <div className="flex items-baseline gap-2 border-b border-[var(--color-border-subtle)] bg-[#FAFBFC] px-4 py-3">
+              <span className="font-archivo text-[15px] font-bold text-[var(--color-ink)]">
+                {weekdayOf(date)}
+              </span>
+              <span className="text-[12.5px] text-[var(--color-text-muted)]">
+                {formatDateOnly(date)}
+              </span>
+            </div>
+            <ul className="divide-y divide-[var(--color-border-subtle)]">
+              {[...shiftsForDay.values()].map((g) => {
+                const scheme = shiftColorScheme(g.label);
+                return (
+                  <li key={g.shiftId} className="flex gap-3 px-4 py-3">
+                    <span
+                      aria-hidden="true"
+                      className="mt-1.5 h-[10px] w-[10px] flex-shrink-0 rounded-full"
+                      style={{ backgroundColor: scheme.bar }}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-baseline justify-between gap-2">
+                        <span
+                          className="font-archivo text-[14px] font-bold"
+                          style={{ color: scheme.text }}
+                        >
+                          {g.label}
+                        </span>
+                        <span className="text-[12.5px] text-[var(--color-text-secondary)]">
+                          {g.timeText}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-[13.5px] text-[var(--color-ink)]">
+                        {g.names.length > 0 ? (
+                          g.names.join(", ")
+                        ) : (
+                          <span className="text-[var(--color-text-muted)]">
+                            Nobody assigned
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
-          </Card>
+          </div>
         ))}
       </div>
+
+      <p className="mt-6 text-center text-[12px] text-[var(--color-text-muted)]">
+        Roster by ROSTER · roster.zaleit.com.au
+      </p>
     </main>
   );
 }
