@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
@@ -8,7 +9,8 @@ import { staffSchema, pinSchema, payRateSchema } from "@/lib/validation";
 import { hashPin } from "@/lib/pin";
 import { generateToken } from "@/lib/tokens";
 import { logger } from "@/lib/logger";
-import { formatDate } from "@/lib/time";
+import { formatDate, businessDateOf, DEFAULT_TIMEZONE } from "@/lib/time";
+import { certStatus, daysUntil, expiryPhrase } from "@/lib/certification";
 import {
   isDriveConfigured,
   googleDriveClient,
@@ -20,13 +22,17 @@ import {
 } from "@/lib/google-drive/service";
 import { DOC_TYPES, validateUpload } from "@/lib/google-drive/validation";
 import { ClearFlashCookie } from "@/components/ClearFlashCookie";
+import { CopyButton } from "@/components/CopyButton";
 import {
+  Avatar,
+  Badge,
   Banner,
   Button,
   Card,
-  Field,
+  Eyebrow,
   PageHeader,
   TextInput,
+  type BadgeTone,
 } from "@/components/ui";
 
 const PATH = "/app/staff";
@@ -37,6 +43,39 @@ const PATH = "/app/staff";
  * pattern as the kiosk link in Settings; only the hash is ever stored.
  */
 const NOTICES_LINK_COOKIE = "notices_link_once";
+
+const CERT_TYPE_LABEL: Record<string, string> = {
+  rsa: "RSA",
+  rsg: "RSG",
+  food_safety: "Food Safety",
+  first_aid: "First Aid",
+  wwcc: "WWCC",
+  other: "Certification",
+};
+
+const CERT_META: Record<
+  "valid" | "expiring" | "expired",
+  { tone: BadgeTone; label: string; icon: string; color: string }
+> = {
+  valid: {
+    tone: "success",
+    label: "VALID",
+    icon: "check_circle",
+    color: "#16A34A",
+  },
+  expiring: {
+    tone: "warning",
+    label: "EXPIRING SOON",
+    icon: "warning",
+    color: "#D97706",
+  },
+  expired: {
+    tone: "danger",
+    label: "EXPIRED",
+    icon: "cancel",
+    color: "#DC2626",
+  },
+};
 
 function isUniqueViolation(err: unknown): boolean {
   return (
@@ -51,6 +90,7 @@ export default async function StaffPage({
   searchParams,
 }: {
   searchParams: Promise<{
+    s?: string;
     error?: string;
     added?: string;
     pin?: string;
@@ -63,7 +103,36 @@ export default async function StaffPage({
   const repo = await ownerRepo();
   const staff = await repo.listStaff();
   const business = await repo.getBusiness();
+  const tz = business?.timezone ?? DEFAULT_TIMEZONE;
   const timeZone = business?.timezone ?? undefined;
+  const today = businessDateOf(new Date(), tz);
+  const leadDays = business?.certReminderLeadDays ?? 30;
+
+  // Certifications (additive read) — per staff, for the CERT chip + detail list.
+  const certs = await repo.listCertifications();
+  const certsByStaff = new Map<
+    string,
+    {
+      label: string;
+      status: "valid" | "expiring" | "expired";
+      detail: string;
+    }[]
+  >();
+  for (const c of certs) {
+    const status = certStatus(c.expiryDate, today, leadDays);
+    const label = c.certLabel || CERT_TYPE_LABEL[c.certType] || "Certification";
+    const detail = expiryPhrase(daysUntil(c.expiryDate, today));
+    const list = certsByStaff.get(c.staffMemberId) ?? [];
+    list.push({ label, status, detail });
+    certsByStaff.set(c.staffMemberId, list);
+  }
+
+  // On approved leave today (additive read) — for the ON LEAVE chip.
+  const onLeaveToday = new Set(
+    (await repo.listApprovedLeaveBetween(today, today)).map(
+      (l) => l.staffMemberId,
+    ),
+  );
 
   // Google Drive document state. Documents are grouped by staff member; uploads
   // are only offered when a usable connection exists.
@@ -89,6 +158,13 @@ export default async function StaffPage({
           link: `${env.APP_URL}/me/${freshRaw.slice(sep + 1)}`,
         }
       : null;
+
+  // Which staff member is shown in the detail pane (query-param driven).
+  const selected =
+    staff.find((s) => s.id === sp.s) ??
+    staff.find((s) => s.active) ??
+    staff[0] ??
+    null;
 
   async function addStaff(formData: FormData) {
     "use server";
@@ -122,6 +198,7 @@ export default async function StaffPage({
     const active = formData.get("active") === "true";
     await repo.updateStaff(id, { active: !active });
     revalidatePath(PATH);
+    redirect(`${PATH}?s=${id}`);
   }
 
   async function toggleNotify(formData: FormData) {
@@ -132,6 +209,7 @@ export default async function StaffPage({
     const notifyByDefault = formData.get("notifyByDefault") === "true";
     await repo.updateStaff(id, { notifyByDefault });
     revalidatePath(PATH);
+    redirect(`${PATH}?s=${id}`);
   }
 
   async function setPin(formData: FormData) {
@@ -141,14 +219,14 @@ export default async function StaffPage({
     const parsed = pinSchema.safeParse(formData.get("pin"));
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Enter a 4-digit PIN";
-      redirect(`${PATH}?error=${encodeURIComponent(msg)}`);
+      redirect(`${PATH}?s=${id}&error=${encodeURIComponent(msg)}`);
     }
     // Hash before storing; the PIN itself is never persisted or logged.
     const updated = await repo.setStaffPin(id, hashPin(parsed.data));
     if (!updated)
       redirect(`${PATH}?error=${encodeURIComponent("Staff member not found")}`);
     revalidatePath(PATH);
-    redirect(`${PATH}?pin=1`);
+    redirect(`${PATH}?s=${id}&pin=1`);
   }
 
   async function generateNoticesLink(formData: FormData) {
@@ -170,7 +248,7 @@ export default async function StaffPage({
       secure: env.NODE_ENV === "production",
     });
     revalidatePath(PATH);
-    redirect(PATH);
+    redirect(`${PATH}?s=${id}`);
   }
 
   async function setRate(formData: FormData) {
@@ -184,7 +262,7 @@ export default async function StaffPage({
     });
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Check the rate";
-      redirect(`${PATH}?error=${encodeURIComponent(msg)}`);
+      redirect(`${PATH}?s=${id}&error=${encodeURIComponent(msg)}`);
     }
     // A blank amount clears the rate. We store cents; rounding avoids float drift.
     const { rateType, rateDollars, rateLabel } = parsed.data;
@@ -198,7 +276,7 @@ export default async function StaffPage({
     if (!updated)
       redirect(`${PATH}?error=${encodeURIComponent("Staff member not found")}`);
     revalidatePath(PATH);
-    redirect(`${PATH}?rate=1`);
+    redirect(`${PATH}?s=${id}&rate=1`);
   }
 
   async function uploadDocument(formData: FormData) {
@@ -211,13 +289,13 @@ export default async function StaffPage({
 
     if (!(file instanceof File) || file.size === 0) {
       redirect(
-        `${PATH}?error=${encodeURIComponent("Choose a file to upload.")}`,
+        `${PATH}?s=${id}&error=${encodeURIComponent("Choose a file to upload.")}`,
       );
     }
     const f = file as File;
     const valid = validateUpload({ size: f.size, mimeType: f.type });
     if (!valid.ok) {
-      redirect(`${PATH}?error=${encodeURIComponent(valid.message)}`);
+      redirect(`${PATH}?s=${id}&error=${encodeURIComponent(valid.message)}`);
     }
     // Confirm the staff member is this business's before doing any Drive work.
     const member = await repo.getStaff(id);
@@ -243,18 +321,18 @@ export default async function StaffPage({
     } catch (err) {
       if (err instanceof DriveReconnectRequired) {
         redirect(
-          `${PATH}?error=${encodeURIComponent(
+          `${PATH}?s=${id}&error=${encodeURIComponent(
             "Reconnect Google Drive in Settings to upload documents.",
           )}`,
         );
       }
       logger.error({ err }, "Staff document upload failed");
       redirect(
-        `${PATH}?error=${encodeURIComponent("Couldn’t upload the document. Please try again.")}`,
+        `${PATH}?s=${id}&error=${encodeURIComponent("Couldn’t upload the document. Please try again.")}`,
       );
     }
     revalidatePath(PATH);
-    redirect(`${PATH}?uploaded=1`);
+    redirect(`${PATH}?s=${id}&uploaded=1`);
   }
 
   async function deleteDocumentAction(formData: FormData) {
@@ -262,6 +340,7 @@ export default async function StaffPage({
     const { businessId } = await requireOwner();
     const repo = createTenantRepo(businessId);
     const documentId = String(formData.get("documentId"));
+    const staffId = String(formData.get("staffId") ?? "");
     // Scoped delete: a foreign document id resolves to nothing and is a no-op.
     await deleteDocument({
       repo,
@@ -269,14 +348,16 @@ export default async function StaffPage({
       documentId,
     });
     revalidatePath(PATH);
-    redirect(`${PATH}?docDeleted=1`);
+    redirect(`${PATH}?s=${staffId}&docDeleted=1`);
   }
+
+  const activeCount = staff.filter((s) => s.active).length;
 
   return (
     <>
       <PageHeader
         title="Staff"
-        subtitle="The people who work for you. We'll email them when you ask for availability."
+        subtitle="Your team, their rates, certifications and documents — all in one place."
       />
 
       {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
@@ -288,341 +369,545 @@ export default async function StaffPage({
       ) : null}
       {sp.docDeleted ? <Banner tone="success">Document removed.</Banner> : null}
 
-      <Card className="mt-4">
-        <h2 className="text-lg font-semibold">Add someone</h2>
-        <form action={addStaff} className="mt-3 space-y-4">
-          <Field label="Name">
-            <TextInput name="name" required placeholder="e.g. Ava Nguyen" />
-          </Field>
-          <Field label="Email">
-            <TextInput
-              type="email"
-              name="email"
-              required
-              placeholder="ava@example.com"
-            />
-          </Field>
+      {/* Add-someone inline bar. */}
+      <Card className="mt-4" padded={false}>
+        <form
+          action={addStaff}
+          className="flex flex-wrap items-center gap-3 p-[14px]"
+        >
+          <span className="inline-flex items-center gap-1.5 font-archivo text-[13px] font-bold text-[var(--color-ink)]">
+            <span className="material-symbols-rounded text-[19px] text-[#5A7D17]">
+              person_add
+            </span>
+            Add someone
+          </span>
+          <input
+            name="name"
+            required
+            placeholder="Full name"
+            aria-label="Full name"
+            className="min-w-[150px] flex-1 rounded-[9px] border border-[var(--color-line)] px-3 py-[9px] text-[13.5px] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.15)]"
+          />
+          <input
+            type="email"
+            name="email"
+            required
+            placeholder="Email address"
+            aria-label="Email address"
+            className="min-w-[170px] flex-1 rounded-[9px] border border-[var(--color-line)] px-3 py-[9px] text-[13.5px] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.15)]"
+          />
           <Button type="submit">Add to team</Button>
         </form>
       </Card>
 
-      <section className="mt-8" aria-label="Your team">
-        <h2 className="mb-3 text-lg font-semibold">
-          Your team ({staff.filter((s) => s.active).length})
-        </h2>
-        {staff.length === 0 ? (
-          <p className="text-[var(--color-muted)]">
+      {staff.length === 0 ? (
+        <Card className="mt-[18px]">
+          <p className="text-[var(--color-text-secondary)]">
             No one yet. Add your first team member above.
           </p>
-        ) : (
-          <ul className="space-y-2">
-            {staff.map((s) => (
-              <li key={s.id}>
-                <Card className="flex items-center justify-between gap-4 py-3">
-                  <div>
-                    <p className="font-semibold">
+        </Card>
+      ) : (
+        <div className="mt-[18px] grid grid-cols-1 items-start gap-[18px] lg:grid-cols-[340px_1fr]">
+          {/* Left: staff list. */}
+          <div
+            className="flex flex-col gap-[9px]"
+            aria-label={`Your team (${activeCount} active)`}
+          >
+            {staff.map((s) => {
+              const isSel = selected?.id === s.id;
+              const staffCerts = certsByStaff.get(s.id) ?? [];
+              const certWarn = staffCerts.some(
+                (c) => c.status === "expiring" || c.status === "expired",
+              );
+              return (
+                <Link
+                  key={s.id}
+                  href={`${PATH}?s=${s.id}`}
+                  aria-current={isSel ? "true" : undefined}
+                  className={`flex items-center gap-3 rounded-[13px] border p-[13px] transition-colors hover:border-[var(--color-button)] ${
+                    isSel
+                      ? "border-[var(--color-button)] bg-[var(--color-accent-faint)]"
+                      : "border-[var(--color-border)] bg-white"
+                  }`}
+                >
+                  <Avatar name={s.name} colorKey={s.id} size={38} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[14px] font-bold text-[var(--color-ink)]">
                       {s.name}
-                      {!s.active ? (
-                        <span className="ml-2 rounded bg-[var(--color-canvas)] px-2 py-0.5 text-xs font-medium text-[var(--color-muted)]">
-                          Inactive
-                        </span>
-                      ) : null}
-                    </p>
-                    <p className="text-sm text-[var(--color-muted)]">
+                    </div>
+                    <div className="truncate text-[12px] text-[var(--color-text-secondary)]">
+                      {s.rateLabel ? `${s.rateLabel} · ` : ""}
                       {s.email}
-                    </p>
-                    <form action={toggleNotify} className="mt-2">
-                      <input type="hidden" name="id" value={s.id} />
-                      <input
-                        type="hidden"
-                        name="notifyByDefault"
-                        value={String(!s.notifyByDefault)}
-                      />
-                      <button
-                        type="submit"
-                        role="switch"
-                        aria-checked={s.notifyByDefault}
-                        className="inline-flex items-center gap-2 text-sm font-medium text-[var(--color-ink)]"
-                      >
-                        <span
-                          aria-hidden="true"
-                          className={`inline-flex h-5 w-9 items-center rounded-full border px-0.5 transition-colors ${
-                            s.notifyByDefault
-                              ? "justify-end border-[var(--color-ok)] bg-[var(--color-ok)]"
-                              : "justify-start border-[var(--color-line)] bg-[var(--color-canvas)]"
-                          }`}
-                        >
-                          <span className="h-4 w-4 rounded-full bg-white" />
-                        </span>
-                        Ask for availability by email
-                        <span className="text-[var(--color-muted)]">
-                          {s.notifyByDefault ? "On" : "Off"}
-                        </span>
-                      </button>
-                    </form>
-                    <form
-                      action={setPin}
-                      className="mt-3 flex flex-wrap items-end gap-2"
-                    >
-                      <input type="hidden" name="id" value={s.id} />
-                      <label className="block">
-                        <span className="mb-1 block text-sm font-semibold">
-                          Clock-in PIN
-                          <span className="ml-2 font-normal text-[var(--color-muted)]">
-                            {s.pinHash ? "Set" : "Not set"}
+                    </div>
+                    {!s.active || certWarn || onLeaveToday.has(s.id) ? (
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {!s.active ? (
+                          <span className="rounded-[5px] border border-[var(--color-border)] bg-[#F3F4F6] px-[7px] py-0.5 text-[9.5px] font-bold tracking-[0.03em] text-[#6B7280]">
+                            INACTIVE
                           </span>
-                        </span>
-                        <TextInput
-                          name="pin"
-                          inputMode="numeric"
-                          autoComplete="off"
-                          pattern="\d{4}"
-                          maxLength={4}
-                          required
-                          placeholder="4 digits"
-                          className="w-32"
-                          aria-label={`Set clock-in PIN for ${s.name}`}
-                        />
-                      </label>
-                      <Button type="submit" variant="secondary">
-                        {s.pinHash ? "Reset PIN" : "Set PIN"}
-                      </Button>
-                    </form>
-                    <form
-                      action={setRate}
-                      className="mt-3 flex flex-wrap items-end gap-2"
-                    >
-                      <input type="hidden" name="id" value={s.id} />
+                        ) : null}
+                        {onLeaveToday.has(s.id) ? (
+                          <span className="rounded-[5px] border border-[var(--color-border)] bg-[#F3F4F6] px-[7px] py-0.5 text-[9.5px] font-bold tracking-[0.03em] text-[#6B7280]">
+                            ON LEAVE
+                          </span>
+                        ) : null}
+                        {certWarn ? (
+                          <span className="inline-flex items-center gap-0.5 rounded-[5px] border border-[#FED7AA] bg-[#FEF3E2] px-[7px] py-0.5 text-[9.5px] font-bold tracking-[0.03em] text-[#B45309]">
+                            <span className="material-symbols-rounded text-[13px]">
+                              warning
+                            </span>
+                            CERT
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                  <span
+                    aria-hidden="true"
+                    className="material-symbols-rounded text-[20px] text-[var(--color-text-muted)]"
+                  >
+                    chevron_right
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+
+          {/* Right: selected staff detail. */}
+          {selected ? (
+            <div className="overflow-hidden rounded-[16px] border border-[var(--color-border)] bg-white shadow-[0_1px_3px_rgba(17,24,39,0.05)]">
+              {/* Header */}
+              <div className="flex flex-wrap items-center gap-[15px] border-b border-[var(--color-border-subtle)] p-[22px]">
+                <Avatar name={selected.name} colorKey={selected.id} size={54} />
+                <div className="min-w-0 flex-1">
+                  <div className="font-archivo text-[20px] font-extrabold text-[var(--color-ink)]">
+                    {selected.name}
+                    {!selected.active ? (
+                      <span className="ml-2 align-middle text-[12px] font-semibold text-[var(--color-text-muted)]">
+                        (inactive)
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="text-[13px] text-[var(--color-text-secondary)]">
+                    {selected.email}
+                  </div>
+                </div>
+                <form action={toggleActive}>
+                  <input type="hidden" name="id" value={selected.id} />
+                  <input
+                    type="hidden"
+                    name="active"
+                    value={String(selected.active)}
+                  />
+                  <Button type="submit" variant="secondary">
+                    {selected.active ? "Deactivate" : "Reactivate"}
+                  </Button>
+                </form>
+              </div>
+
+              {/* Pay rate + notices + PIN */}
+              <div className="grid grid-cols-1 gap-[22px] p-[22px] sm:grid-cols-2">
+                <div>
+                  <Eyebrow className="mb-2 block">Pay rate</Eyebrow>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="font-archivo text-[24px] font-extrabold text-[var(--color-ink)]">
+                      {selected.payRateCents != null
+                        ? `$${(selected.payRateCents / 100).toFixed(2)}`
+                        : "—"}
+                    </span>
+                    <span className="text-[13px] text-[var(--color-text-secondary)]">
+                      / hour
+                    </span>
+                  </div>
+                  <div className="mt-1 text-[12.5px] text-[var(--color-text-secondary)]">
+                    {selected.rateType === "award" ? "Award" : "Flat"}
+                    {selected.rateLabel
+                      ? ` · ${selected.rateLabel}`
+                      : ""} ·{" "}
+                    <span className="text-[var(--color-text-muted)]">
+                      informational only
+                    </span>
+                  </div>
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-[12.5px] font-semibold text-[#4D7C0F]">
+                      Edit rate
+                    </summary>
+                    <form action={setRate} className="mt-2 space-y-2">
+                      <input type="hidden" name="id" value={selected.id} />
+                      <div className="flex flex-wrap items-end gap-2">
+                        <label className="block">
+                          <span className="mb-1 block text-[12px] font-semibold">
+                            Rate type
+                          </span>
+                          <select
+                            name="rateType"
+                            defaultValue={selected.rateType}
+                            aria-label="Rate type"
+                            className="rounded-[9px] border border-[var(--color-line)] bg-white px-3 py-2 text-[13px]"
+                          >
+                            <option value="flat">Flat</option>
+                            <option value="award">Award</option>
+                          </select>
+                        </label>
+                        <label className="block">
+                          <span className="mb-1 block text-[12px] font-semibold">
+                            Hourly ($)
+                          </span>
+                          <TextInput
+                            name="rateDollars"
+                            inputMode="decimal"
+                            placeholder="28.50"
+                            defaultValue={
+                              selected.payRateCents != null
+                                ? (selected.payRateCents / 100).toFixed(2)
+                                : ""
+                            }
+                            className="w-24"
+                            aria-label="Hourly rate"
+                          />
+                        </label>
+                      </div>
                       <label className="block">
-                        <span className="mb-1 block text-sm font-semibold">
-                          Rate type
-                        </span>
-                        <select
-                          name="rateType"
-                          defaultValue={s.rateType}
-                          aria-label={`Rate type for ${s.name}`}
-                          className="rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 text-sm"
-                        >
-                          <option value="flat">Flat</option>
-                          <option value="award">Award</option>
-                        </select>
-                      </label>
-                      <label className="block">
-                        <span className="mb-1 block text-sm font-semibold">
-                          Hourly rate ($)
-                        </span>
-                        <TextInput
-                          name="rateDollars"
-                          inputMode="decimal"
-                          placeholder="e.g. 28.50"
-                          defaultValue={
-                            s.payRateCents != null
-                              ? (s.payRateCents / 100).toFixed(2)
-                              : ""
-                          }
-                          className="w-28"
-                          aria-label={`Hourly rate for ${s.name}`}
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="mb-1 block text-sm font-semibold">
+                        <span className="mb-1 block text-[12px] font-semibold">
                           Label (optional)
                         </span>
                         <TextInput
                           name="rateLabel"
                           maxLength={80}
                           placeholder="e.g. Level 2 cook"
-                          defaultValue={s.rateLabel ?? ""}
-                          className="w-44"
-                          aria-label={`Rate label for ${s.name}`}
+                          defaultValue={selected.rateLabel ?? ""}
+                          aria-label="Rate label"
                         />
                       </label>
                       <Button type="submit" variant="secondary">
                         Save rate
                       </Button>
-                    </form>
-                    <p className="mt-1 text-xs text-[var(--color-muted)]">
-                      A stored rate for your records and the hours export. This
-                      app doesn&apos;t calculate pay — no penalty rates,
-                      overtime or super.
-                    </p>
-                    <div className="mt-3">
-                      <span className="block text-sm font-semibold">
-                        Notices link
-                        <span className="ml-2 font-normal text-[var(--color-muted)]">
-                          {s.noticesTokenHash ? "Active" : "Not set"}
-                        </span>
-                      </span>
-                      {freshNoticesLink?.staffId === s.id ? (
-                        <div className="mt-2">
-                          <ClearFlashCookie
-                            name={NOTICES_LINK_COOKIE}
-                            path={PATH}
-                          />
-                          <Banner tone="success">
-                            Share this private link with {s.name}. Copy it now —
-                            for security we won&apos;t show it again.
-                          </Banner>
-                          <p className="mt-2 break-all rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 font-mono text-sm">
-                            {freshNoticesLink.link}
-                          </p>
-                        </div>
-                      ) : null}
-                      <form action={generateNoticesLink} className="mt-2">
-                        <input type="hidden" name="id" value={s.id} />
-                        <Button type="submit" variant="secondary">
-                          {s.noticesTokenHash
-                            ? "Replace notices link"
-                            : "Create notices link"}
-                        </Button>
-                      </form>
-                      <p className="mt-1 text-xs text-[var(--color-muted)]">
-                        {s.name}&apos;s private page for roster updates, leave
-                        decisions and shift reminders — it opens with their PIN.
-                        A new link replaces the old one.
+                      <p className="text-[11.5px] text-[var(--color-text-muted)]">
+                        Stored for your records and the hours export. This app
+                        doesn&apos;t calculate pay — no penalty rates, overtime
+                        or super.
                       </p>
-                    </div>
+                    </form>
+                  </details>
+                </div>
 
-                    <div className="mt-4 border-t border-[var(--color-line)] pt-3">
-                      <span className="block text-sm font-semibold">
-                        Documents
-                      </span>
-                      {!driveReady ? (
-                        <p className="mt-1 text-xs text-[var(--color-muted)]">
-                          Connect Google Drive in{" "}
-                          <a
-                            href="/app/settings"
-                            className="text-[var(--color-brand)] underline underline-offset-2"
-                          >
-                            Settings
-                          </a>{" "}
-                          to store {s.name}&apos;s documents in your own Drive.
-                        </p>
-                      ) : driveNeedsReconnect ? (
-                        <p className="mt-1 text-xs text-[var(--color-muted)]">
-                          Google Drive needs reconnecting — fix it in{" "}
-                          <a
-                            href="/app/settings"
-                            className="text-[var(--color-brand)] underline underline-offset-2"
-                          >
-                            Settings
-                          </a>{" "}
-                          to upload documents.
-                        </p>
-                      ) : (
-                        <>
-                          {(docsByStaff.get(s.id) ?? []).length > 0 ? (
-                            <ul className="mt-2 space-y-1">
-                              {(docsByStaff.get(s.id) ?? []).map((d) => (
-                                <li
-                                  key={d.id}
-                                  className="flex flex-wrap items-center gap-2 text-sm"
-                                >
-                                  <a
-                                    href={d.driveWebLink}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-[var(--color-brand)] underline underline-offset-2"
-                                  >
-                                    {d.fileName}
-                                  </a>
-                                  {d.docType ? (
-                                    <span className="rounded bg-[var(--color-canvas)] px-2 py-0.5 text-xs font-medium text-[var(--color-muted)]">
-                                      {d.docType}
-                                    </span>
-                                  ) : null}
-                                  <span className="text-xs text-[var(--color-muted)]">
-                                    {formatDate(d.uploadedAt, timeZone)}
-                                  </span>
-                                  <form action={deleteDocumentAction}>
-                                    <input
-                                      type="hidden"
-                                      name="documentId"
-                                      value={d.id}
-                                    />
-                                    <button
-                                      type="submit"
-                                      className="text-xs font-medium text-[var(--color-brand)] underline underline-offset-2"
-                                    >
-                                      Delete
-                                    </button>
-                                  </form>
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p className="mt-1 text-xs text-[var(--color-muted)]">
-                              No documents yet.
-                            </p>
-                          )}
-
-                          <form
-                            action={uploadDocument}
-                            encType="multipart/form-data"
-                            className="mt-3 flex flex-wrap items-end gap-2"
-                          >
-                            <input type="hidden" name="id" value={s.id} />
-                            <label className="block">
-                              <span className="mb-1 block text-sm font-semibold">
-                                Add a document
-                              </span>
-                              <input
-                                type="file"
-                                name="file"
-                                required
-                                aria-label={`Upload a document for ${s.name}`}
-                                className="block max-w-full text-sm"
-                              />
-                            </label>
-                            <label className="block">
-                              <span className="mb-1 block text-sm font-semibold">
-                                Type
-                              </span>
-                              <select
-                                name="docType"
-                                defaultValue="Other"
-                                aria-label={`Document type for ${s.name}`}
-                                className="rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 text-sm"
-                              >
-                                {DOC_TYPES.map((t) => (
-                                  <option key={t} value={t}>
-                                    {t}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <Button type="submit" variant="secondary">
-                              Upload
-                            </Button>
-                          </form>
-                          <p className="mt-1 text-xs text-[var(--color-muted)]">
-                            Stored in your Google Drive (max 10 MB). Deleting
-                            here also removes the file from your Drive.
-                          </p>
-                        </>
-                      )}
+                <div>
+                  <Eyebrow className="mb-2 block">Staff notices</Eyebrow>
+                  {freshNoticesLink?.staffId === selected.id ? (
+                    <div className="mb-2">
+                      <ClearFlashCookie
+                        name={NOTICES_LINK_COOKIE}
+                        path={PATH}
+                      />
+                      <Banner tone="success">
+                        Copy this private link for {selected.name} now — for
+                        security we won&apos;t show it again.
+                      </Banner>
+                      <p className="mt-2 break-all rounded-[9px] border border-[var(--color-line)] bg-[var(--color-bg)] px-3 py-2 font-mono text-[12px]">
+                        {freshNoticesLink.link}
+                      </p>
+                      <div className="mt-2">
+                        <CopyButton
+                          value={freshNoticesLink.link}
+                          label="Copy notices link"
+                        />
+                      </div>
                     </div>
-                  </div>
-                  <form action={toggleActive}>
-                    <input type="hidden" name="id" value={s.id} />
-                    <input
-                      type="hidden"
-                      name="active"
-                      value={String(s.active)}
-                    />
+                  ) : null}
+                  <form action={generateNoticesLink}>
+                    <input type="hidden" name="id" value={selected.id} />
                     <button
                       type="submit"
-                      className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
+                      className="inline-flex items-center gap-1.5 rounded-[9px] border border-[#D6E8B0] bg-[var(--color-accent-faint)] px-[13px] py-[9px] text-[13px] font-semibold text-[#3F6212] hover:bg-[#EAF3D8]"
                     >
-                      {s.active ? "Remove" : "Add back"}
+                      <span className="material-symbols-rounded text-[17px]">
+                        link
+                      </span>
+                      {selected.noticesTokenHash
+                        ? "Replace notices link"
+                        : "Create notices link"}
                     </button>
                   </form>
-                </Card>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+                  <p className="mt-1.5 text-[11.5px] text-[var(--color-text-muted)]">
+                    PIN-gated /me link for them to check shifts, leave decisions
+                    and reminders. A new link replaces the old one.
+                  </p>
+
+                  <div className="mt-4">
+                    <Eyebrow className="mb-2 block">Clock-in PIN</Eyebrow>
+                    <form
+                      action={setPin}
+                      className="flex flex-wrap items-end gap-2"
+                    >
+                      <input type="hidden" name="id" value={selected.id} />
+                      <TextInput
+                        name="pin"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        pattern="\d{4}"
+                        maxLength={4}
+                        required
+                        placeholder="4 digits"
+                        className="w-28"
+                        aria-label={`Set clock-in PIN for ${selected.name}`}
+                      />
+                      <Button type="submit" variant="secondary">
+                        {selected.pinHash ? "Reset PIN" : "Set PIN"}
+                      </Button>
+                    </form>
+                  </div>
+
+                  <div className="mt-4">
+                    <Eyebrow className="mb-2 block">
+                      Availability emails
+                    </Eyebrow>
+                    <form action={toggleNotify}>
+                      <input type="hidden" name="id" value={selected.id} />
+                      <input
+                        type="hidden"
+                        name="notifyByDefault"
+                        value={String(!selected.notifyByDefault)}
+                      />
+                      <button
+                        type="submit"
+                        role="switch"
+                        aria-checked={selected.notifyByDefault}
+                        className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--color-ink)]"
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={`relative inline-block h-[26px] w-[44px] rounded-full transition-colors ${
+                            selected.notifyByDefault
+                              ? "bg-[var(--color-button)]"
+                              : "bg-[var(--color-line)]"
+                          }`}
+                        >
+                          <span
+                            className={`absolute left-[3px] top-[3px] h-[20px] w-[20px] rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.2)] transition-transform ${
+                              selected.notifyByDefault
+                                ? "translate-x-[18px]"
+                                : "translate-x-0"
+                            }`}
+                          />
+                        </span>
+                        Ask by email by default
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              </div>
+
+              {/* Certifications */}
+              <div className="px-[22px] pb-[18px]">
+                <div className="mb-[11px] flex items-center justify-between">
+                  <Eyebrow>Certifications</Eyebrow>
+                  <Link
+                    href="/app/certifications"
+                    className="text-[12px] font-semibold text-[#4D7C0F] hover:underline"
+                  >
+                    Manage →
+                  </Link>
+                </div>
+                {(certsByStaff.get(selected.id) ?? []).length > 0 ? (
+                  <div className="flex flex-col gap-2">
+                    {(certsByStaff.get(selected.id) ?? []).map((c, i) => {
+                      const m = CERT_META[c.status];
+                      return (
+                        <div
+                          key={i}
+                          className="flex items-center gap-[11px] rounded-[10px] border border-[var(--color-border-subtle)] px-[13px] py-[11px]"
+                        >
+                          <span
+                            className="material-symbols-rounded text-[21px]"
+                            style={{ color: m.color }}
+                          >
+                            {m.icon}
+                          </span>
+                          <span className="flex-1 text-[13.5px] font-semibold text-[var(--color-ink)]">
+                            {c.label}
+                          </span>
+                          <span className="text-[12.5px] text-[var(--color-text-secondary)]">
+                            {c.detail}
+                          </span>
+                          <Badge tone={m.tone}>{m.label}</Badge>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-[12.5px] text-[var(--color-text-muted)]">
+                    No certifications recorded.{" "}
+                    <Link
+                      href="/app/certifications"
+                      className="text-[#4D7C0F] hover:underline"
+                    >
+                      Add one →
+                    </Link>
+                  </p>
+                )}
+              </div>
+
+              {/* Documents (Google Drive) */}
+              <div className="border-t border-[var(--color-border-subtle)] bg-[#FAFBFC] p-[22px]">
+                <div className="mb-[11px] flex items-center justify-between">
+                  <Eyebrow>Documents</Eyebrow>
+                  {driveReady && !driveNeedsReconnect ? (
+                    <span className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-[#15803D]">
+                      <span className="h-[7px] w-[7px] rounded-full bg-[#16A34A]" />
+                      Drive connected
+                    </span>
+                  ) : null}
+                </div>
+                {!driveReady ? (
+                  <div className="flex items-center gap-3.5 rounded-[11px] border border-dashed border-[var(--color-line)] bg-white p-4">
+                    <span className="material-symbols-rounded text-[26px] text-[var(--color-text-muted)]">
+                      add_to_drive
+                    </span>
+                    <div className="flex-1">
+                      <div className="text-[13px] font-semibold text-[var(--color-ink)]">
+                        Connect Google Drive
+                      </div>
+                      <div className="mt-0.5 text-[12px] text-[var(--color-text-secondary)]">
+                        Store {selected.name}&apos;s documents in your own Drive
+                        — contracts, certificates, ID stay in your account.
+                      </div>
+                    </div>
+                    <Link
+                      href="/app/settings"
+                      className="whitespace-nowrap rounded-[9px] bg-[var(--color-button)] px-[14px] py-[9px] font-archivo text-[12.5px] font-bold text-[var(--color-button-ink)] hover:bg-[var(--color-accent-dark)]"
+                    >
+                      Connect in Settings
+                    </Link>
+                  </div>
+                ) : driveNeedsReconnect ? (
+                  <p className="text-[12.5px] text-[var(--color-text-secondary)]">
+                    Google Drive needs reconnecting — fix it in{" "}
+                    <Link
+                      href="/app/settings"
+                      className="text-[#4D7C0F] underline underline-offset-2"
+                    >
+                      Settings
+                    </Link>{" "}
+                    to upload documents.
+                  </p>
+                ) : (
+                  <>
+                    {(docsByStaff.get(selected.id) ?? []).length > 0 ? (
+                      <div className="mb-3 flex flex-col gap-[7px]">
+                        {(docsByStaff.get(selected.id) ?? []).map((d) => (
+                          <div
+                            key={d.id}
+                            className="flex flex-wrap items-center gap-[11px] rounded-[9px] border border-[var(--color-border)] bg-white px-[13px] py-[10px]"
+                          >
+                            <span className="material-symbols-rounded text-[20px] text-[#2563EB]">
+                              description
+                            </span>
+                            <span className="flex-1 text-[13px] font-medium text-[var(--color-ink)]">
+                              {d.fileName}
+                            </span>
+                            {d.docType ? (
+                              <span className="rounded bg-[var(--color-bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-text-secondary)]">
+                                {d.docType}
+                              </span>
+                            ) : null}
+                            <span className="text-[11px] text-[var(--color-text-muted)]">
+                              {formatDate(d.uploadedAt, timeZone)}
+                            </span>
+                            <a
+                              href={d.driveWebLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#4D7C0F]"
+                            >
+                              <span className="material-symbols-rounded text-[15px]">
+                                open_in_new
+                              </span>
+                              Open
+                            </a>
+                            <form action={deleteDocumentAction}>
+                              <input
+                                type="hidden"
+                                name="documentId"
+                                value={d.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="staffId"
+                                value={selected.id}
+                              />
+                              <button
+                                type="submit"
+                                aria-label={`Delete ${d.fileName}`}
+                                className="flex text-[var(--color-text-muted)] hover:text-[#DC2626]"
+                              >
+                                <span className="material-symbols-rounded text-[18px]">
+                                  delete
+                                </span>
+                              </button>
+                            </form>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mb-3 text-[12.5px] text-[var(--color-text-muted)]">
+                        No documents yet. Upload a contract or certificate to
+                        keep it in your Drive.
+                      </p>
+                    )}
+
+                    <form
+                      action={uploadDocument}
+                      encType="multipart/form-data"
+                      className="flex flex-wrap items-end gap-2"
+                    >
+                      <input type="hidden" name="id" value={selected.id} />
+                      <label className="block">
+                        <span className="mb-1 block text-[12px] font-semibold">
+                          Add a document
+                        </span>
+                        <input
+                          type="file"
+                          name="file"
+                          required
+                          aria-label={`Upload a document for ${selected.name}`}
+                          className="block max-w-full text-[13px]"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-[12px] font-semibold">
+                          Type
+                        </span>
+                        <select
+                          name="docType"
+                          defaultValue="Other"
+                          aria-label="Document type"
+                          className="rounded-[9px] border border-[var(--color-line)] bg-white px-3 py-2 text-[13px]"
+                        >
+                          {DOC_TYPES.map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <Button type="submit" variant="secondary">
+                        <span className="material-symbols-rounded text-[17px] text-[#5A7D17]">
+                          upload_file
+                        </span>
+                        Upload document
+                      </Button>
+                    </form>
+                    <p className="mt-1.5 text-[11.5px] text-[var(--color-text-muted)]">
+                      Stored in your Google Drive (max 10 MB). Deleting here
+                      also removes the file from your Drive.
+                    </p>
+                  </>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
     </>
   );
 }

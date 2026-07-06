@@ -3,11 +3,14 @@ import { redirect } from "next/navigation";
 import { ownerRepo } from "@/lib/auth/context";
 import { templateSchema } from "@/lib/validation";
 import { formatTimeOnly } from "@/lib/time";
+import { shiftColorScheme } from "@/lib/shift-colors";
 import {
   Banner,
   Button,
+  ButtonLink,
   Card,
   Field,
+  Icon,
   PageHeader,
   TextInput,
 } from "@/components/ui";
@@ -22,6 +25,16 @@ const WEEKDAYS = [
   { n: 5, label: "Fri" },
   { n: 6, label: "Sat" },
   { n: 7, label: "Sun" },
+];
+
+/** The palette swatches shown on the dashed "New shift type" card. */
+const SWATCHES = [
+  "#76b900",
+  "#7C5CBF",
+  "#1E293B",
+  "#D97706",
+  "#2563EB",
+  "#16A34A",
 ];
 
 function summariseDays(weekdays: number[]): string {
@@ -72,14 +85,122 @@ export default async function TemplatesPage({
     <>
       <PageHeader
         title="Shift types"
-        subtitle="The shifts you run each day, like Morning or Evening. You'll reuse these every week."
+        subtitle="Reusable templates with set times and a colour. Drop them onto the roster grid."
+        action={
+          <ButtonLink href="#add-form" variant="primary">
+            <Icon name="add" className="text-[19px]" />
+            Add shift type
+          </ButtonLink>
+        }
       />
 
       {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
       {sp.added ? <Banner tone="success">Shift type added.</Banner> : null}
 
-      <Card className="mt-4">
-        <h2 className="text-lg font-semibold">Add a shift type</h2>
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {templates.map((t) => {
+          const scheme = shiftColorScheme(t.label);
+          return (
+            <div
+              key={t.id}
+              className={`overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)] ${
+                t.active ? "" : "opacity-70"
+              }`}
+            >
+              <div
+                className="h-2"
+                style={{ background: scheme.bar }}
+                aria-hidden="true"
+              />
+              <div className="p-[18px]">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      className="h-3.5 w-3.5 flex-shrink-0 rounded-[5px]"
+                      style={{ background: scheme.bar }}
+                      aria-hidden="true"
+                    />
+                    <span className="font-archivo text-[16px] font-bold text-[var(--color-text)]">
+                      {t.label}
+                    </span>
+                    {!t.active ? (
+                      <span className="rounded bg-[var(--color-canvas)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--color-muted)]">
+                        Off
+                      </span>
+                    ) : null}
+                  </div>
+                  <details className="group">
+                    <summary className="flex cursor-pointer list-none items-center gap-1 text-[12.5px] font-semibold text-[#4D7C0F] [&::-webkit-details-marker]:hidden">
+                      <Icon name="edit" className="text-[16px]" />
+                      Edit
+                    </summary>
+                    <form action={toggleActive} className="mt-3">
+                      <input type="hidden" name="id" value={t.id} />
+                      <input
+                        type="hidden"
+                        name="active"
+                        value={String(t.active)}
+                      />
+                      <Button type="submit" variant="secondary">
+                        {t.active ? "Turn off" : "Turn on"}
+                      </Button>
+                    </form>
+                  </details>
+                </div>
+
+                <div
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg px-[11px] py-[7px]"
+                  style={{ background: scheme.bg }}
+                >
+                  <Icon
+                    name="schedule"
+                    className="text-[17px] text-[var(--color-muted)]"
+                  />
+                  <span className="font-archivo text-[13.5px] font-semibold text-[#374151]">
+                    {formatTimeOnly(t.startTime)} – {formatTimeOnly(t.endTime)}
+                  </span>
+                </div>
+
+                <div className="mt-3 text-[12px] text-[#9CA3AF]">
+                  {summariseDays(t.weekdays)}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        <a
+          href="#add-form"
+          className="flex flex-col items-start gap-3 rounded-[var(--radius-card)] border-[1.5px] border-dashed border-[#D1D5DB] bg-[#FAFBFC] p-[18px] text-left transition-colors hover:border-[#76b900] hover:bg-[#F8FAF4]"
+        >
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] bg-[#F4F8E9]">
+              <Icon name="add" className="text-[20px] text-[#5A7D17]" />
+            </span>
+            <span className="font-archivo text-[15px] font-bold text-[var(--color-text)]">
+              New shift type
+            </span>
+          </div>
+          <div className="text-[12.5px] text-[var(--color-text-secondary)]">
+            Pick a name, times and colour
+          </div>
+          <div className="flex gap-1.5" aria-hidden="true">
+            {SWATCHES.map((c) => (
+              <span
+                key={c}
+                className="h-[18px] w-[18px] rounded-[5px]"
+                style={{ background: c }}
+              />
+            ))}
+          </div>
+        </a>
+      </div>
+
+      <div id="add-form" className="scroll-mt-6" />
+      <Card className="mt-8">
+        <h2 className="font-archivo text-lg font-bold text-[var(--color-text)]">
+          Add a shift type
+        </h2>
         <form action={addTemplate} className="mt-3 space-y-4">
           <Field label="Name">
             <TextInput name="label" required placeholder="e.g. Morning" />
@@ -127,52 +248,6 @@ export default async function TemplatesPage({
           <Button type="submit">Add shift type</Button>
         </form>
       </Card>
-
-      <section className="mt-8" aria-label="Your shift types">
-        <h2 className="mb-3 text-lg font-semibold">Your shift types</h2>
-        {templates.length === 0 ? (
-          <p className="text-[var(--color-muted)]">
-            None yet. Add the shifts you run above.
-          </p>
-        ) : (
-          <ul className="space-y-2">
-            {templates.map((t) => (
-              <li key={t.id}>
-                <Card className="flex items-center justify-between gap-4 py-3">
-                  <div>
-                    <p className="font-semibold">
-                      {t.label}
-                      {!t.active ? (
-                        <span className="ml-2 rounded bg-[var(--color-canvas)] px-2 py-0.5 text-xs font-medium text-[var(--color-muted)]">
-                          Off
-                        </span>
-                      ) : null}
-                    </p>
-                    <p className="text-sm text-[var(--color-muted)]">
-                      {formatTimeOnly(t.startTime)} –{" "}
-                      {formatTimeOnly(t.endTime)} · {summariseDays(t.weekdays)}
-                    </p>
-                  </div>
-                  <form action={toggleActive}>
-                    <input type="hidden" name="id" value={t.id} />
-                    <input
-                      type="hidden"
-                      name="active"
-                      value={String(t.active)}
-                    />
-                    <button
-                      type="submit"
-                      className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
-                    >
-                      {t.active ? "Turn off" : "Turn on"}
-                    </button>
-                  </form>
-                </Card>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
     </>
   );
 }

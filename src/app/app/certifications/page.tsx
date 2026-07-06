@@ -6,31 +6,48 @@ import {
   parseCertLeadDays,
   CERT_LEAD_DAYS_OPTIONS,
 } from "@/lib/validation";
-import { certStatus, type CertStatus } from "@/lib/certification";
+import { certStatus, daysUntil, type CertStatus } from "@/lib/certification";
 import { CERT_TYPE_LABEL, certDisplayLabel } from "@/lib/labels";
 import { businessDateOf, formatDateOnly } from "@/lib/time";
 import {
+  Avatar,
+  Badge,
   Banner,
   Button,
+  ButtonLink,
   Card,
   Field,
+  Icon,
   PageHeader,
   TextInput,
 } from "@/components/ui";
+import type { BadgeTone } from "@/components/ui";
 
 const PATH = "/app/certifications";
 
 const CERT_TYPES = Object.entries(CERT_TYPE_LABEL) as Array<[string, string]>;
 
-const STATUS_BADGE: Record<CertStatus, { label: string; className: string }> = {
-  valid: { label: "Valid", className: "bg-[var(--color-ok)] text-white" },
+const STATUS_META: Record<
+  CertStatus,
+  { label: string; tone: BadgeTone; icon: string; iconClass: string }
+> = {
+  valid: {
+    label: "Valid",
+    tone: "success",
+    icon: "check_circle",
+    iconClass: "text-[#16A34A]",
+  },
   expiring: {
     label: "Expiring soon",
-    className: "bg-[var(--color-warn)] text-white",
+    tone: "warning",
+    icon: "warning",
+    iconClass: "text-[#D97706]",
   },
   expired: {
     label: "Expired",
-    className: "bg-[var(--color-danger)] text-white",
+    tone: "danger",
+    icon: "cancel",
+    iconClass: "text-[#DC2626]",
   },
 };
 
@@ -52,6 +69,7 @@ export default async function CertificationsPage({
     updated?: string;
     deleted?: string;
     lead?: string;
+    filter?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -151,11 +169,26 @@ export default async function CertificationsPage({
     );
   }
 
+  const attentionOnly = sp.filter === "attention";
+  const rows = certs
+    .map((c) => ({
+      cert: c,
+      status: certStatus(c.expiryDate, today, leadDays),
+      days: daysUntil(c.expiryDate, today),
+    }))
+    .filter((r) => (attentionOnly ? r.status !== "valid" : true));
+
   return (
     <>
       <PageHeader
         title="Certifications"
-        subtitle="Track staff qualifications and their expiry. We email you reminders before they lapse. This flags expiry only — it never blocks rostering or clock-in, and no documents are stored."
+        subtitle="RSA, Food Safety, First Aid — tracked per staff so nothing lapses on a shift. This flags expiry only — it never blocks rostering or clock-in, and no documents are stored."
+        action={
+          <span className="inline-flex items-center gap-[7px] rounded-[20px] border border-[#D6E8B0] bg-[#F4F8E9] px-[13px] py-[7px] text-[12px] font-semibold text-[#3F6212]">
+            <Icon name="mark_email_read" className="text-[16px]" />
+            Reminder emails sent automatically
+          </span>
+        }
       />
 
       {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
@@ -170,7 +203,78 @@ export default async function CertificationsPage({
         <Banner tone="success">Reminder lead time saved.</Banner>
       ) : null}
 
-      <Card className="mt-4">
+      <div className="mb-[14px] flex flex-wrap items-center gap-3">
+        <ButtonLink
+          href={attentionOnly ? PATH : `${PATH}?filter=attention`}
+          variant={attentionOnly ? "primary" : "secondary"}
+          aria-pressed={attentionOnly}
+        >
+          <Icon name="filter_alt" className="text-[18px]" />
+          Show expiring &amp; expired only
+        </ButtonLink>
+        {attentionOnly ? (
+          <span className="text-[12.5px] font-semibold text-[#B45309]">
+            Showing items that need attention
+          </span>
+        ) : null}
+      </div>
+
+      <Card padded={false} aria-label="Team certifications">
+        <div className="overflow-x-auto">
+          <div className="min-w-[720px]">
+            <div className="grid grid-cols-[1.5fr_1.1fr_1fr_1.2fr_0.9fr] items-center gap-0 border-b border-[var(--color-border)] bg-[#FAFBFC] px-[18px] py-[11px] font-archivo text-[10.5px] font-bold uppercase tracking-[0.05em] text-[#9CA3AF]">
+              <span>Staff</span>
+              <span>Certification</span>
+              <span>Expiry</span>
+              <span>Status</span>
+              <span className="text-right">Days left</span>
+            </div>
+            {rows.length === 0 ? (
+              <p className="px-[18px] py-8 text-center text-[13px] text-[var(--color-text-muted)]">
+                {attentionOnly
+                  ? "Nothing needs attention right now."
+                  : "None yet. Add your team’s qualifications below."}
+              </p>
+            ) : (
+              rows.map(({ cert: c, status, days }) => {
+                const meta = STATUS_META[status];
+                return (
+                  <div
+                    key={c.id}
+                    className="grid grid-cols-[1.5fr_1.1fr_1fr_1.2fr_0.9fr] items-center gap-0 border-b border-[#F3F4F6] px-[18px] py-[12px] text-[13px]"
+                  >
+                    <div className="flex min-w-0 items-center gap-[10px]">
+                      <Avatar name={c.staffName} size={28} />
+                      <span className="truncate font-semibold text-[#111827]">
+                        {c.staffName}
+                      </span>
+                    </div>
+                    <span className="font-medium text-[#374151]">
+                      {certDisplayLabel(c.certType, c.certLabel)}
+                    </span>
+                    <span className="tabular-nums text-[#6B7280]">
+                      {formatDateOnly(c.expiryDate)}
+                    </span>
+                    <span className="inline-flex items-center gap-[7px]">
+                      <Icon
+                        name={meta.icon}
+                        className={`text-[18px] ${meta.iconClass}`}
+                        fill
+                      />
+                      <Badge tone={meta.tone}>{meta.label}</Badge>
+                    </span>
+                    <span className="text-right tabular-nums text-[#6B7280]">
+                      {days} {Math.abs(days) === 1 ? "day" : "days"}
+                    </span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </Card>
+
+      <Card className="mt-8">
         <form
           action={setLeadDays}
           className="flex flex-wrap items-end gap-3"
@@ -202,120 +306,106 @@ export default async function CertificationsPage({
         </form>
       </Card>
 
-      <section className="mt-8" aria-label="Certifications">
-        <h2 className="mb-3 text-lg font-semibold">
-          Team certifications ({certs.length})
+      <section className="mt-8" aria-label="Edit certifications">
+        <h2 className="mb-3 font-archivo text-lg font-bold text-[var(--color-text)]">
+          Manage certifications ({certs.length})
         </h2>
         {certs.length === 0 ? (
-          <p className="text-[var(--color-muted)]">
+          <p className="text-[var(--color-text-muted)]">
             None yet. Add your team&rsquo;s qualifications below.
           </p>
         ) : (
           <ul className="space-y-2">
-            {certs.map((c) => {
-              const status = certStatus(c.expiryDate, today, leadDays);
-              const badge = STATUS_BADGE[status];
-              return (
-                <li key={c.id}>
-                  <Card className="py-3">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="font-semibold">
-                          {c.staffName}
-                          <span className="ml-2 font-normal text-[var(--color-muted)]">
-                            {certDisplayLabel(c.certType, c.certLabel)}
-                          </span>
-                        </p>
-                        <p className="text-sm text-[var(--color-muted)]">
-                          Expires {formatDateOnly(c.expiryDate)}
-                          {c.referenceNumber
-                            ? ` · Ref ${c.referenceNumber}`
-                            : ""}
-                        </p>
-                      </div>
-                      <span
-                        className={`rounded px-2 py-0.5 text-xs font-semibold ${badge.className}`}
-                      >
-                        {badge.label}
+            {certs.map((c) => (
+              <li key={c.id}>
+                <Card className="py-3">
+                  <details>
+                    <summary className="flex cursor-pointer items-center justify-between gap-3">
+                      <span className="font-semibold text-[var(--color-text)]">
+                        {c.staffName}
+                        <span className="ml-2 font-normal text-[var(--color-text-muted)]">
+                          {certDisplayLabel(c.certType, c.certLabel)}
+                        </span>
                       </span>
-                    </div>
-                    <details className="mt-2">
-                      <summary className="cursor-pointer text-sm font-medium text-[var(--color-brand)]">
-                        Edit / remove
-                      </summary>
-                      <div className="mt-3 flex flex-wrap items-end gap-3">
-                        <form
-                          action={editCert}
-                          className="flex flex-wrap items-end gap-2"
+                      <span className="text-sm text-[var(--color-text-muted)]">
+                        Expires {formatDateOnly(c.expiryDate)}
+                        {c.referenceNumber ? ` · Ref ${c.referenceNumber}` : ""}
+                      </span>
+                    </summary>
+                    <div className="mt-3 flex flex-wrap items-end gap-3">
+                      <form
+                        action={editCert}
+                        className="flex flex-wrap items-end gap-2"
+                      >
+                        <input type="hidden" name="id" value={c.id} />
+                        <label className="block">
+                          <span className="mb-1 block text-sm font-semibold">
+                            Type
+                          </span>
+                          {certTypeSelect("certType", c.certType)}
+                        </label>
+                        <label className="block">
+                          <span className="mb-1 block text-sm font-semibold">
+                            Label
+                          </span>
+                          <TextInput
+                            name="certLabel"
+                            defaultValue={c.certLabel ?? ""}
+                            maxLength={120}
+                            className="w-40"
+                            aria-label="Certification label"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="mb-1 block text-sm font-semibold">
+                            Reference
+                          </span>
+                          <TextInput
+                            name="referenceNumber"
+                            defaultValue={c.referenceNumber ?? ""}
+                            maxLength={120}
+                            className="w-36"
+                            aria-label="Reference number"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="mb-1 block text-sm font-semibold">
+                            Expiry
+                          </span>
+                          <TextInput
+                            type="date"
+                            name="expiryDate"
+                            defaultValue={c.expiryDate}
+                            required
+                            aria-label="Expiry date"
+                          />
+                        </label>
+                        <Button type="submit" variant="secondary">
+                          Save
+                        </Button>
+                      </form>
+                      <form action={deleteCert}>
+                        <input type="hidden" name="id" value={c.id} />
+                        <button
+                          type="submit"
+                          className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
                         >
-                          <input type="hidden" name="id" value={c.id} />
-                          <label className="block">
-                            <span className="mb-1 block text-sm font-semibold">
-                              Type
-                            </span>
-                            {certTypeSelect("certType", c.certType)}
-                          </label>
-                          <label className="block">
-                            <span className="mb-1 block text-sm font-semibold">
-                              Label
-                            </span>
-                            <TextInput
-                              name="certLabel"
-                              defaultValue={c.certLabel ?? ""}
-                              maxLength={120}
-                              className="w-40"
-                              aria-label="Certification label"
-                            />
-                          </label>
-                          <label className="block">
-                            <span className="mb-1 block text-sm font-semibold">
-                              Reference
-                            </span>
-                            <TextInput
-                              name="referenceNumber"
-                              defaultValue={c.referenceNumber ?? ""}
-                              maxLength={120}
-                              className="w-36"
-                              aria-label="Reference number"
-                            />
-                          </label>
-                          <label className="block">
-                            <span className="mb-1 block text-sm font-semibold">
-                              Expiry
-                            </span>
-                            <TextInput
-                              type="date"
-                              name="expiryDate"
-                              defaultValue={c.expiryDate}
-                              required
-                              aria-label="Expiry date"
-                            />
-                          </label>
-                          <Button type="submit" variant="secondary">
-                            Save
-                          </Button>
-                        </form>
-                        <form action={deleteCert}>
-                          <input type="hidden" name="id" value={c.id} />
-                          <button
-                            type="submit"
-                            className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
-                          >
-                            Remove
-                          </button>
-                        </form>
-                      </div>
-                    </details>
-                  </Card>
-                </li>
-              );
-            })}
+                          Remove
+                        </button>
+                      </form>
+                    </div>
+                  </details>
+                </Card>
+              </li>
+            ))}
           </ul>
         )}
       </section>
 
       <Card className="mt-8">
-        <h2 className="text-lg font-semibold">Add a certification</h2>
+        <h2 className="font-archivo text-lg font-bold text-[var(--color-text)]">
+          Add a certification
+        </h2>
         {staff.length === 0 ? (
           <p className="mt-3 text-[var(--color-muted)]">
             Add a team member first.

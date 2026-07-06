@@ -2,12 +2,15 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ownerRepo } from "@/lib/auth/context";
 import { supplierSchema, WEEKDAY_OPTIONS } from "@/lib/validation";
-import { WEEKDAY_SHORT_LABEL, weekdaysLabel } from "@/lib/labels";
+import { WEEKDAY_SHORT_LABEL } from "@/lib/labels";
 import {
   Banner,
   Button,
+  ButtonLink,
   Card,
+  Eyebrow,
   Field,
+  Icon,
   PageHeader,
   TextInput,
 } from "@/components/ui";
@@ -118,11 +121,41 @@ export default async function SuppliersPage({
     );
   }
 
+  /** Read-only Mon–Sun chip row: delivery days green, the rest muted. */
+  function deliveryDayChips(selected: number[]) {
+    const set = new Set(selected);
+    return (
+      <div className="flex flex-wrap gap-1.5">
+        {WEEKDAY_OPTIONS.map((d) => {
+          const on = set.has(d);
+          return (
+            <span
+              key={d}
+              className={`w-[38px] rounded-[7px] py-1.5 text-center font-archivo text-[11px] font-bold ${
+                on
+                  ? "bg-[#F0F6E2] text-[#5A7D17]"
+                  : "border border-[#F1F3F5] bg-[#F9FAFB] text-[#CBD0D8]"
+              }`}
+            >
+              {WEEKDAY_SHORT_LABEL[d]}
+            </span>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
     <>
       <PageHeader
         title="Suppliers"
-        subtitle="Who you order stock from and which days they deliver. This is record-keeping only — the app doesn't place orders or connect to any supplier system."
+        subtitle="Who you order from and which days they deliver. Drives the daily order reminders. This is record-keeping only — the app doesn't place orders or connect to any supplier system."
+        action={
+          <ButtonLink href="#add-supplier">
+            <Icon name="add" className="text-[19px]" />
+            Add supplier
+          </ButtonLink>
+        }
       />
 
       {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
@@ -131,114 +164,171 @@ export default async function SuppliersPage({
       {sp.deleted ? <Banner tone="success">Supplier removed.</Banner> : null}
 
       <section className="mt-4" aria-label="Suppliers">
-        <h2 className="mb-3 text-lg font-semibold">
-          Your suppliers ({suppliers.length})
-        </h2>
-        {suppliers.length === 0 ? (
-          <p className="text-[var(--color-muted)]">
-            None yet. Add your first supplier below.
-          </p>
-        ) : (
-          <ul className="space-y-2">
-            {suppliers.map((s) => (
-              <li key={s.id}>
-                <Card className="py-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="font-semibold">{s.name}</p>
-                      <p className="text-sm text-[var(--color-muted)]">
-                        Delivers {weekdaysLabel(s.deliveryDays)}
-                        {" · "}order {s.orderCutoffDaysBefore} day
-                        {s.orderCutoffDaysBefore === 1 ? "" : "s"} before
-                        {s.contactName ? ` · ${s.contactName}` : ""}
-                        {s.email ? ` · ${s.email}` : ""}
-                        {s.phone ? ` · ${s.phone}` : ""}
-                      </p>
+        <div className="grid gap-4 md:grid-cols-2">
+          {suppliers.map((s) => (
+            <Card key={s.id}>
+              <details className="group">
+                <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span
+                        aria-hidden="true"
+                        className="flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-[11px] bg-[#F4F8E9]"
+                      >
+                        <Icon
+                          name="local_shipping"
+                          className="text-[23px] text-[#5A7D17]"
+                        />
+                      </span>
+                      <div>
+                        <div className="font-archivo text-[16px] font-bold text-[#111827]">
+                          {s.name}
+                        </div>
+                        {/* GAP: suppliers have no category field. */}
+                        {s.contactName ? (
+                          <div className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">
+                            {s.contactName}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                    <span
+                      aria-hidden="true"
+                      className="flex text-[#9CA3AF] transition-colors group-open:text-[#4D7C0F]"
+                    >
+                      <Icon name="edit" className="text-[19px]" />
+                    </span>
+                  </div>
+
+                  <div className="mt-3.5 flex flex-col gap-1.5">
+                    <div className="flex items-center gap-2 text-[13px] text-[#6B7280]">
+                      <Icon
+                        name="mail"
+                        className="text-[17px] text-[#9CA3AF]"
+                      />
+                      {s.email ?? "No email"}
+                    </div>
+                    <div className="flex items-center gap-2 text-[13px] text-[#6B7280]">
+                      <Icon
+                        name="call"
+                        className="text-[17px] text-[#9CA3AF]"
+                      />
+                      {s.phone ?? "No phone"}
                     </div>
                   </div>
-                  <details className="mt-2">
-                    <summary className="cursor-pointer text-sm font-medium text-[var(--color-brand)]">
-                      Edit / remove
-                    </summary>
-                    <form action={editSupplier} className="mt-3 space-y-3">
-                      <input type="hidden" name="id" value={s.id} />
-                      <Field label="Name">
+
+                  <div className="mt-4">
+                    <Eyebrow className="mb-2 block text-[#9CA3AF]">
+                      Delivery days
+                    </Eyebrow>
+                    {deliveryDayChips(s.deliveryDays)}
+                    <div className="mt-2 text-[12px] text-[var(--color-text-muted)]">
+                      Order {s.orderCutoffDaysBefore} day
+                      {s.orderCutoffDaysBefore === 1 ? "" : "s"} before delivery
+                    </div>
+                  </div>
+                </summary>
+
+                <div className="mt-4 border-t border-[var(--color-border-subtle)] pt-4">
+                  <form action={editSupplier} className="space-y-3">
+                    <input type="hidden" name="id" value={s.id} />
+                    <Field label="Name">
+                      <TextInput
+                        name="name"
+                        defaultValue={s.name}
+                        required
+                        maxLength={120}
+                      />
+                    </Field>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Field label="Contact name (optional)">
                         <TextInput
-                          name="name"
-                          defaultValue={s.name}
-                          required
+                          name="contactName"
+                          defaultValue={s.contactName ?? ""}
                           maxLength={120}
                         />
                       </Field>
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <Field label="Contact name (optional)">
-                          <TextInput
-                            name="contactName"
-                            defaultValue={s.contactName ?? ""}
-                            maxLength={120}
-                          />
-                        </Field>
-                        <Field label="Email (optional)">
-                          <TextInput
-                            type="email"
-                            name="email"
-                            defaultValue={s.email ?? ""}
-                            maxLength={200}
-                          />
-                        </Field>
-                        <Field label="Phone (optional)">
-                          <TextInput
-                            name="phone"
-                            defaultValue={s.phone ?? ""}
-                            maxLength={40}
-                          />
-                        </Field>
-                        <Field label="Order by (days before delivery)">
-                          <TextInput
-                            type="number"
-                            name="orderCutoffDaysBefore"
-                            defaultValue={String(s.orderCutoffDaysBefore)}
-                            min={0}
-                            max={30}
-                            required
-                          />
-                        </Field>
-                      </div>
-                      <Field label="Delivery days">
-                        {deliveryDayPicker(s.deliveryDays)}
-                      </Field>
-                      <Field label="Notes (optional)">
+                      <Field label="Email (optional)">
                         <TextInput
-                          name="notes"
-                          defaultValue={s.notes ?? ""}
-                          maxLength={1000}
+                          type="email"
+                          name="email"
+                          defaultValue={s.email ?? ""}
+                          maxLength={200}
                         />
                       </Field>
-                      <div className="flex items-center gap-4">
-                        <Button type="submit" variant="secondary">
-                          Save changes
-                        </Button>
-                      </div>
-                    </form>
-                    <form action={deleteSupplier} className="mt-2">
-                      <input type="hidden" name="id" value={s.id} />
-                      <button
-                        type="submit"
-                        className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
-                      >
-                        Remove supplier
-                      </button>
-                    </form>
-                  </details>
-                </Card>
-              </li>
-            ))}
-          </ul>
-        )}
+                      <Field label="Phone (optional)">
+                        <TextInput
+                          name="phone"
+                          defaultValue={s.phone ?? ""}
+                          maxLength={40}
+                        />
+                      </Field>
+                      <Field label="Order by (days before delivery)">
+                        <TextInput
+                          type="number"
+                          name="orderCutoffDaysBefore"
+                          defaultValue={String(s.orderCutoffDaysBefore)}
+                          min={0}
+                          max={30}
+                          required
+                        />
+                      </Field>
+                    </div>
+                    <Field label="Delivery days">
+                      {deliveryDayPicker(s.deliveryDays)}
+                    </Field>
+                    <Field label="Notes (optional)">
+                      <TextInput
+                        name="notes"
+                        defaultValue={s.notes ?? ""}
+                        maxLength={1000}
+                      />
+                    </Field>
+                    <Button type="submit" variant="secondary">
+                      Save changes
+                    </Button>
+                  </form>
+                  <form action={deleteSupplier} className="mt-2">
+                    <input type="hidden" name="id" value={s.id} />
+                    <button
+                      type="submit"
+                      className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
+                    >
+                      Remove supplier
+                    </button>
+                  </form>
+                </div>
+              </details>
+            </Card>
+          ))}
+
+          {/* Dashed "Add a supplier" prompt → jumps to the full form below. */}
+          <a
+            href="#add-supplier"
+            className="flex flex-col justify-center rounded-[var(--radius-card)] border-[1.5px] border-dashed border-[#D1D5DB] bg-[#FAFBFC] p-5 text-left transition-colors hover:border-[#76b900]"
+          >
+            <span className="flex items-center gap-2.5">
+              <span
+                aria-hidden="true"
+                className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] bg-[#F4F8E9]"
+              >
+                <Icon name="add" className="text-[20px] text-[#5A7D17]" />
+              </span>
+              <span className="font-archivo text-[15px] font-bold text-[#111827]">
+                Add a supplier
+              </span>
+            </span>
+            <span className="mt-2 text-[13px] text-[var(--color-text-muted)]">
+              Add who you order from and their delivery days.
+            </span>
+          </a>
+        </div>
       </section>
 
-      <Card className="mt-8">
-        <h2 className="text-lg font-semibold">Add a supplier</h2>
+      <Card id="add-supplier" className="mt-8 scroll-mt-6">
+        <h2 className="font-archivo text-lg font-bold text-[#111827]">
+          Add a supplier
+        </h2>
         <form action={addSupplier} className="mt-3 space-y-3">
           <Field label="Name">
             <TextInput name="name" required maxLength={120} />

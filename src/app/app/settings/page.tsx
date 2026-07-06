@@ -22,8 +22,17 @@ import {
   isDriveConfigured,
 } from "@/lib/google-drive/client";
 import { logger } from "@/lib/logger";
-import { AccountIdentity } from "@/components/AccountIdentity";
-import { Banner, Button, Card, PageHeader } from "@/components/ui";
+import { initials } from "@/lib/avatar";
+import {
+  Banner,
+  Button,
+  Field,
+  Icon,
+  PageHeader,
+  SectionCard,
+  Switch,
+  TextInput,
+} from "@/components/ui";
 import { ClearFlashCookie } from "@/components/ClearFlashCookie";
 import { UseMyLocationButton } from "@/components/UseMyLocationButton";
 
@@ -193,11 +202,16 @@ export default async function SettingsPage({
     redirect(`${PATH}?driveDisconnected=1`);
   }
 
+  const selectClass =
+    "rounded-[8px] border border-[#E5E7EB] bg-white px-[10px] py-[7px] text-[12.5px] font-medium text-[#374151] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.16)]";
+  const linkInputClass =
+    "min-w-[160px] flex-1 rounded-[9px] border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-[9px] font-mono text-[12px] text-[#6B7280] outline-none";
+
   return (
     <>
       <PageHeader
         title="Settings"
-        subtitle="Your account, clock-in kiosk and timesheet options."
+        subtitle="Clock-in links, what you get notified about, and where documents are stored."
       />
 
       {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
@@ -214,401 +228,398 @@ export default async function SettingsPage({
       ) : null}
       {sp.driveError ? <Banner tone="warn">{sp.driveError}</Banner> : null}
 
-      <Card className="mt-4">
-        <h2 className="text-lg font-semibold">Account</h2>
-        <div className="mt-3">
-          <AccountIdentity email={owner.email} businessName={business.name} />
-        </div>
-        <p className="mt-2 text-sm text-[var(--color-muted)]">
-          This is the email your sign-in links go to. It can&apos;t be changed
-          in the app yet.
-        </p>
-      </Card>
-
-      <Card className="mt-6">
-        <h2 className="text-lg font-semibold">Google Drive documents</h2>
-        <p className="mt-1 text-sm text-[var(--color-muted)]">
-          Connect your Google Drive to store staff documents (contracts, RSA,
-          ID) in your own Drive. Files are saved to a “Roster Documents” folder
-          in your Drive — we only keep a link to them, never the file itself.
-          This is a separate permission from how you sign in; it doesn&apos;t
-          change your login.
-        </p>
-
-        {!driveConfigured ? (
-          <p className="mt-3">
-            <Banner tone="info">
-              Google Drive isn’t set up on this server yet. Once your
-              administrator configures it, you’ll be able to connect here.
-            </Banner>
-          </p>
-        ) : driveConnection ? (
-          <div className="mt-4 space-y-3">
-            {driveConnection.needsReconnect ? (
-              <Banner tone="warn">
-                Google Drive needs to be reconnected — your access expired or
-                was revoked. Reconnect to upload documents again.
-              </Banner>
-            ) : null}
-            <p className="text-sm">
-              Connected as{" "}
-              <span className="font-semibold">
-                {driveConnection.googleAccountEmail}
+      <div className="grid grid-cols-1 items-start gap-[18px] lg:grid-cols-2">
+        {/* LEFT COLUMN */}
+        <div className="flex flex-col gap-[18px]">
+          {/* Account -------------------------------------------------- */}
+          <SectionCard title="Account">
+            <div className="mb-[14px] flex items-center gap-[11px]">
+              <span
+                aria-hidden="true"
+                className="flex h-[38px] w-[38px] flex-shrink-0 items-center justify-center rounded-full bg-[#111827] font-archivo text-[13px] font-bold text-[#76b900]"
+              >
+                {initials(business.name)}
               </span>
-              {driveConnection.rootFolderId ? (
-                <> · documents save to your “Roster Documents” folder.</>
-              ) : null}
+              <div>
+                <div className="text-[14px] font-bold text-[#111827]">
+                  {owner.email}
+                </div>
+                <div className="text-[12px] text-[#6B7280]">Signed in</div>
+              </div>
+            </div>
+            <div className="flex items-center justify-between border-t border-[#F3F4F6] pt-[13px]">
+              <span className="text-[13px] text-[#6B7280]">Business</span>
+              <span className="text-[13.5px] font-semibold text-[#111827]">
+                {business.name}
+              </span>
+            </div>
+            <p className="mt-3 text-[11.5px] text-[#9CA3AF]">
+              Display only — contact support to change account details.
             </p>
-            <div className="flex flex-wrap gap-3">
-              {driveConnection.needsReconnect ? (
-                <form action="/api/integrations/google/connect" method="get">
-                  <Button type="submit">Reconnect Google Drive</Button>
-                </form>
-              ) : null}
-              <form action={disconnectDrive}>
+          </SectionCard>
+
+          {/* Clock-in ------------------------------------------------- */}
+          <SectionCard title="Clock-in">
+            {/* Kiosk link */}
+            <div className="text-[12.5px] font-semibold text-[#374151]">
+              Kiosk link
+            </div>
+            {freshLink ? (
+              <div className="mt-2">
+                <ClearFlashCookie name={LINK_COOKIE} />
+                <Banner tone="success">
+                  Here is your kiosk link. Copy it now — for security we
+                  won&apos;t show it again.
+                </Banner>
+              </div>
+            ) : null}
+            <div className="mt-[7px] flex flex-wrap gap-2">
+              <input
+                readOnly
+                aria-label="Kiosk link"
+                value={
+                  freshLink ??
+                  (hasKioskLink
+                    ? "Link active — generate a new one to reveal it"
+                    : "No kiosk link yet")
+                }
+                className={linkInputClass}
+              />
+              <form action={generateLink}>
                 <Button type="submit" variant="secondary">
-                  Disconnect
+                  {hasKioskLink ? "Generate new" : "Create link"}
                 </Button>
               </form>
             </div>
-            <p className="text-sm text-[var(--color-muted)]">
-              Disconnecting stops new uploads. It does{" "}
-              <span className="font-semibold">not</span> delete documents
-              already in your Drive — those stay yours.
-            </p>
-          </div>
-        ) : (
-          <form
-            action="/api/integrations/google/connect"
-            method="get"
-            className="mt-4"
-          >
-            <Button type="submit">Connect Google Drive</Button>
-          </form>
-        )}
-      </Card>
 
-      <Card className="mt-6">
-        <h2 className="text-lg font-semibold">Clock-in kiosk</h2>
-        <p className="mt-1 text-sm text-[var(--color-muted)]">
-          Open this link on a shared device (a tablet by the door, say). Staff
-          tap their name and type their PIN to clock in and out. Anyone with the
-          link can reach the kiosk, so keep it to your device — you can replace
-          it any time, which instantly disables the old one.
-        </p>
-
-        {freshLink ? (
-          <div className="mt-4">
-            <ClearFlashCookie name={LINK_COOKIE} />
-            <Banner tone="success">
-              Here is your kiosk link. Copy it now — for security we won&apos;t
-              show it again.
-            </Banner>
-            <p className="mt-2 break-all rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 font-mono text-sm">
-              {freshLink}
-            </p>
-          </div>
-        ) : (
-          <p className="mt-3 text-sm">
-            Status:{" "}
-            <span className="font-semibold">
-              {hasKioskLink ? "A kiosk link is active." : "No kiosk link yet."}
-            </span>
-          </p>
-        )}
-
-        <form action={generateLink} className="mt-4">
-          <Button
-            type="submit"
-            variant={hasKioskLink ? "secondary" : "primary"}
-          >
-            {hasKioskLink ? "Replace kiosk link" : "Create kiosk link"}
-          </Button>
-        </form>
-      </Card>
-
-      <Card className="mt-6">
-        <h2 className="text-lg font-semibold">Clock-in photo</h2>
-        <p className="mt-1 text-sm text-[var(--color-muted)]">
-          When on, the kiosk takes a quick photo each time someone clocks in or
-          out, so you can confirm who it was. Photos are stored with the
-          timesheet — there&apos;s no facial recognition. If the camera
-          isn&apos;t available, clocking in still works with just the PIN.
-        </p>
-        <form action={togglePhoto} className="mt-3">
-          <input
-            type="hidden"
-            name="requireClockInPhoto"
-            value={String(!business.requireClockInPhoto)}
-          />
-          <button
-            type="submit"
-            role="switch"
-            aria-checked={business.requireClockInPhoto}
-            className="inline-flex items-center gap-2 text-sm font-medium text-[var(--color-ink)]"
-          >
-            <span
-              aria-hidden="true"
-              className={`inline-flex h-5 w-9 items-center rounded-full border px-0.5 transition-colors ${
-                business.requireClockInPhoto
-                  ? "justify-end border-[var(--color-ok)] bg-[var(--color-ok)]"
-                  : "justify-start border-[var(--color-line)] bg-[var(--color-canvas)]"
-              }`}
-            >
-              <span className="h-4 w-4 rounded-full bg-white" />
-            </span>
-            Take a photo at clock in/out
-            <span className="text-[var(--color-muted)]">
-              {business.requireClockInPhoto ? "On" : "Off"}
-            </span>
-          </button>
-        </form>
-
-        <div className="mt-6 border-t border-[var(--color-line)] pt-4">
-          <h3 className="text-base font-semibold">
-            Delete clock-in photos after
-          </h3>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">
-            Photos are automatically deleted after this period — the timesheet
-            entry and hours are always kept. This runs every day.
-          </p>
-          <form
-            action={setRetention}
-            className="mt-3 flex flex-wrap items-center gap-3"
-          >
-            <label htmlFor="photoRetentionDays" className="sr-only">
-              Delete clock-in photos after
-            </label>
-            <select
-              id="photoRetentionDays"
-              name="photoRetentionDays"
-              defaultValue={business.photoRetentionDays}
-              className="rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 text-sm font-medium text-[var(--color-ink)]"
-            >
-              {PHOTO_RETENTION_DAYS.map((days) => (
-                <option key={days} value={days}>
-                  {days} days
-                </option>
-              ))}
-            </select>
-            <Button type="submit" variant="secondary">
-              Save
-            </Button>
-          </form>
-        </div>
-      </Card>
-
-      <Card className="mt-6">
-        <h2 className="text-lg font-semibold">Phone clock-in (location)</h2>
-        <p className="mt-1 text-sm text-[var(--color-muted)]">
-          Let staff clock in from their own phones, checked against the
-          shop&apos;s location. Set where your shop is — stand in the shop and
-          tap “Use my current location”, or type the coordinates. Staff must be
-          within the chosen distance of this spot to clock in on their phone.
-          (The shared kiosk is never location-checked.)
-        </p>
-
-        <form action={saveLocation} className="mt-4 space-y-4">
-          <div className="flex flex-wrap gap-3">
-            <label className="block">
-              <span className="mb-1 block text-sm font-semibold">Latitude</span>
-              <input
-                id="latitude"
-                name="latitude"
-                type="number"
-                step="any"
-                defaultValue={business.latitude ?? ""}
-                placeholder="-33.8688"
-                className="w-40 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 text-sm"
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-sm font-semibold">
-                Longitude
-              </span>
-              <input
-                id="longitude"
-                name="longitude"
-                type="number"
-                step="any"
-                defaultValue={business.longitude ?? ""}
-                placeholder="151.2093"
-                className="w-40 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 text-sm"
-              />
-            </label>
-          </div>
-
-          <UseMyLocationButton latId="latitude" lngId="longitude" />
-
-          <label className="block">
-            <span className="mb-1 block text-sm font-semibold">
-              Allowed distance from the shop
-            </span>
-            <select
-              name="geofenceRadiusM"
-              defaultValue={business.geofenceRadiusM}
-              className="rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 text-sm font-medium text-[var(--color-ink)]"
-            >
-              {GEOFENCE_RADIUS_OPTIONS.map((m) => (
-                <option key={m} value={m}>
-                  {m} m
-                </option>
-              ))}
-            </select>
-            <span className="mt-1 block text-sm text-[var(--color-muted)]">
-              A staff member&apos;s phone must be within this distance of the
-              shop to clock in.
-            </span>
-          </label>
-
-          <Button type="submit">Save location</Button>
-        </form>
-
-        <div className="mt-6 border-t border-[var(--color-line)] pt-4">
-          <h3 className="text-base font-semibold">Phone clock-in link</h3>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">
-            Share this separate link with staff for their own phones. It only
-            opens the location-checked clock-in — not the kiosk. Set your shop
-            location first. Replace it any time to disable the old one.
-          </p>
-
-          {!locationSet ? (
-            <p className="mt-3">
-              <Banner tone="info">
-                Set your shop location above before sharing the link.
-              </Banner>
-            </p>
-          ) : null}
-
-          {freshClockLink ? (
-            <div className="mt-4">
-              <ClearFlashCookie name={CLOCK_LINK_COOKIE} />
-              <Banner tone="success">
-                Here is your phone clock-in link. Copy it now — for security we
-                won&apos;t show it again.
-              </Banner>
-              <p className="mt-2 break-all rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 font-mono text-sm">
-                {freshClockLink}
-              </p>
+            {/* Personal phone link */}
+            <div className="mt-4 text-[12.5px] font-semibold text-[#374151]">
+              Personal phone link
             </div>
-          ) : (
-            <p className="mt-3 text-sm">
-              Status:{" "}
-              <span className="font-semibold">
-                {hasClockLink
-                  ? "A phone clock-in link is active."
-                  : "No phone clock-in link yet."}
-              </span>
-            </p>
-          )}
+            {!locationSet ? (
+              <p className="mt-2 text-[12px] text-[#9CA3AF]">
+                Set your shop location below before sharing this link.
+              </p>
+            ) : null}
+            {freshClockLink ? (
+              <div className="mt-2">
+                <ClearFlashCookie name={CLOCK_LINK_COOKIE} />
+                <Banner tone="success">
+                  Here is your phone clock-in link. Copy it now — for security
+                  we won&apos;t show it again.
+                </Banner>
+              </div>
+            ) : null}
+            <div className="mt-[7px] flex flex-wrap gap-2">
+              <input
+                readOnly
+                aria-label="Personal phone link"
+                value={
+                  freshClockLink ??
+                  (hasClockLink
+                    ? "Link active — generate a new one to reveal it"
+                    : "No phone clock-in link yet")
+                }
+                className={linkInputClass}
+              />
+              <form action={generateClockLink}>
+                <Button type="submit" variant="secondary">
+                  {hasClockLink ? "Regenerate" : "Create link"}
+                </Button>
+              </form>
+            </div>
 
-          <form action={generateClockLink} className="mt-4">
-            <Button
-              type="submit"
-              variant={hasClockLink ? "secondary" : "primary"}
+            {/* Require GPS / shop location */}
+            <form
+              action={saveLocation}
+              className="mt-4 space-y-3 border-t border-[#F3F4F6] pt-[13px]"
             >
-              {hasClockLink
-                ? "Replace phone clock-in link"
-                : "Create phone clock-in link"}
-            </Button>
-          </form>
-        </div>
-      </Card>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-[13.5px] font-semibold text-[#111827]">
+                    Require GPS
+                  </div>
+                  <div className="text-[12px] text-[#9CA3AF]">
+                    Block clock-ins outside the radius
+                  </div>
+                </div>
+                <label className="flex-shrink-0">
+                  <span className="sr-only">
+                    Allowed distance from the shop
+                  </span>
+                  <select
+                    name="geofenceRadiusM"
+                    defaultValue={business.geofenceRadiusM}
+                    className={selectClass}
+                  >
+                    {GEOFENCE_RADIUS_OPTIONS.map((m) => (
+                      <option key={m} value={m}>
+                        {m} m
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Field label="Latitude">
+                  <TextInput
+                    id="latitude"
+                    name="latitude"
+                    type="number"
+                    step="any"
+                    defaultValue={business.latitude ?? ""}
+                    placeholder="-33.8688"
+                    className="w-[150px]"
+                  />
+                </Field>
+                <Field label="Longitude">
+                  <TextInput
+                    id="longitude"
+                    name="longitude"
+                    type="number"
+                    step="any"
+                    defaultValue={business.longitude ?? ""}
+                    placeholder="151.2093"
+                    className="w-[150px]"
+                  />
+                </Field>
+              </div>
+              <UseMyLocationButton latId="latitude" lngId="longitude" />
+              <p className="text-[12px] text-[#9CA3AF]">
+                Set where your shop is — stand in the shop and tap “Use my
+                current location”, or type the coordinates. Staff must be within
+                the chosen distance to clock in on their own phone. (The shared
+                kiosk is never location-checked.)
+              </p>
+              <Button type="submit" variant="secondary">
+                Save location
+              </Button>
+            </form>
 
-      <Card className="mt-6">
-        <h2 className="text-lg font-semibold">Notifications</h2>
-        <p className="mt-1 text-sm text-[var(--color-muted)]">
-          Choose which activity shows in the bell at the top of the page. These
-          are in-app only — turning one off doesn&apos;t change any emails you
-          already get.
-        </p>
-        <ul className="mt-4 space-y-3">
-          {NOTIFICATION_TYPES.map((type) => {
-            const meta = NOTIFICATION_PREFS[type];
-            const on = business[meta.column];
-            return (
-              <li key={type}>
-                <form action={setNotificationPref}>
+            {/* Require photo */}
+            <form
+              action={togglePhoto}
+              className="mt-2 border-t border-[#F3F4F6] pt-[13px]"
+            >
+              <input
+                type="hidden"
+                name="requireClockInPhoto"
+                value={String(!business.requireClockInPhoto)}
+              />
+              <button
+                type="submit"
+                role="switch"
+                aria-checked={business.requireClockInPhoto}
+                className="flex w-full items-center justify-between gap-3 text-left"
+              >
+                <span>
+                  <span className="block text-[13.5px] font-semibold text-[#111827]">
+                    Require photo on clock-in
+                  </span>
+                  <span className="block text-[12px] text-[#9CA3AF]">
+                    Snap a photo to confirm identity — no facial recognition
+                  </span>
+                </span>
+                <Switch on={business.requireClockInPhoto} />
+              </button>
+            </form>
+
+            {/* Photo retention */}
+            <form
+              action={setRetention}
+              className="mt-2 flex items-center justify-between gap-3 border-t border-[#F3F4F6] pt-[13px]"
+            >
+              <div>
+                <div className="text-[13.5px] font-semibold text-[#111827]">
+                  Photo retention
+                </div>
+                <div className="text-[12px] text-[#9CA3AF]">
+                  Auto-delete clock-in photos after
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <label>
+                  <span className="sr-only">Delete clock-in photos after</span>
+                  <select
+                    id="photoRetentionDays"
+                    name="photoRetentionDays"
+                    defaultValue={business.photoRetentionDays}
+                    className={selectClass}
+                  >
+                    {PHOTO_RETENTION_DAYS.map((days) => (
+                      <option key={days} value={days}>
+                        {days} days
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <Button type="submit" variant="secondary">
+                  Save
+                </Button>
+              </div>
+            </form>
+          </SectionCard>
+        </div>
+
+        {/* RIGHT COLUMN */}
+        <div className="flex flex-col gap-[18px]">
+          {/* Notifications ------------------------------------------- */}
+          <SectionCard title="Notifications" bodyClassName="px-[18px] py-[6px]">
+            {NOTIFICATION_TYPES.map((type, i) => {
+              const meta = NOTIFICATION_PREFS[type];
+              const on = business[meta.column];
+              return (
+                <form key={type} action={setNotificationPref}>
                   <input type="hidden" name="type" value={type} />
                   <input type="hidden" name="enabled" value={String(!on)} />
                   <button
                     type="submit"
                     role="switch"
                     aria-checked={on}
-                    className="flex w-full items-center justify-between gap-3 text-left text-sm font-medium text-[var(--color-ink)]"
+                    className={`flex w-full items-center justify-between gap-3 py-[12px] text-left ${
+                      i === 0 ? "" : "border-t border-[#F3F4F6]"
+                    }`}
                   >
                     <span>
-                      <span className="block">{meta.label}</span>
-                      <span className="block text-sm font-normal text-[var(--color-muted)]">
+                      <span className="block text-[13.5px] font-medium text-[#111827]">
+                        {meta.label}
+                      </span>
+                      <span className="block text-[12px] text-[#9CA3AF]">
                         {meta.description}
                       </span>
                     </span>
-                    <span className="flex flex-shrink-0 items-center gap-2">
-                      <span
-                        aria-hidden="true"
-                        className={`inline-flex h-5 w-9 items-center rounded-full border px-0.5 transition-colors ${
-                          on
-                            ? "justify-end border-[var(--color-ok)] bg-[var(--color-ok)]"
-                            : "justify-start border-[var(--color-line)] bg-[var(--color-canvas)]"
-                        }`}
-                      >
-                        <span className="h-4 w-4 rounded-full bg-white" />
-                      </span>
-                      <span className="w-7 text-[var(--color-muted)]">
-                        {on ? "On" : "Off"}
-                      </span>
-                    </span>
+                    <Switch on={on} />
                   </button>
                 </form>
-              </li>
-            );
-          })}
-        </ul>
-      </Card>
-
-      <Card className="mt-6">
-        <h2 className="text-lg font-semibold">Team notices</h2>
-        <p className="mt-1 text-sm text-[var(--color-muted)]">
-          Each team member can have a private notices page (you share their link
-          from the Staff page). The night before a shift we add a &quot;you work
-          tomorrow&quot; reminder there — in-app only, never an email.
-        </p>
-        <form action={setStaffShiftReminders} className="mt-4">
-          <input
-            type="hidden"
-            name="enabled"
-            value={String(!business.staffShiftRemindersEnabled)}
-          />
-          <button
-            type="submit"
-            role="switch"
-            aria-checked={business.staffShiftRemindersEnabled}
-            className="flex w-full items-center justify-between gap-3 text-left text-sm font-medium text-[var(--color-ink)]"
-          >
-            <span>
-              <span className="block">Daily shift reminders</span>
-              <span className="block text-sm font-normal text-[var(--color-muted)]">
-                A notice the evening before each rostered shift.
-              </span>
-            </span>
-            <span className="flex flex-shrink-0 items-center gap-2">
-              <span
-                aria-hidden="true"
-                className={`inline-flex h-5 w-9 items-center rounded-full border px-0.5 transition-colors ${
-                  business.staffShiftRemindersEnabled
-                    ? "justify-end border-[var(--color-ok)] bg-[var(--color-ok)]"
-                    : "justify-start border-[var(--color-line)] bg-[var(--color-canvas)]"
-                }`}
+              );
+            })}
+            {/* Team notices (daily staff shift reminder) */}
+            <form action={setStaffShiftReminders}>
+              <input
+                type="hidden"
+                name="enabled"
+                value={String(!business.staffShiftRemindersEnabled)}
+              />
+              <button
+                type="submit"
+                role="switch"
+                aria-checked={business.staffShiftRemindersEnabled}
+                className="flex w-full items-center justify-between gap-3 border-t border-[#F3F4F6] py-[12px] text-left"
               >
-                <span className="h-4 w-4 rounded-full bg-white" />
-              </span>
-              <span className="w-7 text-[var(--color-muted)]">
-                {business.staffShiftRemindersEnabled ? "On" : "Off"}
-              </span>
-            </span>
-          </button>
-        </form>
-      </Card>
+                <span>
+                  <span className="block text-[13.5px] font-medium text-[#111827]">
+                    Team notices (daily shift reminder for staff)
+                  </span>
+                  <span className="block text-[12px] text-[#9CA3AF]">
+                    A private “you work tomorrow” notice — in-app only, never an
+                    email.
+                  </span>
+                </span>
+                <Switch on={business.staffShiftRemindersEnabled} />
+              </button>
+            </form>
+          </SectionCard>
+
+          {/* Google Drive -------------------------------------------- */}
+          <SectionCard title="Google Drive">
+            {!driveConfigured ? (
+              <Banner tone="info">
+                Google Drive isn’t set up on this server yet. Once your
+                administrator configures it, you’ll be able to connect here.
+              </Banner>
+            ) : driveConnection ? (
+              <>
+                {driveConnection.needsReconnect ? (
+                  <div className="mb-[14px]">
+                    <Banner tone="warn">
+                      Google Drive needs to be reconnected — your access expired
+                      or was revoked. Reconnect to upload documents again.
+                    </Banner>
+                  </div>
+                ) : null}
+                <div className="mb-[14px] flex items-center gap-3">
+                  <span
+                    aria-hidden="true"
+                    className="flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-[11px] bg-[#ECFDF3]"
+                  >
+                    <Icon
+                      name="check_circle"
+                      fill
+                      className="text-[24px] text-[#16A34A]"
+                    />
+                  </span>
+                  <div>
+                    <div className="text-[14px] font-bold text-[#111827]">
+                      Connected as {driveConnection.googleAccountEmail}
+                    </div>
+                    <div className="text-[12.5px] text-[#6B7280]">
+                      {driveConnection.rootFolderId
+                        ? "Folder: “Roster Documents” in your Google Drive"
+                        : "Documents save to your Google Drive"}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 border-t border-[#F3F4F6] pt-[14px]">
+                  {driveConnection.needsReconnect ? (
+                    <form
+                      action="/api/integrations/google/connect"
+                      method="get"
+                    >
+                      <Button type="submit">Reconnect Google Drive</Button>
+                    </form>
+                  ) : null}
+                  <form action={disconnectDrive}>
+                    <button
+                      type="submit"
+                      className="rounded-[9px] border border-[#FECACA] bg-white px-[15px] py-[9px] text-[13px] font-semibold text-[#B91C1C] transition-colors hover:bg-[#FEF2F2]"
+                    >
+                      Disconnect
+                    </button>
+                  </form>
+                  <span className="flex-1 text-[11.5px] text-[#9CA3AF]">
+                    Disconnecting stops new uploads but keeps files already in
+                    your Drive.
+                  </span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-start gap-[13px]">
+                  <span
+                    aria-hidden="true"
+                    className="flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-[11px] bg-[#F3F4F6]"
+                  >
+                    <Icon
+                      name="add_to_drive"
+                      className="text-[24px] text-[#9CA3AF]"
+                    />
+                  </span>
+                  <div className="flex-1">
+                    <div className="text-[14px] font-bold text-[#111827]">
+                      Connect Google Drive
+                    </div>
+                    <div className="mt-[3px] text-[12.5px] leading-[1.5] text-[#6B7280]">
+                      Store staff documents securely in your own Drive.
+                      Contracts, RSA certificates, ID — everything stays in your
+                      account, not ours. This is a separate permission from how
+                      you sign in and doesn’t change your login.
+                    </div>
+                  </div>
+                </div>
+                <form
+                  action="/api/integrations/google/connect"
+                  method="get"
+                  className="mt-[14px]"
+                >
+                  <Button type="submit" className="w-full">
+                    Connect Google Drive
+                  </Button>
+                </form>
+              </>
+            )}
+          </SectionCard>
+        </div>
+      </div>
     </>
   );
 }

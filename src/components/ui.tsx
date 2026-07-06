@@ -107,14 +107,17 @@ export function Card({
   children,
   className = "",
   padded = true,
+  id,
 }: {
   children: ReactNode;
   className?: string;
   /** Set false for tables/lists that own their internal padding. */
   padded?: boolean;
+  id?: string;
 }) {
   return (
     <div
+      id={id}
       className={`overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)] ${
         padded ? "p-5" : ""
       } ${className}`}

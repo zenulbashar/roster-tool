@@ -7,10 +7,13 @@ import { leaveRequestSchema } from "@/lib/validation";
 import { leaveTypeLabel } from "@/lib/labels";
 import { businessDateOf, formatDateRange } from "@/lib/time";
 import {
+  Avatar,
+  Badge,
   Banner,
   Button,
   Card,
   Field,
+  Icon,
   PageHeader,
   TextInput,
 } from "@/components/ui";
@@ -23,6 +26,14 @@ const LEAVE_TYPES = [
   { value: "unpaid", label: "Unpaid leave" },
   { value: "other", label: "Other" },
 ] as const;
+
+/** Inclusive day count between two YYYY-MM-DD calendar dates, for display. */
+function dayCount(start: string, end: string): string {
+  const a = new Date(`${start}T00:00:00Z`).getTime();
+  const b = new Date(`${end}T00:00:00Z`).getTime();
+  const days = Math.round((b - a) / 86_400_000) + 1;
+  return `${days} day${days === 1 ? "" : "s"}`;
+}
 
 export default async function LeavePage({
   searchParams,
@@ -124,11 +135,13 @@ export default async function LeavePage({
     redirect(`${PATH}?deleted=1`);
   }
 
+  const hasRows = pending.length > 0 || upcoming.length > 0;
+
   return (
     <>
       <PageHeader
-        title="Leave"
-        subtitle="Time-off requests from your team, and leave you've recorded. This records leave only — it doesn't track balances or calculate pay."
+        title="Leave requests"
+        subtitle="Approve or deny — staff get notified instantly and the roster updates."
       />
 
       {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
@@ -137,110 +150,135 @@ export default async function LeavePage({
       {sp.added ? <Banner tone="success">Leave recorded.</Banner> : null}
       {sp.deleted ? <Banner tone="success">Leave removed.</Banner> : null}
 
-      <section className="mt-4" aria-label="Pending requests">
-        <h2 className="mb-3 text-lg font-semibold">
-          Requests to review ({pending.length})
-        </h2>
-        {pending.length === 0 ? (
-          <p className="text-[var(--color-muted)]">
-            No requests waiting. New requests from your team show up here.
+      <div className="mt-1">
+        <Banner tone="info">
+          Leave is recorded for scheduling purposes. Balances and accruals are
+          managed by your payroll provider.
+        </Banner>
+      </div>
+
+      <Card padded={false} className="mt-4">
+        {!hasRows ? (
+          <p className="px-5 py-6 text-[13px] text-[#6B7280]">
+            No leave to show. New requests from your team appear here, and any
+            leave you record shows up below.
           </p>
         ) : (
-          <ul className="space-y-2">
+          <ul>
             {pending.map((r) => (
-              <li key={r.id}>
-                <Card className="flex flex-wrap items-center justify-between gap-4 py-3">
+              <li
+                key={r.id}
+                className="flex flex-wrap items-center gap-[15px] border-b border-[#F3F4F6] px-5 py-[15px] last:border-b-0"
+              >
+                <div className="flex min-w-[180px] items-center gap-[11px]">
+                  <Avatar name={r.staffName} colorKey={r.staffName} size={36} />
                   <div>
-                    <p className="font-semibold">
+                    <div className="font-archivo text-[14px] font-bold text-[#111827]">
                       {r.staffName}
-                      <span className="ml-2 rounded bg-[var(--color-canvas)] px-2 py-0.5 text-xs font-medium text-[var(--color-muted)]">
-                        {leaveTypeLabel(r.leaveType)}
-                      </span>
-                    </p>
-                    <p className="text-sm text-[var(--color-muted)]">
-                      {formatDateRange(r.startDate, r.endDate)}
-                    </p>
-                    {r.note ? (
-                      <p className="mt-1 text-sm text-[var(--color-ink)]">
-                        &ldquo;{r.note}&rdquo;
-                      </p>
-                    ) : null}
+                    </div>
+                    <div className="text-[12px] text-[#6B7280]">
+                      {leaveTypeLabel(r.leaveType)}
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    <form action={approveLeave}>
-                      <input type="hidden" name="id" value={r.id} />
-                      <Button type="submit">Approve</Button>
-                    </form>
-                    <form action={denyLeave}>
-                      <input type="hidden" name="id" value={r.id} />
-                      <Button type="submit" variant="secondary">
-                        Deny
-                      </Button>
-                    </form>
+                </div>
+                <div className="min-w-[130px]">
+                  <div className="font-archivo text-[13.5px] font-semibold text-[#111827]">
+                    {formatDateRange(r.startDate, r.endDate)}
                   </div>
-                </Card>
+                  <div className="text-[12px] text-[#9CA3AF]">
+                    {dayCount(r.startDate, r.endDate)}
+                  </div>
+                </div>
+                <div className="min-w-[120px] flex-1 text-[12.5px] text-[#6B7280]">
+                  {r.note ? `“${r.note}”` : null}
+                </div>
+                <div className="flex items-center gap-2">
+                  <form action={denyLeave}>
+                    <input type="hidden" name="id" value={r.id} />
+                    <Button
+                      type="submit"
+                      variant="secondary"
+                      className="gap-1 border-[#FECACA] text-[#B91C1C] hover:bg-[#FEF2F2] hover:border-[#FECACA]"
+                    >
+                      <Icon name="close" className="text-[16px]" />
+                      Deny
+                    </Button>
+                  </form>
+                  <form action={approveLeave}>
+                    <input type="hidden" name="id" value={r.id} />
+                    <Button type="submit" className="gap-1">
+                      <Icon name="check" className="text-[16px]" />
+                      Approve
+                    </Button>
+                  </form>
+                </div>
               </li>
             ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="mt-8" aria-label="Upcoming approved leave">
-        <h2 className="mb-3 text-lg font-semibold">
-          Upcoming approved leave ({upcoming.length})
-        </h2>
-        {upcoming.length === 0 ? (
-          <p className="text-[var(--color-muted)]">Nothing booked in.</p>
-        ) : (
-          <ul className="space-y-2">
             {upcoming.map((r) => (
-              <li key={r.id}>
-                <Card className="flex flex-wrap items-center justify-between gap-4 py-3">
+              <li
+                key={r.id}
+                className="flex flex-wrap items-center gap-[15px] border-b border-[#F3F4F6] px-5 py-[15px] last:border-b-0"
+              >
+                <div className="flex min-w-[180px] items-center gap-[11px]">
+                  <Avatar name={r.staffName} colorKey={r.staffName} size={36} />
                   <div>
-                    <p className="font-semibold">
+                    <div className="font-archivo text-[14px] font-bold text-[#111827]">
                       {r.staffName}
-                      <span className="ml-2 rounded bg-[var(--color-canvas)] px-2 py-0.5 text-xs font-medium text-[var(--color-muted)]">
-                        {leaveTypeLabel(r.leaveType)}
-                      </span>
-                    </p>
-                    <p className="text-sm text-[var(--color-muted)]">
-                      {formatDateRange(r.startDate, r.endDate)}
-                    </p>
+                    </div>
+                    <div className="text-[12px] text-[#6B7280]">
+                      {leaveTypeLabel(r.leaveType)}
+                    </div>
                   </div>
+                </div>
+                <div className="min-w-[130px]">
+                  <div className="font-archivo text-[13.5px] font-semibold text-[#111827]">
+                    {formatDateRange(r.startDate, r.endDate)}
+                  </div>
+                  <div className="text-[12px] text-[#9CA3AF]">
+                    {dayCount(r.startDate, r.endDate)}
+                  </div>
+                </div>
+                <div className="min-w-[120px] flex-1 text-[12.5px] text-[#6B7280]">
+                  {r.note ? `“${r.note}”` : null}
+                </div>
+                <div className="flex items-center gap-3">
+                  <Badge tone="success">Approved</Badge>
                   <form action={deleteLeave}>
                     <input type="hidden" name="id" value={r.id} />
                     <button
                       type="submit"
-                      className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
+                      className="inline-flex items-center gap-1 text-[12.5px] font-semibold text-[#B91C1C] underline-offset-2 hover:underline"
                     >
                       Remove
                     </button>
                   </form>
-                </Card>
+                </div>
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Card>
 
-      <Card className="mt-8">
-        <h2 className="text-lg font-semibold">Record leave</h2>
-        <p className="mt-1 text-sm text-[var(--color-muted)]">
+      <Card className="mt-6">
+        <h2 className="font-archivo text-[17px] font-bold text-[#111827]">
+          Record leave
+        </h2>
+        <p className="mt-1 text-[13px] text-[#6B7280]">
           Add leave a team member told you about. It&rsquo;s saved as approved
           straight away (no email is sent).
         </p>
         {staff.length === 0 ? (
-          <p className="mt-3 text-[var(--color-muted)]">
+          <p className="mt-3 text-[13px] text-[#6B7280]">
             Add a team member first.
           </p>
         ) : (
-          <form action={addLeaveDirect} className="mt-3 space-y-4">
+          <form action={addLeaveDirect} className="mt-4 space-y-4">
             <Field label="Team member">
               <select
                 name="staffMemberId"
                 required
                 aria-label="Team member"
-                className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-base"
+                className="block w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-[14px] py-[11px] text-[14.5px] text-[var(--color-ink)]"
               >
                 {staff.map((s) => (
                   <option key={s.id} value={s.id}>
@@ -254,7 +292,7 @@ export default async function LeavePage({
                 name="leaveType"
                 defaultValue="annual"
                 aria-label="Leave type"
-                className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-base"
+                className="block w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-[14px] py-[11px] text-[14.5px] text-[var(--color-ink)]"
               >
                 {LEAVE_TYPES.map((t) => (
                   <option key={t.value} value={t.value}>
