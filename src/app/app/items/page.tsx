@@ -3,11 +3,13 @@ import { redirect } from "next/navigation";
 import { ownerRepo } from "@/lib/auth/context";
 import { itemSchema } from "@/lib/validation";
 import {
+  Badge,
   Banner,
   Button,
   ButtonLink,
   Card,
   Field,
+  Icon,
   PageHeader,
   TextInput,
 } from "@/components/ui";
@@ -37,6 +39,8 @@ function cleanItem(data: ReturnType<typeof itemSchema.parse>) {
     supplierId: data.supplierId ?? null,
   };
 }
+
+const COLS = "1.6fr 1fr 1fr 1.4fr 0.9fr 0.8fr";
 
 export default async function ItemsPage({
   searchParams,
@@ -111,7 +115,7 @@ export default async function ItemsPage({
         name="supplierId"
         defaultValue={defaultValue ?? ""}
         aria-label="Supplier"
-        className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-base"
+        className="block w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-[14px] py-[11px] text-[14.5px] text-[var(--color-ink)]"
       >
         <option value="">No supplier</option>
         {suppliers.map((s) => (
@@ -127,11 +131,18 @@ export default async function ItemsPage({
     <>
       <PageHeader
         title="Items"
-        subtitle="The products / SKUs you keep in stock. Record-keeping only — no stock counts or ordering yet (those come in a later update)."
+        subtitle="Your product catalogue — SKUs, suppliers and units. Record-keeping only — no stock counts or ordering yet (those come in a later update)."
         action={
-          <ButtonLink href="/app/items/import" variant="secondary">
-            Import from CSV
-          </ButtonLink>
+          <div className="flex gap-2.5">
+            <ButtonLink href="/app/items/import" variant="secondary">
+              <Icon name="upload_file" className="text-[18px]" />
+              Import from CSV
+            </ButtonLink>
+            <ButtonLink href="#add-item">
+              <Icon name="add" className="text-[19px]" />
+              Add item
+            </ButtonLink>
+          </div>
         }
       />
 
@@ -144,13 +155,10 @@ export default async function ItemsPage({
         <Banner tone="success">Item deactivated.</Banner>
       ) : null}
 
-      <section className="mt-4" aria-label="Items">
-        <h2 className="mb-3 text-lg font-semibold">
-          Your items ({items.length})
-        </h2>
-        {items.length === 0 ? (
-          <p className="text-[var(--color-muted)]">
-            None yet. Add one below, or{" "}
+      {items.length === 0 ? (
+        <Card className="mt-1 text-center">
+          <p className="text-[13.5px] text-[var(--color-text-muted)]">
+            No items yet. Add one below, or{" "}
             <a
               href="/app/items/import"
               className="font-medium text-[var(--color-brand)] underline underline-offset-2"
@@ -159,47 +167,55 @@ export default async function ItemsPage({
             </a>
             .
           </p>
-        ) : (
-          <ul className="space-y-2">
-            {items.map((it) => (
-              <li key={it.id}>
-                <Card className="py-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="font-semibold">
-                        {it.name}
-                        {it.isActive ? null : (
-                          <span className="ml-2 rounded bg-[var(--color-line)] px-2 py-0.5 text-xs font-semibold text-[var(--color-muted)]">
-                            Inactive
-                          </span>
-                        )}
-                      </p>
-                      <p className="text-sm text-[var(--color-muted)]">
-                        {it.skuCode ? `SKU ${it.skuCode}` : "No SKU"}
-                        {it.unit ? ` · ${it.unit}` : ""}
-                        {it.supplierName ? ` · ${it.supplierName}` : ""}
-                      </p>
-                    </div>
-                    <form action={toggleActive}>
-                      <input type="hidden" name="id" value={it.id} />
-                      <input
-                        type="hidden"
-                        name="isActive"
-                        value={it.isActive ? "false" : "true"}
-                      />
-                      <button
-                        type="submit"
-                        className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
-                      >
-                        {it.isActive ? "Deactivate" : "Reactivate"}
-                      </button>
-                    </form>
-                  </div>
-                  <details className="mt-2">
-                    <summary className="cursor-pointer text-sm font-medium text-[var(--color-brand)]">
-                      Edit / remove
-                    </summary>
-                    <form action={editItem} className="mt-3 space-y-3">
+        </Card>
+      ) : (
+        <Card padded={false} className="mt-1">
+          <div className="overflow-x-auto">
+            <div className="min-w-[840px]">
+              {/* Header row */}
+              <div
+                className="grid items-center gap-0 border-b border-[var(--color-border)] bg-[#FAFBFC] px-[18px] py-[11px] font-archivo text-[10.5px] font-bold uppercase tracking-[0.05em] text-[#9CA3AF]"
+                style={{ gridTemplateColumns: COLS }}
+              >
+                <span>Item</span>
+                <span>SKU</span>
+                <span>Category</span>
+                <span>Supplier</span>
+                <span className="text-right">Reorder</span>
+                <span className="text-right">Unit</span>
+              </div>
+
+              {items.map((it) => (
+                <details
+                  key={it.id}
+                  className="group border-b border-[#F3F4F6]"
+                >
+                  <summary
+                    className="grid cursor-pointer list-none items-center gap-0 px-[18px] py-[11px] text-[13px] marker:content-none hover:bg-[#FAFBFC] [&::-webkit-details-marker]:hidden"
+                    style={{ gridTemplateColumns: COLS }}
+                  >
+                    <span className="flex items-center gap-2 font-semibold text-[#111827]">
+                      {it.name}
+                      {it.isActive ? null : (
+                        <Badge tone="draft">Inactive</Badge>
+                      )}
+                    </span>
+                    <span className="font-mono text-[12px] text-[#6B7280]">
+                      {it.skuCode || "—"}
+                    </span>
+                    <span className="text-[#9CA3AF]">—</span>
+                    <span className="text-[#6B7280]">
+                      {it.supplierName || "—"}
+                    </span>
+                    <span className="text-right text-[#9CA3AF]">—</span>
+                    <span className="text-right text-[#9CA3AF]">
+                      {it.unit || "—"}
+                    </span>
+                  </summary>
+
+                  {/* Per-row edit / remove / (de)activate */}
+                  <div className="border-t border-[#F3F4F6] bg-[#FAFBFC] px-[18px] py-4">
+                    <form action={editItem} className="space-y-3">
                       <input type="hidden" name="id" value={it.id} />
                       <Field label="Name">
                         <TextInput
@@ -232,25 +248,47 @@ export default async function ItemsPage({
                         Save changes
                       </Button>
                     </form>
-                    <form action={deleteItem} className="mt-2">
-                      <input type="hidden" name="id" value={it.id} />
-                      <button
-                        type="submit"
-                        className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
-                      >
-                        Remove item
-                      </button>
-                    </form>
-                  </details>
-                </Card>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+                    <div className="mt-3 flex items-center gap-4 border-t border-[#F3F4F6] pt-3">
+                      <form action={toggleActive}>
+                        <input type="hidden" name="id" value={it.id} />
+                        <input
+                          type="hidden"
+                          name="isActive"
+                          value={it.isActive ? "false" : "true"}
+                        />
+                        <button
+                          type="submit"
+                          className="text-[13px] font-medium text-[var(--color-brand)] underline underline-offset-2"
+                        >
+                          {it.isActive ? "Deactivate" : "Reactivate"}
+                        </button>
+                      </form>
+                      <form action={deleteItem}>
+                        <input type="hidden" name="id" value={it.id} />
+                        <button
+                          type="submit"
+                          className="text-[13px] font-medium text-[var(--color-danger)] underline underline-offset-2"
+                        >
+                          Remove item
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                </details>
+              ))}
+            </div>
+          </div>
+        </Card>
+      )}
 
-      <Card className="mt-8">
-        <h2 className="text-lg font-semibold">Add an item</h2>
+      <p className="mt-2.5 text-[12px] text-[var(--color-text-muted)]">
+        Categories &amp; reorder thresholds are coming soon.
+      </p>
+
+      <Card id="add-item" className="mt-6">
+        <h2 className="font-archivo text-[15px] font-bold text-[var(--color-ink)]">
+          Add an item
+        </h2>
         <form action={addItem} className="mt-3 space-y-3">
           <Field label="Name">
             <TextInput name="name" required maxLength={200} />

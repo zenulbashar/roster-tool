@@ -10,10 +10,34 @@ import { buildDraft, draftSummary } from "@/lib/draft";
 import { makeOnLeaveLookup } from "@/lib/leave";
 import { formatDateOnly, formatTimeOnly } from "@/lib/time";
 import { periodStatusLabel, rosterBuildVerb } from "@/lib/labels";
-import { Badge, Banner, Button, Card, PageHeader } from "@/components/ui";
+import { Badge, Banner, Button, Card } from "@/components/ui";
+import { CopyButton } from "@/components/CopyButton";
+import { Avatar } from "@/components/ui";
 import { shiftColorScheme } from "@/lib/shift-colors";
 
 type Availability = "yes" | "no" | "unknown";
+
+const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** Inclusive list of `YYYY-MM-DD` dates from start to end (UTC-safe). */
+function eachDate(start: string, end: string): string[] {
+  const out: string[] = [];
+  const s = new Date(`${start}T00:00:00Z`);
+  const e = new Date(`${end}T00:00:00Z`);
+  for (let t = s; t <= e; t.setUTCDate(t.getUTCDate() + 1)) {
+    out.push(t.toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+/** "Mon 23" style day header from a `YYYY-MM-DD` string. */
+function dayHeader(date: string): { name: string; date: string } {
+  const d = new Date(`${date}T00:00:00Z`);
+  return {
+    name: WEEKDAY_SHORT[d.getUTCDay()] ?? "",
+    date: String(d.getUTCDate()),
+  };
+}
 
 export default async function BuildRosterPage({
   params,
@@ -264,6 +288,7 @@ export default async function BuildRosterPage({
   const respondedCount = requests.filter((r) => r.respondedAt).length;
 
   const canDraft = period.status !== "draft";
+  const isPublished = period.status === "published";
   const draftedSummary =
     drafted === "1" && tot
       ? draftSummary({
@@ -274,26 +299,97 @@ export default async function BuildRosterPage({
         })
       : null;
 
+  // --- Weekly matrix (the design's hero grid) ---------------------------------
+  const days = eachDate(period.startDate, period.endDate);
+  // cellShifts[staffId][date] = confirmed shifts that staff member holds that day
+  const cellShifts = new Map<string, Map<string, typeof shifts>>();
+  // openByDate[date] = shifts with no confirmed staff that day
+  const openByDate = new Map<string, typeof shifts>();
+  for (const s of shifts) {
+    const conf = confirmed.get(s.id);
+    if (conf && conf.size > 0) {
+      for (const staffId of conf) {
+        const perStaff = cellShifts.get(staffId) ?? new Map();
+        const list = perStaff.get(s.date) ?? [];
+        list.push(s);
+        perStaff.set(s.date, list);
+        cellShifts.set(staffId, perStaff);
+      }
+    } else {
+      const list = openByDate.get(s.date) ?? [];
+      list.push(s);
+      openByDate.set(s.date, list);
+    }
+  }
+  const dayCounts = days.map(
+    (d) =>
+      staff.filter((m) => (cellShifts.get(m.id)?.get(d)?.length ?? 0) > 0)
+        .length,
+  );
+  const gridCols = `216px repeat(${days.length}, minmax(132px,1fr))`;
+
   return (
     <>
-      <PageHeader
-        title={`${rosterBuildVerb(period.status)}: ${period.label}`}
-        subtitle={`${formatDateOnly(period.startDate)} – ${formatDateOnly(period.endDate)}`}
-        action={
-          <Badge tone={period.status === "published" ? "success" : "draft"}>
-            {periodStatusLabel(period.status)}
-          </Badge>
-        }
-      />
-
-      <p className="mb-4 text-sm text-[var(--color-muted)]">
-        {respondedCount} of {requests.length} replied. Tap a name to put them on
-        a shift. <span className="text-[var(--color-ok)]">Green</span> = free,{" "}
-        <span className="text-[var(--color-danger)]">red</span> = can&rsquo;t,
-        grey = no reply yet,{" "}
-        <span className="text-[var(--color-warn)]">amber</span> = on approved
-        leave (you can still assign them if you need to).
-      </p>
+      {/* Header — title + status, week label + counts, primary actions. */}
+      <div className="mb-[18px] flex flex-wrap items-end justify-between gap-[18px]">
+        <div>
+          <div className="flex items-center gap-[11px]">
+            <h1 className="font-archivo text-[25px] font-extrabold tracking-[-0.015em] text-[var(--color-ink)]">
+              {rosterBuildVerb(period.status)}
+            </h1>
+            <Badge tone={isPublished ? "success" : "draft"}>
+              {periodStatusLabel(period.status)}
+            </Badge>
+          </div>
+          <div className="mt-[7px] flex flex-wrap items-center gap-[9px] text-[13px] text-[var(--color-text-secondary)]">
+            <span className="text-[13.5px] font-semibold text-[var(--color-ink)]">
+              {period.label} · {formatDateOnly(period.startDate)} –{" "}
+              {formatDateOnly(period.endDate)}
+            </span>
+            <span className="text-[var(--color-line)]">·</span>
+            <span>{staff.length} staff</span>
+            <span className="text-[var(--color-line)]">·</span>
+            <span>{shifts.length} shifts rostered</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2.5">
+          {canDraft ? (
+            <form action={draftFromLastWeek}>
+              <Button type="submit" variant="secondary">
+                <span className="material-symbols-rounded text-[18px] text-[var(--color-accent)]">
+                  auto_awesome
+                </span>
+                Draft from last week
+              </Button>
+            </form>
+          ) : null}
+          {isPublished ? (
+            <>
+              <span className="inline-flex items-center gap-2 rounded-[10px] border border-[#BBF7D0] bg-[#ECFDF3] px-[16px] py-[11px] font-archivo text-[13.5px] font-bold text-[#15803D]">
+                <span className="material-symbols-rounded text-[18px]">
+                  check_circle
+                </span>
+                Published
+              </span>
+              {published ? (
+                <CopyButton
+                  value={`/r/${published.publicSlug}`}
+                  label="Copy link"
+                />
+              ) : null}
+            </>
+          ) : (
+            <form action={publish}>
+              <Button type="submit">
+                <span className="material-symbols-rounded text-[18px]">
+                  send
+                </span>
+                Publish roster
+              </Button>
+            </form>
+          )}
+        </div>
+      </div>
 
       {drafted === "none" ? (
         <div className="mb-4">
@@ -303,247 +399,477 @@ export default async function BuildRosterPage({
           </Banner>
         </div>
       ) : null}
-
       {draftedSummary ? (
         <div className="mb-4">
           <Banner tone="info">{draftedSummary}</Banner>
         </div>
       ) : null}
-
-      {canDraft ? (
-        <Card className="mb-4">
-          <h2 className="text-base font-semibold">Save time</h2>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">
-            Start from last week&rsquo;s roster. We&rsquo;ll suggest the same
-            people for the same shifts — but only where they&rsquo;re available.
-          </p>
-          <div className="mt-3 flex flex-wrap gap-3">
-            <form action={draftFromLastWeek}>
-              <Button type="submit">Draft from last week</Button>
-            </form>
-            {hasSuggestions ? (
-              <form action={acceptAllSuggestions}>
-                <Button type="submit" variant="secondary">
-                  Accept all suggestions
-                </Button>
-              </form>
-            ) : null}
-          </div>
-        </Card>
+      {isPublished && published ? (
+        <div className="mb-4">
+          <Banner tone="success">
+            Published. Shareable link:{" "}
+            <a
+              className="underline"
+              href={`/r/${published.publicSlug}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              /r/{published.publicSlug}
+            </a>
+          </Banner>
+        </div>
       ) : null}
 
-      <div className="space-y-4">
-        {[...byDay.entries()].map(([date, dayShifts]) => (
-          <Card key={date}>
-            <h2 className="text-base font-semibold">{formatDateOnly(date)}</h2>
-            <ul className="mt-3 space-y-4">
-              {dayShifts.map((s) => {
-                const confirmedSet = confirmed.get(s.id) ?? new Set<string>();
-                const suggestedSet = suggested.get(s.id) ?? new Set<string>();
-                // Show free + already-assigned + no-reply first; can'ts and
-                // on-leave staff last.
-                const ordered = [...staff].sort((a, b) => {
-                  const rank = (st: string) =>
-                    onLeave(st, s.date)
-                      ? 2
-                      : availabilityOf(s.id, st) === "no"
-                        ? 1
-                        : 0;
-                  return rank(a.id) - rank(b.id);
-                });
-                const offer = offerByShift.get(s.id);
-                const scheme = shiftColorScheme(s.label);
-                return (
-                  <li key={s.id}>
-                    <div
-                      className="rounded-[8px] p-3 transition-shadow hover:shadow-[0_5px_14px_rgba(17,24,39,0.11)]"
-                      style={{
-                        backgroundColor: scheme.bg,
-                        borderLeft: `3px solid ${scheme.bar}`,
-                      }}
-                    >
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span
-                          className="font-archivo text-[12.5px] font-bold tracking-[0.01em]"
-                          style={{ color: scheme.text }}
-                        >
-                          {s.label}
-                          {offer ? (
-                            <span className="ml-2 rounded bg-[var(--color-brand)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-brand-ink)]">
-                              {offer.status === "claimed"
-                                ? `Claim: ${offer.claimedByName ?? "pending"}`
-                                : "Offered"}
-                            </span>
-                          ) : null}
-                        </span>
-                        <span
-                          className="text-[11px] font-medium"
-                          style={{ color: scheme.text, opacity: 0.75 }}
-                        >
-                          {formatTimeOnly(s.startTime)} –{" "}
-                          {formatTimeOnly(s.endTime)}
-                        </span>
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {ordered.map((member) => {
-                          const isConfirmed = confirmedSet.has(member.id);
-                          const isSuggested = suggestedSet.has(member.id);
-                          const a = availabilityOf(s.id, member.id);
-                          const isPrefilled = prefilled.has(
-                            `${s.id}:${member.id}`,
-                          );
-                          const isOnLeave = onLeave(member.id, s.date);
-                          const marker =
-                            a === "yes" ? "✓" : a === "no" ? "✗" : "?";
+      {/* Weekly overview grid — staff × day matrix. */}
+      <div className="overflow-hidden rounded-[16px] border border-[var(--color-border)] bg-white shadow-[0_1px_3px_rgba(17,24,39,0.05)]">
+        <div className="max-h-[560px] overflow-auto">
+          <div
+            className="grid min-w-[1060px]"
+            style={{ gridTemplateColumns: gridCols }}
+          >
+            {/* Header row */}
+            <div className="sticky left-0 top-0 z-[6] flex items-end border-b border-r border-[var(--color-border)] bg-white px-[14px] py-3">
+              <span className="font-archivo text-[10.5px] font-bold uppercase tracking-[0.07em] text-[var(--color-text-muted)]">
+                Staff member
+              </span>
+            </div>
+            {days.map((d, i) => {
+              const h = dayHeader(d);
+              return (
+                <div
+                  key={d}
+                  className="sticky top-0 z-[4] border-b border-r border-[var(--color-border-subtle)] bg-[#FAFBFC] px-[11px] py-[11px]"
+                >
+                  <div className="flex items-center justify-between gap-1.5">
+                    <span className="font-archivo text-[13px] font-bold text-[var(--color-ink)]">
+                      {h.name}{" "}
+                      <span className="font-semibold text-[var(--color-text-muted)]">
+                        {h.date}
+                      </span>
+                    </span>
+                    <span className="rounded-full bg-[#F0F6E2] px-2 py-0.5 font-archivo text-[10.5px] font-bold text-[#5A7D17]">
+                      {dayCounts[i]}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
 
-                          // Suggested (un-accepted) draft: dashed chip with
-                          // Accept (tap the name) and a Clear (✕) control.
-                          if (isSuggested && !isConfirmed) {
-                            return (
-                              <span
-                                key={member.id}
-                                className="inline-flex items-center overflow-hidden rounded-full border border-dashed border-[var(--color-brand)] text-sm font-medium text-[var(--color-brand)]"
-                              >
-                                <form action={acceptSuggestion}>
-                                  <input
-                                    type="hidden"
-                                    name="shiftId"
-                                    value={s.id}
-                                  />
-                                  <input
-                                    type="hidden"
-                                    name="staffId"
-                                    value={member.id}
-                                  />
-                                  <button
-                                    type="submit"
-                                    className="px-3 py-1.5"
-                                    title="Accept this suggestion"
-                                  >
-                                    {member.name}{" "}
-                                    <span className="ml-1 rounded bg-[var(--color-brand)] px-1 py-0.5 text-[10px] font-semibold text-[var(--color-brand-ink)]">
-                                      Suggested
-                                    </span>
-                                  </button>
-                                </form>
-                                <form action={clearSuggestion}>
-                                  <input
-                                    type="hidden"
-                                    name="shiftId"
-                                    value={s.id}
-                                  />
-                                  <input
-                                    type="hidden"
-                                    name="staffId"
-                                    value={member.id}
-                                  />
-                                  <button
-                                    type="submit"
-                                    aria-label={`Clear suggestion for ${member.name}`}
-                                    className="border-l border-dashed border-[var(--color-brand)] px-2 py-1.5"
-                                  >
-                                    <span aria-hidden="true">✕</span>
-                                  </button>
-                                </form>
-                              </span>
-                            );
-                          }
+            {/* Staff rows */}
+            {staff.map((member) => (
+              <RosterRow
+                key={member.id}
+                member={member}
+                days={days}
+                cellShifts={cellShifts.get(member.id) ?? new Map()}
+                onLeave={onLeave}
+                availabilityOf={availabilityOf}
+              />
+            ))}
 
-                          const tone = isConfirmed
-                            ? "bg-[var(--color-success)] text-white border-[var(--color-success)]"
-                            : isOnLeave
-                              ? "bg-[var(--color-surface)] border-[var(--color-warning)] text-[var(--color-warning)]"
-                              : a === "yes"
-                                ? "bg-[var(--color-surface)] border-[var(--color-success)] text-[var(--color-success)]"
-                                : a === "no"
-                                  ? "bg-[var(--color-surface)] border-[var(--color-danger-strong)] text-[var(--color-danger-strong)]"
-                                  : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-secondary)]";
-                          return (
-                            <form key={member.id} action={toggleAssign}>
-                              <input
-                                type="hidden"
-                                name="shiftId"
-                                value={s.id}
-                              />
-                              <input
-                                type="hidden"
-                                name="staffId"
-                                value={member.id}
-                              />
-                              <input
-                                type="hidden"
-                                name="assigned"
-                                value={String(isConfirmed)}
-                              />
-                              <button
-                                type="submit"
-                                aria-pressed={isConfirmed}
-                                className={`rounded-full border px-3 py-1.5 text-sm font-medium ${tone}`}
-                              >
-                                {member.name}{" "}
-                                <span aria-hidden="true">{marker}</span>
-                                {isOnLeave ? (
-                                  <span className="ml-1 rounded bg-[var(--color-warning)] px-1 py-0.5 text-[10px] font-semibold text-white">
-                                    On leave
-                                  </span>
-                                ) : null}
-                                {isPrefilled && !isConfirmed ? (
-                                  <span className="ml-1 rounded bg-[var(--color-success)] px-1 py-0.5 text-[10px] font-semibold text-white">
-                                    Pre-filled
-                                  </span>
-                                ) : null}
-                              </button>
-                            </form>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </Card>
-        ))}
+            {/* Open shifts footer row */}
+            <div className="sticky left-0 z-[3] flex items-center gap-2.5 border-r border-t border-[var(--color-border)] bg-[#FCFCFB] px-[13px] py-[9px]">
+              <span className="flex h-[31px] w-[31px] flex-shrink-0 items-center justify-center rounded-full border border-dashed border-[#CBD5E1] text-[#94A3B8]">
+                <span className="material-symbols-rounded text-[18px]">
+                  add
+                </span>
+              </span>
+              <div>
+                <div className="text-[13px] font-bold text-[#475569]">
+                  Open shifts
+                </div>
+                <div className="text-[11px] text-[var(--color-text-muted)]">
+                  Unassigned
+                </div>
+              </div>
+            </div>
+            {days.map((d) => {
+              const open = openByDate.get(d) ?? [];
+              return (
+                <div
+                  key={`open-${d}`}
+                  className="border-r border-t border-[var(--color-border)] bg-[#FCFCFB] p-[5px]"
+                >
+                  {open.length === 0 ? (
+                    <div className="min-h-[62px]" />
+                  ) : (
+                    open.map((s) => {
+                      const scheme = shiftColorScheme(s.label);
+                      return (
+                        <div
+                          key={s.id}
+                          className="mb-1 flex min-h-[62px] flex-col gap-0.5 rounded-[8px] border-[1.5px] border-dashed border-[#CBD5E1] px-[9px] py-2"
+                          style={{
+                            background:
+                              "repeating-linear-gradient(135deg,#fff,#fff 9px,#FAFBFC 9px,#FAFBFC 18px)",
+                            borderLeftColor: scheme.bar,
+                          }}
+                        >
+                          <div className="font-archivo text-[12px] font-bold text-[#475569]">
+                            Open · {s.label}
+                          </div>
+                          <div className="text-[11px] text-[#94A3B8]">
+                            {formatTimeOnly(s.startTime)} –{" "}
+                            {formatTimeOnly(s.endTime)}
+                          </div>
+                          <div className="mt-auto text-[10.5px] font-bold text-[#4D7C0F]">
+                            0 claimed · assign below
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       <RosterLegend />
 
-      <Card className="mt-6">
-        <h2 className="text-lg font-semibold">Publish &amp; send</h2>
-        <p className="mt-1 text-sm text-[var(--color-muted)]">
-          We&rsquo;ll email everyone their shifts and create a shareable roster
-          link.
-        </p>
-        {published ? (
-          <div className="mt-3">
-            <Banner tone="success">
-              Published. Shareable link:{" "}
-              <a
-                className="underline"
-                href={`/r/${published.publicSlug}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                /r/{published.publicSlug}
-              </a>
-            </Banner>
+      {/* Assignment editor — the interactive tool (tap names to roster). */}
+      <div className="mt-8">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-archivo text-[18px] font-bold text-[var(--color-ink)]">
+              Assign staff
+            </h2>
+            <p className="mt-0.5 text-[13px] text-[var(--color-text-secondary)]">
+              {respondedCount} of {requests.length} replied. Tap a name to put
+              them on a shift.{" "}
+              <span className="text-[var(--color-ok)]">Green</span> = free,{" "}
+              <span className="text-[var(--color-danger)]">red</span> =
+              can&rsquo;t, grey = no reply,{" "}
+              <span className="text-[var(--color-warn)]">amber</span> = on
+              approved leave.
+            </p>
           </div>
-        ) : null}
-        <form action={publish} className="mt-3">
-          <Button type="submit">
-            {published ? "Re-publish & resend" : "Publish roster"}
-          </Button>
-        </form>
-      </Card>
+          {hasSuggestions ? (
+            <form action={acceptAllSuggestions}>
+              <Button type="submit" variant="secondary">
+                Accept all suggestions
+              </Button>
+            </form>
+          ) : null}
+        </div>
+
+        <div className="space-y-4">
+          {[...byDay.entries()].map(([date, dayShifts]) => (
+            <Card key={date}>
+              <h3 className="font-archivo text-[15px] font-bold text-[var(--color-ink)]">
+                {formatDateOnly(date)}
+              </h3>
+              <ul className="mt-3 space-y-4">
+                {dayShifts.map((s) => {
+                  const confirmedSet = confirmed.get(s.id) ?? new Set<string>();
+                  const suggestedSet = suggested.get(s.id) ?? new Set<string>();
+                  // Show free + already-assigned + no-reply first; can'ts and
+                  // on-leave staff last.
+                  const ordered = [...staff].sort((a, b) => {
+                    const rank = (st: string) =>
+                      onLeave(st, s.date)
+                        ? 2
+                        : availabilityOf(s.id, st) === "no"
+                          ? 1
+                          : 0;
+                    return rank(a.id) - rank(b.id);
+                  });
+                  const offer = offerByShift.get(s.id);
+                  const scheme = shiftColorScheme(s.label);
+                  return (
+                    <li key={s.id}>
+                      <div
+                        className="rounded-[8px] p-3 transition-shadow hover:shadow-[0_5px_14px_rgba(17,24,39,0.11)]"
+                        style={{
+                          backgroundColor: scheme.bg,
+                          borderLeft: `3px solid ${scheme.bar}`,
+                        }}
+                      >
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span
+                            className="font-archivo text-[12.5px] font-bold tracking-[0.01em]"
+                            style={{ color: scheme.text }}
+                          >
+                            {s.label}
+                            {offer ? (
+                              <span className="ml-2 rounded bg-[var(--color-brand)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-brand-ink)]">
+                                {offer.status === "claimed"
+                                  ? `Claim: ${offer.claimedByName ?? "pending"}`
+                                  : "Offered"}
+                              </span>
+                            ) : null}
+                          </span>
+                          <span
+                            className="text-[11px] font-medium"
+                            style={{ color: scheme.text, opacity: 0.75 }}
+                          >
+                            {formatTimeOnly(s.startTime)} –{" "}
+                            {formatTimeOnly(s.endTime)}
+                          </span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {ordered.map((member) => {
+                            const isConfirmed = confirmedSet.has(member.id);
+                            const isSuggested = suggestedSet.has(member.id);
+                            const a = availabilityOf(s.id, member.id);
+                            const isPrefilled = prefilled.has(
+                              `${s.id}:${member.id}`,
+                            );
+                            const isOnLeave = onLeave(member.id, s.date);
+                            const marker =
+                              a === "yes" ? "✓" : a === "no" ? "✗" : "?";
+
+                            // Suggested (un-accepted) draft: dashed chip with
+                            // Accept (tap the name) and a Clear (✕) control.
+                            if (isSuggested && !isConfirmed) {
+                              return (
+                                <span
+                                  key={member.id}
+                                  className="inline-flex items-center overflow-hidden rounded-full border border-dashed border-[var(--color-brand)] text-sm font-medium text-[var(--color-brand)]"
+                                >
+                                  <form action={acceptSuggestion}>
+                                    <input
+                                      type="hidden"
+                                      name="shiftId"
+                                      value={s.id}
+                                    />
+                                    <input
+                                      type="hidden"
+                                      name="staffId"
+                                      value={member.id}
+                                    />
+                                    <button
+                                      type="submit"
+                                      className="px-3 py-1.5"
+                                      title="Accept this suggestion"
+                                    >
+                                      {member.name}{" "}
+                                      <span className="ml-1 rounded bg-[var(--color-brand)] px-1 py-0.5 text-[10px] font-semibold text-[var(--color-brand-ink)]">
+                                        Suggested
+                                      </span>
+                                    </button>
+                                  </form>
+                                  <form action={clearSuggestion}>
+                                    <input
+                                      type="hidden"
+                                      name="shiftId"
+                                      value={s.id}
+                                    />
+                                    <input
+                                      type="hidden"
+                                      name="staffId"
+                                      value={member.id}
+                                    />
+                                    <button
+                                      type="submit"
+                                      aria-label={`Clear suggestion for ${member.name}`}
+                                      className="border-l border-dashed border-[var(--color-brand)] px-2 py-1.5"
+                                    >
+                                      <span aria-hidden="true">✕</span>
+                                    </button>
+                                  </form>
+                                </span>
+                              );
+                            }
+
+                            const tone = isConfirmed
+                              ? "bg-[var(--color-success)] text-white border-[var(--color-success)]"
+                              : isOnLeave
+                                ? "bg-[var(--color-surface)] border-[var(--color-warning)] text-[var(--color-warning)]"
+                                : a === "yes"
+                                  ? "bg-[var(--color-surface)] border-[var(--color-success)] text-[var(--color-success)]"
+                                  : a === "no"
+                                    ? "bg-[var(--color-surface)] border-[var(--color-danger-strong)] text-[var(--color-danger-strong)]"
+                                    : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-secondary)]";
+                            return (
+                              <form key={member.id} action={toggleAssign}>
+                                <input
+                                  type="hidden"
+                                  name="shiftId"
+                                  value={s.id}
+                                />
+                                <input
+                                  type="hidden"
+                                  name="staffId"
+                                  value={member.id}
+                                />
+                                <input
+                                  type="hidden"
+                                  name="assigned"
+                                  value={String(isConfirmed)}
+                                />
+                                <button
+                                  type="submit"
+                                  aria-pressed={isConfirmed}
+                                  className={`rounded-full border px-3 py-1.5 text-sm font-medium ${tone}`}
+                                >
+                                  {member.name}{" "}
+                                  <span aria-hidden="true">{marker}</span>
+                                  {isOnLeave ? (
+                                    <span className="ml-1 rounded bg-[var(--color-warning)] px-1 py-0.5 text-[10px] font-semibold text-white">
+                                      On leave
+                                    </span>
+                                  ) : null}
+                                  {isPrefilled && !isConfirmed ? (
+                                    <span className="ml-1 rounded bg-[var(--color-success)] px-1 py-0.5 text-[10px] font-semibold text-white">
+                                      Pre-filled
+                                    </span>
+                                  ) : null}
+                                </button>
+                              </form>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          ))}
+        </div>
+      </div>
+
+      {/* Publish (also available in the header). */}
+      {!isPublished ? (
+        <Card className="mt-6">
+          <h2 className="font-archivo text-[18px] font-bold text-[var(--color-ink)]">
+            Publish &amp; send
+          </h2>
+          <p className="mt-1 text-[13px] text-[var(--color-text-secondary)]">
+            We&rsquo;ll email everyone their shifts and create a shareable
+            roster link.
+          </p>
+          <form action={publish} className="mt-3">
+            <Button type="submit">Publish roster</Button>
+          </form>
+        </Card>
+      ) : null}
 
       <div className="mt-6">
         <Link
           href={`/app/periods/${id}`}
-          className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
+          className="text-[13px] font-semibold text-[var(--color-brand)] underline underline-offset-2"
         >
           ← Back to roster
         </Link>
       </div>
+    </>
+  );
+}
+
+/**
+ * One staff row of the weekly matrix: a sticky name cell + a shift/leave/empty
+ * cell per day. Presentational; assignment happens in the editor below the grid.
+ */
+function RosterRow({
+  member,
+  days,
+  cellShifts,
+  onLeave,
+  availabilityOf,
+}: {
+  member: { id: string; name: string; rateLabel?: string | null };
+  days: string[];
+  cellShifts: Map<
+    string,
+    {
+      id: string;
+      label: string;
+      startTime: string;
+      endTime: string;
+      date: string;
+    }[]
+  >;
+  onLeave: (staffId: string, date: string) => boolean;
+  availabilityOf: (shiftId: string, staffId: string) => Availability;
+}) {
+  const availDot: Record<Availability, string> = {
+    yes: "#16A34A",
+    no: "#D97706",
+    unknown: "#9CA3AF",
+  };
+  return (
+    <>
+      <div className="sticky left-0 z-[3] flex items-center gap-2.5 border-b border-r border-[var(--color-border)] bg-white px-[13px] py-[9px]">
+        <Avatar name={member.name} colorKey={member.id} size={31} />
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-semibold text-[var(--color-ink)]">
+            {member.name}
+          </div>
+          {member.rateLabel ? (
+            <div className="text-[11px] text-[var(--color-text-secondary)]">
+              {member.rateLabel}
+            </div>
+          ) : null}
+        </div>
+      </div>
+      {days.map((d) => {
+        const shiftsHere = cellShifts.get(d) ?? [];
+        const leaveHere = onLeave(member.id, d);
+        return (
+          <div
+            key={`${member.id}-${d}`}
+            className="min-h-[76px] border-b border-r border-[var(--color-border-subtle)] bg-white p-[5px]"
+          >
+            {shiftsHere.length > 0 ? (
+              shiftsHere.map((s) => {
+                const scheme = shiftColorScheme(s.label);
+                const dot = availDot[availabilityOf(s.id, member.id)];
+                return (
+                  <div
+                    key={s.id}
+                    className="relative mb-1 min-h-[62px] rounded-[8px] px-[9px] py-2 transition-transform hover:-translate-y-px hover:shadow-[0_5px_14px_rgba(17,24,39,0.11)]"
+                    style={{
+                      backgroundColor: scheme.bg,
+                      borderLeft: `3px solid ${scheme.bar}`,
+                    }}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="absolute right-2 top-2 h-[9px] w-[9px] rounded-full"
+                      style={{ backgroundColor: dot }}
+                    />
+                    <div
+                      className="font-archivo text-[12.5px] font-bold tracking-[0.01em]"
+                      style={{ color: scheme.text }}
+                    >
+                      {s.label}
+                    </div>
+                    <div
+                      className="mt-0.5 text-[11px] font-medium"
+                      style={{ color: scheme.text, opacity: 0.8 }}
+                    >
+                      {formatTimeOnly(s.startTime)} –{" "}
+                      {formatTimeOnly(s.endTime)}
+                    </div>
+                  </div>
+                );
+              })
+            ) : leaveHere ? (
+              <div
+                className="flex min-h-[62px] flex-col justify-center rounded-[8px] border border-[#EAECEF] px-[9px] py-2"
+                style={{
+                  background:
+                    "repeating-linear-gradient(135deg,#F4F5F7,#F4F5F7 7px,#EAECEF 7px,#EAECEF 14px)",
+                }}
+              >
+                <div className="font-archivo text-[11px] font-bold uppercase tracking-[0.05em] text-[#9097A1]">
+                  On leave
+                </div>
+                <div className="mt-0.5 text-[10.5px] text-[#A8AEB8]">
+                  Approved
+                </div>
+              </div>
+            ) : (
+              <div className="flex h-full min-h-[62px] items-center justify-center rounded-[8px] text-[20px] text-[#E2E5EA]">
+                +
+              </div>
+            )}
+          </div>
+        );
+      })}
     </>
   );
 }
@@ -561,12 +887,12 @@ function RosterLegend() {
     { label: "Split", name: "Split" },
   ];
   const dots = [
-    { label: "Available", color: "var(--color-success)" },
-    { label: "Partial", color: "var(--color-warning)" },
-    { label: "No reply", color: "var(--color-text-muted)" },
+    { label: "Available", color: "#16A34A" },
+    { label: "Partial", color: "#D97706" },
+    { label: "No response", color: "#9CA3AF" },
   ];
   return (
-    <div className="mt-4 flex flex-wrap items-center gap-[18px] text-[12px] text-[var(--color-text-secondary)]">
+    <div className="mt-[15px] flex flex-wrap items-center gap-[18px] text-[12px] text-[var(--color-text-secondary)]">
       {shiftTypes.map((t) => {
         const scheme = shiftColorScheme(t.name);
         return (
@@ -583,7 +909,10 @@ function RosterLegend() {
           </span>
         );
       })}
-      <span aria-hidden="true" className="h-4 w-px bg-[var(--color-border)]" />
+      <span
+        aria-hidden="true"
+        className="h-[14px] w-px bg-[var(--color-border)]"
+      />
       {dots.map((d) => (
         <span key={d.label} className="inline-flex items-center gap-1.5">
           <span
@@ -594,11 +923,14 @@ function RosterLegend() {
           {d.label}
         </span>
       ))}
-      <span aria-hidden="true" className="h-4 w-px bg-[var(--color-border)]" />
+      <span
+        aria-hidden="true"
+        className="h-[14px] w-px bg-[var(--color-border)]"
+      />
       <span className="inline-flex items-center gap-1.5">
         <span
           aria-hidden="true"
-          className="inline-block h-[13px] w-[13px] rounded-[4px] border border-[#EAECEF]"
+          className="inline-block h-[13px] w-[14px] rounded-[4px] border border-[#EAECEF]"
           style={{
             background:
               "repeating-linear-gradient(135deg,#F4F5F7,#F4F5F7 4px,#EAECEF 4px,#EAECEF 8px)",

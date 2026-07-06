@@ -35,53 +35,61 @@ export default async function OwnerLayout({
   }
 
   return (
-    <div className="min-h-screen">
-      <header className="bg-[var(--color-header)] text-[var(--color-header-ink)]">
-        <div className="mx-auto flex h-[60px] max-w-3xl items-center justify-between gap-4 px-5">
-          <div className="flex items-center gap-3">
-            <Link
-              href="/app"
-              className="flex items-center gap-2.5 text-[var(--color-header-ink)]"
+    <div className="min-h-screen bg-[var(--color-bg)]">
+      {/* Dark top nav — the real global chrome (single 60px row). */}
+      <header className="sticky top-0 z-50 bg-[var(--color-header)] shadow-[0_1px_0_#1F2937]">
+        <div className="flex h-[60px] items-center gap-0 pl-5 pr-4">
+          <Link
+            href="/app"
+            className="mr-1.5 flex items-center gap-2.5"
+            aria-label="Roster home"
+          >
+            <span
+              aria-hidden="true"
+              className="flex h-[26px] w-[26px] items-center justify-center rounded-[7px] bg-[var(--color-accent)] text-[var(--color-header)]"
             >
-              <span
-                aria-hidden="true"
-                className="flex h-[26px] w-[26px] items-center justify-center rounded-md bg-[var(--color-accent)] text-[var(--color-header)]"
-              >
-                <span className="material-symbols-rounded text-[18px]">
-                  grid_view
-                </span>
+              <span className="material-symbols-rounded text-[17px]">
+                grid_view
               </span>
-              <span className="font-archivo text-[18px] font-extrabold tracking-[0.05em]">
-                Zale<span className="text-[var(--color-accent)]">IT</span>
-              </span>
-            </Link>
-            {business?.name ? (
-              <span className="hidden border-l border-[#374151] pl-[13px] text-[12.5px] text-[var(--color-text-muted)] sm:inline">
-                {business.name}
-              </span>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-2">
+            </span>
+            <span className="font-archivo text-[18px] font-extrabold tracking-[0.05em] text-[var(--color-accent)]">
+              ROSTER
+            </span>
+          </Link>
+          {business?.name ? (
+            <span className="ml-[7px] hidden border-l border-[#374151] pl-[13px] text-[12.5px] text-[var(--color-text-muted)] sm:inline">
+              {business.name}
+            </span>
+          ) : null}
+
+          <OwnerNav />
+
+          <div className="flex-1" />
+
+          <div className="flex items-center gap-1.5">
             <NotificationBell unreadCount={unreadCount} items={bellItems} />
             <form action={doSignOut}>
               <button
                 type="submit"
-                className="inline-flex items-center gap-1.5 rounded-[9px] border border-[#374151] px-3 py-2 text-sm font-medium text-[#D1D5DB] hover:bg-[var(--color-header-hover)]"
+                className="ml-1 flex items-center gap-1.5 rounded-[9px] border border-[#374151] px-[13px] py-2 text-[12.5px] font-semibold text-[#D1D5DB] transition-colors hover:bg-[var(--color-header-hover)] hover:text-white"
               >
                 <span
                   aria-hidden="true"
-                  className="material-symbols-rounded text-[18px]"
+                  className="material-symbols-rounded text-[17px]"
                 >
                   logout
                 </span>
-                Sign out
+                <span className="hidden sm:inline">Sign out</span>
               </button>
             </form>
           </div>
         </div>
-        <OwnerNav />
       </header>
-      <main id="main" className="mx-auto max-w-3xl px-5 py-8">
+
+      <main
+        id="main"
+        className="mx-auto max-w-[1340px] px-[30px] pb-20 pt-[26px] max-sm:px-4"
+      >
         {children}
       </main>
     </div>

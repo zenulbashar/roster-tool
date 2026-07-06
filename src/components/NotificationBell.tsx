@@ -147,9 +147,9 @@ export function NotificationBell({
               <form action={markAllNotificationsReadAction}>
                 <button
                   type="submit"
-                  className="text-xs font-medium text-[var(--color-brand)] underline underline-offset-2"
+                  className="text-[12.5px] font-semibold text-[#4D7C0F] hover:underline"
                 >
-                  Mark all as read
+                  Mark all read
                 </button>
               </form>
             ) : null}
@@ -178,10 +178,13 @@ export function NotificationBell({
                       <button
                         type="submit"
                         role="menuitem"
-                        className={`block w-full px-4 py-3 text-left hover:bg-[var(--color-bg)] ${
+                        style={
+                          n.isRead ? undefined : { borderLeftColor: chip.fg }
+                        }
+                        className={`block w-full border-l-[3px] px-4 py-3 text-left hover:bg-[var(--color-bg)] ${
                           n.isRead
-                            ? ""
-                            : "border-l-[3px] border-[var(--color-accent)] bg-[var(--color-accent-faint)]/40"
+                            ? "border-transparent opacity-[.62]"
+                            : "bg-white"
                         }`}
                       >
                         <span className="flex items-start gap-3">
@@ -216,15 +219,13 @@ export function NotificationBell({
             </ul>
           )}
 
-          <div className="border-t border-[var(--color-border-subtle)] px-3 py-2 text-center">
-            <Link
-              href="/app/notifications"
-              className="text-sm font-medium text-[var(--color-brand)] underline underline-offset-2"
-              onClick={() => setOpen(false)}
-            >
-              View all
-            </Link>
-          </div>
+          <Link
+            href="/app/notifications"
+            className="block border-t border-[var(--color-border-subtle)] bg-[var(--color-bg)] px-3 py-3 text-center text-[12.5px] font-semibold text-[#4D7C0F] hover:underline"
+            onClick={() => setOpen(false)}
+          >
+            See all notifications →
+          </Link>
         </div>
       ) : null}
     </div>

@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useActionState } from "react";
 import type { StockCheckResult } from "@/lib/stock-check-submission";
-import { Banner, Button, Card } from "@/components/ui";
+import { Banner } from "@/components/ui";
+import { kioskCls, KioskSuccess } from "@/components/KioskForm";
 
 const initial: StockCheckResult = { status: "idle" };
 
@@ -58,25 +59,15 @@ export function StockCheckForm({
   const [state, formAction, pending] = useActionState(action, initial);
 
   if (state.status === "success") {
-    return (
-      <Card className="mt-8 text-center">
-        <p className="text-xl font-bold">{state.message}</p>
-        <Link
-          href={backHref}
-          className="mt-6 inline-flex min-h-12 items-center justify-center rounded-lg bg-[var(--color-button)] px-6 py-3 text-base font-semibold text-[var(--color-button-ink)]"
-        >
-          Done
-        </Link>
-      </Card>
-    );
+    return <KioskSuccess message={state.message} backHref={backHref} />;
   }
 
   const groups = groupBySupplier(items);
 
   return (
-    <Card className="mt-6">
-      <h1 className="text-2xl font-bold">Stock check</h1>
-      <p className="mt-1 text-[var(--color-muted)]">
+    <div className={`mt-2 ${kioskCls.card}`}>
+      <h1 className={kioskCls.heading}>Stock check</h1>
+      <p className={kioskCls.sub}>
         {staffName}, mark what&apos;s running low or needs ordering. Leave the
         rest unchanged.
       </p>
@@ -88,41 +79,39 @@ export function StockCheckForm({
       ) : null}
 
       {items.length === 0 ? (
-        <p className="mt-4 text-[var(--color-muted)]">
+        <p className={`mt-4 ${kioskCls.muted}`}>
           No items to check yet. Your manager adds the items.
         </p>
       ) : (
-        <form action={formAction} className="mt-4 space-y-5">
+        <form action={formAction} className="mt-5 space-y-5">
           <input type="hidden" name="staffId" value={staffId} />
 
           {groups.map((group) => (
             <fieldset key={group.supplier} className="space-y-3">
-              <legend className="text-sm font-semibold text-[var(--color-muted)]">
+              <legend className="font-archivo text-[11px] font-bold uppercase tracking-[0.06em] text-[#9CA3AF]">
                 {group.supplier}
               </legend>
               {group.items.map((item) => (
                 <div
                   key={item.id}
-                  className="rounded-lg border border-[var(--color-line)] p-3"
+                  className="rounded-[12px] border border-[#2A3344] p-3"
                 >
-                  <p className="font-semibold">
+                  <p className="font-semibold text-white">
                     {item.name}
                     {item.unit ? (
-                      <span className="ml-1 font-normal text-[var(--color-muted)]">
+                      <span className="ml-1 font-normal text-[#9CA3AF]">
                         ({item.unit})
                       </span>
                     ) : null}
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <label className="block flex-1">
-                      <span className="mb-1 block text-xs font-semibold">
-                        Status
-                      </span>
+                      <span className={kioskCls.smallLabel}>Status</span>
                       <select
                         name={`status_${item.id}`}
                         defaultValue=""
                         aria-label={`${item.name} status`}
-                        className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 text-base"
+                        className={kioskCls.input}
                       >
                         {STATUS_OPTIONS.map((o) => (
                           <option key={o.value} value={o.value}>
@@ -132,14 +121,14 @@ export function StockCheckForm({
                       </select>
                     </label>
                     <label className="block flex-1">
-                      <span className="mb-1 block text-xs font-semibold">
+                      <span className={kioskCls.smallLabel}>
                         How much left? (optional)
                       </span>
                       <input
                         name={`qty_${item.id}`}
                         maxLength={40}
                         placeholder="e.g. 2 boxes"
-                        className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 text-base"
+                        className={kioskCls.input}
                         aria-label={`${item.name} quantity left`}
                       />
                     </label>
@@ -150,7 +139,7 @@ export function StockCheckForm({
           ))}
 
           <label className="block">
-            <span className="mb-1 block text-sm font-semibold">Your PIN</span>
+            <span className={kioskCls.label}>Your PIN</span>
             <input
               name="pin"
               type="password"
@@ -160,23 +149,24 @@ export function StockCheckForm({
               maxLength={4}
               required
               placeholder="••••"
-              className="block w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-3 text-center text-2xl tracking-[0.5em]"
+              className={kioskCls.pin}
               aria-label="Your 4-digit PIN"
             />
           </label>
           <div className="flex gap-3">
-            <Button type="submit" disabled={pending} className="flex-1">
-              {pending ? "Saving…" : "Submit stock check"}
-            </Button>
-            <Link
-              href={backHref}
-              className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-5 py-3 text-base font-semibold"
+            <button
+              type="submit"
+              disabled={pending}
+              className={kioskCls.primary}
             >
+              {pending ? "Saving…" : "Submit stock check"}
+            </button>
+            <Link href={backHref} className={kioskCls.cancel}>
               Cancel
             </Link>
           </div>
         </form>
       )}
-    </Card>
+    </div>
   );
 }
