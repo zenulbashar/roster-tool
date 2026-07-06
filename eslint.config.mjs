@@ -11,6 +11,8 @@ export default tseslint.config(
       "drizzle/**",
       "coverage/**",
       "next-env.d.ts",
+      // Design handoff reference bundle (prototype runtime, not app code).
+      "design/**",
     ],
   },
   js.configs.recommended,
