@@ -3806,15 +3806,21 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       return row ?? null;
     },
 
-    /** Persist a freshly refreshed access token (clears needs_reconnect). */
-    async updateXeroAccessToken(input: {
+    /**
+     * Persist freshly refreshed tokens (clears needs_reconnect). Xero ROTATES
+     * the refresh token on every refresh, so BOTH the access and refresh tokens
+     * are replaced here — unlike Google Drive, which keeps one refresh token.
+     */
+    async updateXeroTokens(input: {
       accessTokenEnc: string;
+      refreshTokenEnc: string;
       tokenExpiry: Date;
     }) {
       const [row] = await database
         .update(xeroConnections)
         .set({
           accessTokenEnc: input.accessTokenEnc,
+          refreshTokenEnc: input.refreshTokenEnc,
           tokenExpiry: input.tokenExpiry,
           needsReconnect: false,
           updatedAt: new Date(),

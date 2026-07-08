@@ -73,6 +73,55 @@ https://api.xero.com/connections` after auth.
 > strings, and the employee / earnings-rate / payroll-calendar response shapes.
 > These are confirmed before the client is finalised and reported at merge.
 
+### 2a. Source-verified against the official Xero OpenAPI spec + generated SDKs
+
+Verified from the authoritative machine-readable contract — the XeroAPI
+`Xero-OpenAPI` spec and the generated `xero-node` (`payroll-au`) / `xero-python`
+(`payrollau`) models — since the HTML docs 403 automated fetch:
+
+- **Timesheet verbs (AU Payroll 1.0):** `create_timesheet` = **POST /Timesheets**;
+  `update_timesheet` = **POST /Timesheets/{TimesheetID}**; `get_timesheet` = GET
+  /Timesheets/{TimesheetID}; `get_timesheets` = GET /Timesheets. **There is NO
+  `delete_timesheet` — the AU Payroll 1.0 API has no DELETE verb for timesheets,
+  and no `DELETED` status.** (See the cancel note below — this changes the
+  approved DELETE-based cancel.)
+- **`TimesheetStatus` enum (verbatim, exhaustive):** `DRAFT`, `PROCESSED`,
+  `APPROVED`, `REJECTED`, `REQUESTED`. **No `POSTED`, no `DELETED`.** We only ever
+  send `DRAFT`.
+- **`Timesheet` fields (exact JSON casing):** `TimesheetID`, `EmployeeID`,
+  `StartDate`, `EndDate`, `Status`, `Hours`, `TimesheetLines`, `UpdatedDateUTC`,
+  `ValidationErrors`.
+- **`TimesheetLine` fields:** `EarningsRateID` (string), `TrackingItemID`
+  (string, optional), **`NumberOfUnits` — an ARRAY of numbers, one entry per day
+  of the `StartDate…EndDate` period** (NOT a single number). So a 7-day weekly
+  period is a 7-element array of that day's hours.
+- **Date format:** Xero's proprietary MS-JSON `"/Date(<epoch-ms>)/"` (e.g.
+  `"/Date(1573621523465)/"`), NOT ISO — the client must serialise `StartDate`/
+  `EndDate` in this form.
+- **Read methods confirmed:** `get_employees` / `get_employee` (GET /Employees…),
+  `get_pay_items` (GET /PayItems → earnings rates), `get_payroll_calendars` /
+  `get_payroll_calendar` (GET /PayrollCalendars…). The employee's ordinary
+  earnings rate is read from the employee `PayTemplate`; the calendar drives the
+  period — **exact `PayTemplate`/`EarningsRates`/calendar sub-shapes are locked at
+  the mapping stage (§ build seq) before mapping code depends on them.**
+
+> **CANCEL — approved DELETE is not available (decision needed).** The plan's
+> approved cancel ("DELETE Timesheet, only while DRAFT") assumed an HTTP DELETE
+> that the AU Payroll 1.0 API does **not** expose. A DRAFT timesheet is **inert**
+> (never paid until a human APPROVES it into a pay run in Xero), so a leftover
+> draft has no payroll effect. Options for `cancelDraftPush`, all boundary-safe:
+> (A) **update the draft to empty** (POST /Timesheets/{id} with zero lines,
+> guarded on still-`DRAFT` → typed `XeroTimesheetAlreadyActioned` otherwise) so a
+> left-behind draft carries no hours; (B) **Roster-side cancel only** — mark our
+> row `cancelled` and instruct the owner to delete the draft in Xero (reinforcing
+> that drafts are inert); (C) **both** — zero it out AND mark cancelled + guide
+> the owner. Recommendation: **(C)**. Surfaced at the client+fake checkpoint for
+> sign-off before push/cancel (§ build seq) is built.
+
+Scopes: still requested as below; the `scope` field of the token response is
+stored as `authorised_scopes` and audited to prove `payroll.payruns` was never
+granted.
+
 Scopes requested: `openid profile email offline_access payroll.timesheets
 payroll.employees.read payroll.settings.read` — **never `payroll.payruns`**.
 
