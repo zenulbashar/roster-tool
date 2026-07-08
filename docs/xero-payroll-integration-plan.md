@@ -369,15 +369,47 @@ owner _confirms/activates_.
 (`listApprovedEntriesForExport(period)`) for **mapped** staff with a resolved
 earnings rate, in the **calendar-aligned** period. Pure, unit-tested aggregation
 (`src/lib/xero/timesheet-lines.ts`): approved entries → hours per staff per day →
-`TimesheetLines` (single ordinary rate, 2dp to match the CSV/report). Per
-employee → `createDraftTimesheet` (DRAFT + idempotency header); store
-`xero_timesheet_id`. Re-push updates the draft; if Xero reports it already
-`APPROVED`/`PROCESSED`, **do not overwrite** — "already processed in Xero." Skips
-(unmapped / no rate / open / unapproved) are shown, never silently dropped.
+per-day `timesheetLines` (2.0: one line per day, scalar `numberOfUnits`, single
+ordinary rate, 2dp to match the CSV/report). Per employee →
+`createDraftTimesheet` (status `Draft` + Idempotency-Key header); store
+`xero_timesheet_id`. Skips (unmapped / no rate / open / unapproved) are shown,
+never silently dropped.
 
-**Cancel:** per pushed row, "Remove draft from Xero" → `cancelDraftTimesheet`
-(DRAFT-only; typed already-actioned error); on success `xero_timesheet_push` →
-`cancelled`.
+**Re-push on 2.0 = DELETE-then-CREATE (no update fallback), and its gap must be
+designed in, not patched later.** 2.0 has no update-timesheet verb, so replacing
+a pushed draft means deleting the old one and creating a new one — two
+non-atomic external calls. This is the 2.0 equivalent of 1.0's create/update
+idempotency exposure (same failure class: a gap between two external calls;
+different shape because delete has **no** update fallback to degrade to). The
+`xero_timesheet_push` row must obey one INVARIANT: **`xero_timesheet_id` is
+non-null ⟺ a live Draft exists in Xero for that period.** Concretely, on re-push:
+
+1. Guard the existing draft is still `Draft` (`getTimesheet`); if a human already
+   `Approved`/`Completed` it in Xero, **stop** — "already actioned in Xero", never
+   delete/overwrite.
+2. `deleteTimesheet(old)`. If this throws, ABORT — the row stays `{draft, old-id}`
+   (the old draft still exists, so the pointer is still valid).
+3. The moment delete succeeds, **persist `xero_timesheet_id = NULL` before the
+   create call** — so the row can never point at a now-deleted id.
+4. `createDraftTimesheet(new)`. On success → `{status: draft, id: new-id,
+pushed_at}`. **On failure → `{status: failed, id: NULL}`**, surfaced as its
+   OWN distinct owner-facing state — _"Push failed — no draft currently exists in
+   Xero for this period. Re-push to create one."_ — NOT a pointer to the deleted
+   id and NOT a generic retry line. (A never-created first push is the same
+   observable state: `failed` + null id = no draft in Xero; the message is
+   identical and correct.)
+
+The row flips to the new draft ONLY after BOTH delete and create succeed. The
+deterministic Idempotency-Key must be **varied per create attempt** (e.g. suffix
+an attempt/nonce) so a replay after a delete cannot return Xero's cached response
+for the now-deleted draft — the durable UNIQUE `(business, staff, period_start,
+period_end)` push row remains the long-window de-dupe guard. (Locked here; built
+in #16.)
+
+**Cancel:** per pushed row, "Remove draft from Xero" → guard it's still `Draft`
+(`getTimesheet`; typed `XeroTimesheetAlreadyActioned` otherwise) → real
+`deleteTimesheet` → on success `xero_timesheet_push` → `cancelled` with
+`xero_timesheet_id = NULL` (same invariant: no live draft ⇒ null id).
 
 **Confirmation banner (single-rate caveat — shown on the pre-push preview _and_
 after the push):**
