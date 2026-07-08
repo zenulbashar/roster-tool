@@ -111,21 +111,42 @@ Verified from the authoritative machine-readable contract — the XeroAPI
 > (never paid until a human APPROVES it into a pay run in Xero), so a leftover
 > draft has no payroll effect.
 >
-> **Was Payroll 2.0 a viable swap for just create/cancel? No — investigated and
-> ruled out.** There is **no AU Payroll 2.0 timesheet surface.** The richer 2.0
-> timesheet lifecycle (real `DELETE Timesheet`, `POST …/Approve`, `POST
-…/RevertToDraft`, per-line CRUD) exists **only for Payroll NZ and UK**
-> (`payroll.xro/2.0`), which are **region-bound to NZ/UK organisations and reject
-> AU tenants** — an AU org's payroll is served solely by `payroll.xro/1.0`. The
-> models also differ fundamentally: NZ/UK `TimesheetLine` is
-> `{ Date: ISO, EarningsRateID, NumberOfUnits: scalar }` (one line per day),
-> versus AU 1.0's single line with `NumberOfUnits: number[]` + MS-JSON dates — so
-> it is not a contained client-method swap even setting the region block aside.
-> Bonus: staying on AU 1.0 is **boundary-SAFER** — AU 1.0 has **no Approve
-> Timesheet endpoint at all**, so there is nothing to deliberately exclude beyond
-> pay-runs; on 2.0 we would additionally have had to withhold `Approve`/`Revert`.
+> **Was Payroll 2.0 a viable swap for just create/cancel? Not for this build —
+> but the "no AU 2.0 at all" claim is NOT fully verified (OPEN ITEM below).**
+> What is verified from primary sources: the AU spec is a single
+> `xero-payroll-au.yaml` titled **"Xero Payroll AU API" v16.0.0** on the
+> `payroll.xro/1.0` base, and the **complete** `xero-python` `payrollau` method
+> list exposes timesheets as **create / get / update only — no delete, no
+> approve**. The richer lifecycle (real `DELETE`, `POST …/Approve`,
+> `RevertToDraft`, per-line CRUD) is what the **NZ/UK 2.0** specs carry, and their
+> `TimesheetLine` is `{ Date: ISO, EarningsRateID, NumberOfUnits: scalar }` (one
+> line per day) versus AU 1.0's single line with `NumberOfUnits: number[]` +
+> MS-JSON dates — a genuinely different payload/aggregation shape, so even if an
+> AU 2.0 timesheet surface exists it would NOT be a drop-in client-method swap.
 >
-> **Resolution — Option A** (owner's decision, confirmed after the 2.0 check):
+> **⚠️ DISCREPANCY / OPEN ITEM — a Xero changelog entry reportedly announces
+> "AU Timesheets in the Payroll 2.0 API."** I could not retrieve the verbatim
+> dated entry to reconcile it: `developer.xero.com` (changelog + the AU Payroll
+> 2.0 overview) **403s automated fetch**, the **Wayback Machine is blocked** in
+> this environment, and web-search returns only AI summaries (which have asserted
+> BOTH "no AU 2.0" and "AU 2.0 added" — unreliable). So I have **NOT** confirmed
+> either (a) the entry is stale/withdrawn or (b) AU 2.0 timesheets exist under
+> different conditions (feature-flag / org opt-in / a distinct capability). My
+> earlier phrasing that AU orgs are "region-blocked from 2.0 entirely" was an
+> **overreach** — downgrade to: _a usable AU 2.0 timesheet surface is unconfirmed
+> from the fetchable primary sources._ **Re-verify via an actual LIVE API call**
+> against a real AU demo-company connection once one exists (post-OAuth-connect,
+> before any real business goes live on this feature) — probe whether
+> `GET`/`DELETE` on a Payroll 2.0 timesheets endpoint is accepted for an AU
+> tenant. Do NOT block current 1.0 progress on this. If (b) turns out true, a
+> future revision can swap ONLY the create/cancel client methods to 2.0 to regain
+> a real `DELETE` — but that revision must exclude `Approve`/`RevertToDraft` as
+> deliberately as pay-runs (approving a timesheet = finalising pay classification,
+> a boundary breach). Note AU 1.0 is boundary-SIMPLER here: it has no `Approve`
+> endpoint to withhold at all.
+>
+> **Resolution — Option A** (owner's decision; stands regardless of how the
+> changelog reconciles, since 1.0 is unambiguously real and already built/tested):
 > `cancelDraftPush` = re-read the timesheet → if not still `DRAFT` throw
 > `XeroTimesheetAlreadyActioned` → **update it to empty (zero lines/hours)** via
 > the SAME `updateDraftTimesheet` mechanism re-push uses → mark our row
