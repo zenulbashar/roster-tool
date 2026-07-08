@@ -105,18 +105,32 @@ Verified from the authoritative machine-readable contract — the XeroAPI
   period — **exact `PayTemplate`/`EarningsRates`/calendar sub-shapes are locked at
   the mapping stage (§ build seq) before mapping code depends on them.**
 
-> **CANCEL — approved DELETE is not available (decision needed).** The plan's
+> **CANCEL — approved DELETE is not available; RESOLVED as Option A.** The
 > approved cancel ("DELETE Timesheet, only while DRAFT") assumed an HTTP DELETE
-> that the AU Payroll 1.0 API does **not** expose. A DRAFT timesheet is **inert**
+> the AU Payroll 1.0 API does **not** expose. A DRAFT timesheet is **inert**
 > (never paid until a human APPROVES it into a pay run in Xero), so a leftover
-> draft has no payroll effect. Options for `cancelDraftPush`, all boundary-safe:
-> (A) **update the draft to empty** (POST /Timesheets/{id} with zero lines,
-> guarded on still-`DRAFT` → typed `XeroTimesheetAlreadyActioned` otherwise) so a
-> left-behind draft carries no hours; (B) **Roster-side cancel only** — mark our
-> row `cancelled` and instruct the owner to delete the draft in Xero (reinforcing
-> that drafts are inert); (C) **both** — zero it out AND mark cancelled + guide
-> the owner. Recommendation: **(C)**. Surfaced at the client+fake checkpoint for
-> sign-off before push/cancel (§ build seq) is built.
+> draft has no payroll effect.
+>
+> **Was Payroll 2.0 a viable swap for just create/cancel? No — investigated and
+> ruled out.** There is **no AU Payroll 2.0 timesheet surface.** The richer 2.0
+> timesheet lifecycle (real `DELETE Timesheet`, `POST …/Approve`, `POST
+…/RevertToDraft`, per-line CRUD) exists **only for Payroll NZ and UK**
+> (`payroll.xro/2.0`), which are **region-bound to NZ/UK organisations and reject
+> AU tenants** — an AU org's payroll is served solely by `payroll.xro/1.0`. The
+> models also differ fundamentally: NZ/UK `TimesheetLine` is
+> `{ Date: ISO, EarningsRateID, NumberOfUnits: scalar }` (one line per day),
+> versus AU 1.0's single line with `NumberOfUnits: number[]` + MS-JSON dates — so
+> it is not a contained client-method swap even setting the region block aside.
+> Bonus: staying on AU 1.0 is **boundary-SAFER** — AU 1.0 has **no Approve
+> Timesheet endpoint at all**, so there is nothing to deliberately exclude beyond
+> pay-runs; on 2.0 we would additionally have had to withhold `Approve`/`Revert`.
+>
+> **Resolution — Option A** (owner's decision, confirmed after the 2.0 check):
+> `cancelDraftPush` = re-read the timesheet → if not still `DRAFT` throw
+> `XeroTimesheetAlreadyActioned` → **update it to empty (zero lines/hours)** via
+> the SAME `updateDraftTimesheet` mechanism re-push uses → mark our row
+> `cancelled` and tell the owner to delete the now-empty draft in Xero
+> (reinforcing that drafts are inert). Guard-then-zero-then-mark-cancelled.
 
 Scopes: still requested as below; the `scope` field of the token response is
 stored as `authorised_scopes` and audited to prove `payroll.payruns` was never
