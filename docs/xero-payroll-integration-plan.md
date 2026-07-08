@@ -105,53 +105,67 @@ Verified from the authoritative machine-readable contract — the XeroAPI
   period — **exact `PayTemplate`/`EarningsRates`/calendar sub-shapes are locked at
   the mapping stage (§ build seq) before mapping code depends on them.**
 
-> **CANCEL — approved DELETE is not available; RESOLVED as Option A.** The
-> approved cancel ("DELETE Timesheet, only while DRAFT") assumed an HTTP DELETE
-> the AU Payroll 1.0 API does **not** expose. A DRAFT timesheet is **inert**
-> (never paid until a human APPROVES it into a pay run in Xero), so a leftover
-> draft has no payroll effect.
+> **CANCEL + API-VERSION — REVERSAL, corrected with a dated primary source.**
+> An earlier revision of this doc claimed there is "no AU Payroll 2.0 timesheet
+> surface" and that AU orgs are "region-blocked from 2.0 entirely." **That was
+> WRONG.** It was sourced from the wrong SDK module — `xero-python`'s `payrollau`
+> binding, which is the **pre-March-2026, 1.0-specific** binding — not the surface
+> the update shipped on. The owner reconciled it against Xero's own **dated
+> changelog entry (6 March 2026, unretracted): "AU Timesheets in the Payroll 2.0
+> API"** — a primary source I could not reach (developer.xero.com 403s automated
+> fetch; the Wayback Machine is blocked here). **AU Payroll 2.0 timesheets are
+> real**, and with them the originally-approved **real `DELETE`** is back on the
+> table.
 >
-> **Was Payroll 2.0 a viable swap for just create/cancel? Not for this build —
-> but the "no AU 2.0 at all" claim is NOT fully verified (OPEN ITEM below).**
-> What is verified from primary sources: the AU spec is a single
-> `xero-payroll-au.yaml` titled **"Xero Payroll AU API" v16.0.0** on the
-> `payroll.xro/1.0` base, and the **complete** `xero-python` `payrollau` method
-> list exposes timesheets as **create / get / update only — no delete, no
-> approve**. The richer lifecycle (real `DELETE`, `POST …/Approve`,
-> `RevertToDraft`, per-line CRUD) is what the **NZ/UK 2.0** specs carry, and their
-> `TimesheetLine` is `{ Date: ISO, EarningsRateID, NumberOfUnits: scalar }` (one
-> line per day) versus AU 1.0's single line with `NumberOfUnits: number[]` +
-> MS-JSON dates — a genuinely different payload/aggregation shape, so even if an
-> AU 2.0 timesheet surface exists it would NOT be a drop-in client-method swap.
+> **AU 2.0 wire shape — verified today from the fetchable primary artifacts**
+> (the generated `xero-node` `payroll-nz` 2.0 models, which are the UNIFIED 2.0
+> contract AU joined):
 >
-> **⚠️ DISCREPANCY / OPEN ITEM — a Xero changelog entry reportedly announces
-> "AU Timesheets in the Payroll 2.0 API."** I could not retrieve the verbatim
-> dated entry to reconcile it: `developer.xero.com` (changelog + the AU Payroll
-> 2.0 overview) **403s automated fetch**, the **Wayback Machine is blocked** in
-> this environment, and web-search returns only AI summaries (which have asserted
-> BOTH "no AU 2.0" and "AU 2.0 added" — unreliable). So I have **NOT** confirmed
-> either (a) the entry is stale/withdrawn or (b) AU 2.0 timesheets exist under
-> different conditions (feature-flag / org opt-in / a distinct capability). My
-> earlier phrasing that AU orgs are "region-blocked from 2.0 entirely" was an
-> **overreach** — downgrade to: _a usable AU 2.0 timesheet surface is unconfirmed
-> from the fetchable primary sources._ **Re-verify via an actual LIVE API call**
-> against a real AU demo-company connection once one exists (post-OAuth-connect,
-> before any real business goes live on this feature) — probe whether
-> `GET`/`DELETE` on a Payroll 2.0 timesheets endpoint is accepted for an AU
-> tenant. Do NOT block current 1.0 progress on this. If (b) turns out true, a
-> future revision can swap ONLY the create/cancel client methods to 2.0 to regain
-> a real `DELETE` — but that revision must exclude `Approve`/`RevertToDraft` as
-> deliberately as pay-runs (approving a timesheet = finalising pay classification,
-> a boundary breach). Note AU 1.0 is boundary-SIMPLER here: it has no `Approve`
-> endpoint to withhold at all.
+> - **`Timesheet`:** `{ timesheetID?, payrollCalendarID (required), employeeID
+(required), startDate, endDate, status, totalHours?, timesheetLines[] }`.
+> - **Dates are ISO `YYYY-MM-DD` strings** (NOT the 1.0 MS-JSON `/Date()/`).
+> - **`TimesheetLine`:** `{ date (ISO YYYY-MM-DD), earningsRateID, numberOfUnits
+(SCALAR number), trackingItemID? }` — **one line PER DAY**, versus 1.0's
+>   single line with `NumberOfUnits: number[]`.
+> - **`status` enum (2.0):** `Draft`, `Approved`, `Completed`, `Requested`
+>   (title-case — so we hard-code `"Draft"`, not 1.0's `"DRAFT"`).
+> - **Lifecycle endpoints (stable NZ/UK 2.0 contract):** `POST /Timesheets`,
+>   `GET /Timesheets/{id}`, `POST /Timesheets/{id}/Lines` (+ line PUT/DELETE),
+>   **`DELETE /Timesheets/{id}`** (the real cancel), **`POST /Timesheets/{id}/Approve`**,
+>   **`POST /Timesheets/{id}/RevertToDraft`**. Base is `payroll.xro/2.0`.
 >
-> **Resolution — Option A** (owner's decision; stands regardless of how the
-> changelog reconciles, since 1.0 is unambiguously real and already built/tested):
-> `cancelDraftPush` = re-read the timesheet → if not still `DRAFT` throw
-> `XeroTimesheetAlreadyActioned` → **update it to empty (zero lines/hours)** via
-> the SAME `updateDraftTimesheet` mechanism re-push uses → mark our row
-> `cancelled` and tell the owner to delete the now-empty draft in Xero
-> (reinforcing that drafts are inert). Guard-then-zero-then-mark-cancelled.
+> **⚠️ Still to confirm before building 2.0 (behind the 403 for me; the owner has
+> doc access, or confirm at first live AU connect):** (1) the exact AU-2.0 base
+> path + whether AU mirrors the unified shape 1:1 or adds AU-specific fields; and
+> (2) **the OAuth scope** — whether `payroll.timesheets` alone covers AU 2.0 or a
+> version-specific scope is required. Low risk to adjust: **no one has connected
+> yet**, so there is no re-consent to manage — we just set the right scope before
+> first connect.
+>
+> **Boundary on 2.0 is BIGGER and must be honoured:** 2.0 exposes `Approve` +
+> `RevertToDraft`. The narrow client must EXCLUDE both as deliberately as pay-runs
+> (approving a timesheet = finalising pay classification — a boundary breach),
+> with a guard test asserting no such method exists (mirroring the pay-run guard).
+>
+> **Rework cost if we switch (sized against what's already built + tested):**
+> BOUNDED. Changes touch only `src/lib/xero/client.ts` timesheet methods
+> (2.0 base path, ISO dates, per-day scalar lines, `payrollCalendarID`, status
+> `"Draft"`, ADD real `deleteTimesheet`) + `src/lib/xero/tokens.ts` (2.0 base
+> const; timesheets stop using `toXeroMsDate`) + their two tests (+ the new
+> Approve/Revert guard test) + possibly the `XERO_SCOPES` constant. **UNCHANGED:**
+> the migration/schema (all GUID/date/double columns are version-agnostic), the
+> connection service + OAuth client methods (OAuth is identical across versions),
+> the delegated invite, and `crypto`. The employee/earnings/calendar reads (#15)
+> and the aggregation-to-lines (#16) are **not built yet**, so targeting 2.0 there
+> is a build choice, not rework — the aggregation just emits per-day lines.
+>
+> **DECISION (pending owner):** if the owner confirms the two open AU-specific
+> items, **switch to 2.0** and restore the originally-approved real `DELETE`
+> cancel (guard it's still `Draft` → `DELETE /Timesheets/{id}`; else
+> `XeroTimesheetAlreadyActioned`). The Option A zero-out workaround is then
+> dropped. If an AU-specific quirk makes it ripple beyond the bounded surface
+> above, fall back to **1.0 + Option A** (guard-then-zero-then-mark-cancelled via
+> `updateDraftTimesheet`), which is already built and tested.
 
 Scopes: still requested as below; the `scope` field of the token response is
 stored as `authorised_scopes` and audited to prove `payroll.payruns` was never
