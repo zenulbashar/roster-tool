@@ -1287,6 +1287,207 @@ export const staffDocuments = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
+/* Xero Payroll AU integration                                                */
+/*                                                                            */
+/* Owner connects their business's Xero org (Payroll module) so approved      */
+/* hours can be pushed to Xero as DRAFT timesheets. See                       */
+/* docs/xero-payroll-integration-plan.md. HARD BOUNDARY: draft timesheets     */
+/* only, from approved hours only; the app has NO pay-run capability (no code, */
+/* no `payroll.payruns` scope) and only READ access to employees (no bank/tax/ */
+/* super writes). A human always finalises pay inside Xero.                   */
+/* -------------------------------------------------------------------------- */
+
+// A connection is stored inactive (pending_confirmation) until the OWNER
+// confirms the connected org's name — the catch for a delegated-link that
+// connected the wrong org. Only `active` connections are eligible to push.
+export const xeroConnectionStatus = pgEnum("xero_connection_status", [
+  "pending_confirmation",
+  "active",
+]);
+
+// The lifecycle of one pushed DRAFT timesheet, from Roster's side.
+export const xeroPushStatus = pgEnum("xero_push_status", [
+  "draft",
+  "failed",
+  "cancelled",
+]);
+
+/**
+ * One Xero connection per business (UNIQUE `business_id`, cascade). Mirrors
+ * `google_drive_connection`: OAuth tokens AES-256-GCM encrypted at rest (never
+ * plaintext, never sent to the client, never logged), refreshed via
+ * `token_expiry`, `needs_reconnect` set on `invalid_grant`. `status` gates
+ * eligibility — a push is refused unless `active`. Audit columns record who/
+ * how the connection was made (incl. via a delegated bookkeeper invite) and who
+ * confirmed it. `payroll.payruns` is never requested; `authorised_scopes` is
+ * recorded for audit of exactly what was granted.
+ */
+export const xeroConnections = pgTable(
+  "xero_connection",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .unique()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    // The connected Xero organisation (tenant) + display fields.
+    xeroTenantId: text("xero_tenant_id").notNull(),
+    orgName: text("org_name").notNull(),
+    connectedAccountEmail: text("connected_account_email").notNull(),
+    // OAuth tokens — AES-256-GCM ciphertext ONLY. Never plaintext/logged.
+    accessTokenEnc: text("access_token_enc").notNull(),
+    refreshTokenEnc: text("refresh_token_enc").notNull(),
+    tokenExpiry: timestamp("token_expiry", { withTimezone: true }).notNull(),
+    // Exactly which scopes Xero granted — recorded so we can audit that
+    // `payroll.payruns` was never among them.
+    authorisedScopes: text("authorised_scopes"),
+    needsReconnect: boolean("needs_reconnect").notNull().default(false),
+    status: xeroConnectionStatus("status")
+      .notNull()
+      .default("pending_confirmation"),
+    // Audit: how the connection was established. `connected_via_invite_id` is a
+    // soft reference to xero_connect_invite (the delegated bookkeeper link).
+    // IP/user-agent are captured at the OAuth callback for security audit.
+    connectedViaInviteId: uuid("connected_via_invite_id"),
+    connectedIp: text("connected_ip"),
+    connectedUserAgent: text("connected_user_agent"),
+    // Who activated it (the owner confirming the org name) and when.
+    confirmedByUserId: text("confirmed_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("xero_connection_business_idx").on(t.businessId)],
+);
+
+/**
+ * Maps a Roster staff member to a Xero employee (pull-and-confirm; never a
+ * silent guess). `earnings_rate_id` is the ordinary earnings rate for their
+ * timesheet lines (auto-resolved from the employee's pay template, owner-
+ * editable); null means unresolved → that person is blocked from push.
+ * `payroll_calendar_id` is snapshotted so the push period aligns to how Xero
+ * will pay them. One mapping per staff member per business.
+ */
+export const xeroEmployeeMaps = pgTable(
+  "xero_employee_map",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    staffMemberId: uuid("staff_member_id")
+      .notNull()
+      .references(() => staffMembers.id, { onDelete: "cascade" }),
+    xeroEmployeeId: text("xero_employee_id").notNull(),
+    xeroEmployeeName: text("xero_employee_name").notNull(),
+    earningsRateId: text("earnings_rate_id"),
+    payrollCalendarId: text("payroll_calendar_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("xero_employee_map_business_staff_unique").on(
+      t.businessId,
+      t.staffMemberId,
+    ),
+    index("xero_employee_map_business_idx").on(t.businessId),
+  ],
+);
+
+/**
+ * Audit + idempotency record of one DRAFT timesheet pushed to Xero, per staff
+ * member per calendar-aligned period. The UNIQUE `(business_id, staff_member_id,
+ * period_start, period_end)` is the durable long-window de-dupe guard behind
+ * Xero's own `Idempotency-Key` (which has a short retention). `idempotency_key`
+ * is the deterministic key sent to Xero; `payload_hash` detects whether the
+ * pushed hours changed since last time.
+ */
+export const xeroTimesheetPushes = pgTable(
+  "xero_timesheet_push",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    staffMemberId: uuid("staff_member_id")
+      .notNull()
+      .references(() => staffMembers.id, { onDelete: "cascade" }),
+    xeroEmployeeId: text("xero_employee_id").notNull(),
+    // Inclusive calendar-aligned period (YYYY-MM-DD), derived from the
+    // employee's Xero payroll calendar — never an arbitrary owner date range.
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    // The Xero timesheet id once created; null while a push is `failed`.
+    xeroTimesheetId: text("xero_timesheet_id"),
+    status: xeroPushStatus("status").notNull().default("draft"),
+    hoursTotal: doublePrecision("hours_total").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    pushedAt: timestamp("pushed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("xero_timesheet_push_period_unique").on(
+      t.businessId,
+      t.staffMemberId,
+      t.periodStart,
+      t.periodEnd,
+    ),
+    index("xero_timesheet_push_business_idx").on(t.businessId),
+  ],
+);
+
+/**
+ * A delegated, single-use "Connect Xero" link the OWNER mints and emails to a
+ * bookkeeper/accountant (who must be a Xero payroll administrator to authorise).
+ * Only the SHA-256 `token_hash` is stored (like the kiosk/notices links); the
+ * raw token lives in the emailed link. Single-use (`consumed_at`), 72h expiry,
+ * revocable (`revoked_at`). Consumption is a SINGLE atomic UPDATE in the OAuth
+ * callback (…WHERE consumed_at IS NULL AND revoked_at IS NULL AND expires_at >
+ * now() RETURNING id) so a mid-flow revoke stops completion and two concurrent
+ * completions can't both succeed. IP/user-agent + the sent-to email are recorded
+ * for security audit.
+ */
+export const xeroConnectInvites = pgTable(
+  "xero_connect_invite",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    sentToEmail: text("sent_to_email").notNull(),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    consumedIp: text("consumed_ip"),
+    consumedUserAgent: text("consumed_user_agent"),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("xero_connect_invite_business_idx").on(t.businessId)],
+);
+
+/* -------------------------------------------------------------------------- */
 /* Relations (for relational queries)                                         */
 /* -------------------------------------------------------------------------- */
 

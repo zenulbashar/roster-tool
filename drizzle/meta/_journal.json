@@ -134,6 +134,13 @@
       "when": 1783308215573,
       "tag": "0018_conscious_microchip",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1783500229016,
+      "tag": "0019_bitter_ravenous",
+      "breakpoints": true
     }
   ]
 }
