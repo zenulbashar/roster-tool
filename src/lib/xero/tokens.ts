@@ -4,6 +4,19 @@
  */
 
 /**
+ * ⚠️ LIVE-VERIFY CONSTANT (1 of 2) — the OAuth scope for AU Payroll 2.0
+ * timesheets. Isolated to a SINGLE named constant because it is one of only two
+ * Xero facts not confirmable from the fetchable sources (the AU 2.0 docs 403
+ * automated fetch, and web summaries proved unreliable on this specific detail
+ * across three separate checks). Almost certainly `payroll.timesheets` (Xero's
+ * granular scopes are not version-suffixed), but it is LOCKED at the first live
+ * AU demo-company connect — the agreed re-verify point — not guessed from docs.
+ * No re-consent risk: no owner has connected yet, so changing it before launch
+ * is free. Everything else is built to the verified 2.0 shape.
+ */
+export const XERO_TIMESHEET_SCOPE = "payroll.timesheets";
+
+/**
  * The scopes Roster requests. Read/timesheet-write ONLY — deliberately NEVER
  * `payroll.payruns` (the app has no pay-run capability at all). `offline_access`
  * yields a refresh token; `openid email` populate the id_token's email claim we
@@ -16,7 +29,7 @@ export const XERO_SCOPES = [
   "profile",
   "email",
   "offline_access",
-  "payroll.timesheets",
+  XERO_TIMESHEET_SCOPE,
   "payroll.employees.read",
   "payroll.settings.read",
 ] as const;
@@ -28,8 +41,18 @@ export const XERO_AUTHORIZE_URL =
   "https://login.xero.com/identity/connect/authorize";
 export const XERO_TOKEN_URL = "https://identity.xero.com/connect/token";
 export const XERO_CONNECTIONS_URL = "https://api.xero.com/connections";
-/** AU Payroll 1.0 base — Accounting is api.xro/2.0; these never overlap. */
-export const XERO_PAYROLL_AU_BASE = "https://api.xero.com/payroll.xro/1.0";
+
+/**
+ * ⚠️ LIVE-VERIFY CONSTANT (2 of 2) — base path for AU Payroll 2.0 timesheet
+ * calls. This is the verified UNIFIED 2.0 base; isolated here as the SINGLE
+ * point every timesheet client method builds its URL from, so it is the one
+ * place to lock at the first live AU demo-company connect. Base-path + scope
+ * are the ONLY two details deferred to live verification — every other 2.0 wire
+ * detail (ISO dates, payrollCalendarID, scalar per-day numberOfUnits, title-case
+ * Draft, the DELETE/Approve/Revert lifecycle, the `{ timesheet }` envelope) is
+ * confirmed from the generated 2.0 SDK models.
+ */
+export const XERO_TIMESHEET_BASE_PATH = "https://api.xero.com/payroll.xro/2.0";
 
 /**
  * A hard guard: no scope Roster ever requests or accepts may grant pay-run
@@ -97,14 +120,19 @@ export function emailFromIdToken(idToken: string | undefined | null): string {
 }
 
 /**
- * Serialise a calendar date (YYYY-MM-DD, treated as a UTC wall date) into
- * Xero's proprietary MS-JSON date format `"/Date(<epoch-ms>)/"`. AU Payroll 1.0
- * uses this, not ISO. Timesheet StartDate/EndDate go through here.
+ * Validate + return a calendar date (YYYY-MM-DD) for a Payroll 2.0 timesheet.
+ * 2.0 uses plain ISO date strings (NOT 1.0's MS-JSON `/Date()/`), which is
+ * exactly what Roster already stores, so this is a strict-format pass-through —
+ * the SINGLE point where a timesheet date is emitted. Rejects a malformed or
+ * impossible date (so a bad value never reaches Xero).
  */
-export function toXeroMsDate(isoDate: string): string {
+export function toXeroTimesheetDate(isoDate: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) {
+    throw new Error(`Invalid ISO date for Xero timesheet: ${isoDate}`);
+  }
   const ms = Date.parse(`${isoDate}T00:00:00.000Z`);
   if (Number.isNaN(ms)) {
-    throw new Error(`Invalid date for Xero serialisation: ${isoDate}`);
+    throw new Error(`Invalid ISO date for Xero timesheet: ${isoDate}`);
   }
-  return `/Date(${ms})/`;
+  return isoDate;
 }

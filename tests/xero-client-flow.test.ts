@@ -79,13 +79,13 @@ class FakeXeroClient implements XeroClient {
     return this.tenants;
   }
   async createDraftTimesheet(): Promise<XeroTimesheetResult> {
-    return { timesheetId: "ts-1", status: "DRAFT" };
+    return { timesheetId: "ts-1", status: "Draft" };
   }
   async getTimesheet(): Promise<XeroTimesheetResult> {
-    return { timesheetId: "ts-1", status: "DRAFT" };
+    return { timesheetId: "ts-1", status: "Draft" };
   }
-  async updateDraftTimesheet(): Promise<XeroTimesheetResult> {
-    return { timesheetId: "ts-1", status: "DRAFT" };
+  async deleteTimesheet(): Promise<void> {
+    /* no-op fake */
   }
 }
 
@@ -185,12 +185,12 @@ describe("xero connection service", () => {
   });
 });
 
-describe("xero client DRAFT-timesheet boundary (real client, stubbed fetch)", () => {
+describe("xero client DRAFT-timesheet boundary (real client, Payroll 2.0)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("always POSTs Status DRAFT with a per-day NumberOfUnits array + Idempotency-Key", async () => {
+  it("always POSTs status Draft to the 2.0 endpoint with ISO per-day scalar lines + Idempotency-Key", async () => {
     let captured: { url: string; init: RequestInit } | null = null;
     vi.stubGlobal(
       "fetch",
@@ -198,7 +198,7 @@ describe("xero client DRAFT-timesheet boundary (real client, stubbed fetch)", ()
         captured = { url, init };
         return new Response(
           JSON.stringify({
-            Timesheets: [{ TimesheetID: "ts-99", Status: "DRAFT" }],
+            timesheet: { timesheetID: "ts-99", status: "Draft" },
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
@@ -206,11 +206,15 @@ describe("xero client DRAFT-timesheet boundary (real client, stubbed fetch)", ()
     );
 
     const input: XeroDraftTimesheetInput = {
+      payrollCalendarId: "cal-1",
       employeeId: "emp-1",
       startDate: "2026-07-06",
       endDate: "2026-07-12",
       earningsRateId: "rate-1",
-      numberOfUnits: [8, 8, 8, 8, 8, 0, 0],
+      lines: [
+        { date: "2026-07-06", numberOfUnits: 8 },
+        { date: "2026-07-07", numberOfUnits: 7.5 },
+      ],
     };
     const result = await xeroClient.createDraftTimesheet(
       "access-token",
@@ -219,24 +223,85 @@ describe("xero client DRAFT-timesheet boundary (real client, stubbed fetch)", ()
       "idem-key-abc",
     );
     expect(result.timesheetId).toBe("ts-99");
+    expect(result.status).toBe("Draft");
 
     expect(captured).not.toBeNull();
     const { url, init } = captured!;
-    expect(url).toBe("https://api.xero.com/payroll.xro/1.0/Timesheets");
+    expect(url).toBe("https://api.xero.com/payroll.xro/2.0/Timesheets");
     const headers = init.headers as Record<string, string>;
     expect(headers["Xero-Tenant-Id"]).toBe("tenant-1");
     expect(headers["Idempotency-Key"]).toBe("idem-key-abc");
     expect(headers["Authorization"]).toBe("Bearer access-token");
 
     const body = JSON.parse(init.body as string);
-    const ts = body.Timesheets[0];
-    expect(ts.Status).toBe("DRAFT"); // <-- the boundary
-    expect(ts.EmployeeID).toBe("emp-1");
-    expect(ts.StartDate).toMatch(/^\/Date\(\d+\)\/$/);
-    expect(ts.EndDate).toMatch(/^\/Date\(\d+\)\/$/);
-    expect(ts.TimesheetLines[0].EarningsRateID).toBe("rate-1");
-    expect(ts.TimesheetLines[0].NumberOfUnits).toEqual([8, 8, 8, 8, 8, 0, 0]);
+    expect(body.status).toBe("Draft"); // <-- the boundary
+    expect(body.payrollCalendarID).toBe("cal-1");
+    expect(body.employeeID).toBe("emp-1");
+    // ISO dates, NOT MS-JSON /Date()/.
+    expect(body.startDate).toBe("2026-07-06");
+    expect(body.endDate).toBe("2026-07-12");
+    // One line PER DAY, scalar numberOfUnits, single ordinary earnings rate.
+    expect(body.timesheetLines).toHaveLength(2);
+    expect(body.timesheetLines[0]).toEqual({
+      date: "2026-07-06",
+      earningsRateID: "rate-1",
+      numberOfUnits: 8,
+    });
+    expect(body.timesheetLines[1].numberOfUnits).toBe(7.5);
     // The payload has no way to express any other status.
-    expect(JSON.stringify(body)).not.toMatch(/POSTED|APPROVED|PROCESSED/);
+    expect(JSON.stringify(body)).not.toMatch(/Approved|Completed|Requested/);
+  });
+
+  it("deleteTimesheet issues a real DELETE and treats 404 as already-gone", async () => {
+    const calls: Array<{ url: string; method?: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        calls.push({ url, method: init.method });
+        return new Response(null, { status: 404 }); // already gone → success
+      }),
+    );
+    await expect(
+      xeroClient.deleteTimesheet("access-token", "tenant-1", "ts-1"),
+    ).resolves.toBeUndefined();
+    expect(calls[0]!.method).toBe("DELETE");
+    expect(calls[0]!.url).toBe(
+      "https://api.xero.com/payroll.xro/2.0/Timesheets/ts-1",
+    );
+  });
+
+  it("BOUNDARY: the client object exposes NO pay-run, approve, revert, or employee-write method", () => {
+    // These must not merely be off — they must NOT EXIST on the surface. If
+    // anyone adds one, this fails. Mirrors the pay-run guard for the 2.0
+    // Approve/RevertToDraft lifecycle a human must perform inside Xero.
+    const surface = xeroClient as unknown as Record<string, unknown>;
+    for (const forbidden of [
+      "approveTimesheet",
+      "approve",
+      "revertTimesheet",
+      "revertTimesheetToDraft",
+      "postPayRun",
+      "createPayRun",
+      "updatePayRun",
+      "createEmployee",
+      "updateEmployee",
+      "updateEmployeeBankAccount",
+      "updateTaxDeclaration",
+    ]) {
+      expect(surface[forbidden]).toBeUndefined();
+    }
+    // What it DOES expose: connection plumbing + draft create/get/delete only.
+    expect(typeof xeroClient.createDraftTimesheet).toBe("function");
+    expect(typeof xeroClient.getTimesheet).toBe("function");
+    expect(typeof xeroClient.deleteTimesheet).toBe("function");
+    expect(Object.keys(xeroClient)).toEqual([
+      "buildAuthUrl",
+      "exchangeCode",
+      "refreshAccessToken",
+      "getConnections",
+      "createDraftTimesheet",
+      "getTimesheet",
+      "deleteTimesheet",
+    ]);
   });
 });

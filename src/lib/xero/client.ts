@@ -11,9 +11,9 @@ import {
   buildXeroAuthUrl,
   emailFromIdToken,
   scopesIncludePayrun,
-  toXeroMsDate,
+  toXeroTimesheetDate,
   XERO_CONNECTIONS_URL,
-  XERO_PAYROLL_AU_BASE,
+  XERO_TIMESHEET_BASE_PATH,
   XERO_TOKEN_URL,
 } from "./tokens";
 
@@ -22,16 +22,23 @@ import {
  * every network call is mockable (tests pass a fake). Tokens are passed in as
  * arguments (decrypted by the caller); this layer never touches the DB.
  *
- * BOUNDARY — this client is deliberately NARROW and uses raw `fetch`, NOT the
- * `xero-node` SDK, precisely so the codebase contains NO method that could
- * create or post a pay run, and NO method that writes employee bank / tax /
- * super details. The ONLY payroll WRITE is a DRAFT timesheet (Status is
- * hard-coded `"DRAFT"`; the input type has no status field, so a caller cannot
- * ask for anything else). Everything else here is read-only or OAuth plumbing.
+ * Timesheets use the **AU Payroll 2.0** surface (`payroll.xro/2.0`): ISO dates,
+ * an explicit `payrollCalendarID`, one line PER DAY with a SCALAR
+ * `numberOfUnits`, title-case `"Draft"`, and a real `DELETE`. The base path +
+ * scope live in two isolated constants (`tokens.ts`) locked at first live
+ * connect; every other wire detail is confirmed from the generated 2.0 models.
  *
- * Deliberately absent (no method exists — not gated, not disabled): pay-run
- * create/post (`POST /PayRuns`), payslip mutation, employee create/update,
- * bank-account / tax-declaration / super writes, and approving a timesheet.
+ * BOUNDARY — this client is deliberately NARROW and uses raw `fetch`, NOT the
+ * `xero-node` SDK, precisely so the codebase contains NO method that could:
+ *   - create or post a PAY RUN (`POST /PayRuns`),
+ *   - **APPROVE a timesheet (`POST /Timesheets/{id}/Approve`) or revert one
+ *     (`.../RevertToDraft`)** — approving = finalising pay classification, a
+ *     boundary breach, so on 2.0 these are excluded as deliberately as pay-runs,
+ *   - or write employee bank / tax / super details.
+ * The ONLY payroll WRITE is a DRAFT timesheet (`status` hard-coded `"Draft"`;
+ * the input type has no status field, so a caller cannot ask for anything else)
+ * and its DELETE while still Draft. A guard test asserts none of the excluded
+ * methods exist on the client object.
  */
 
 /** A full OAuth token set from Xero. NOTE: Xero ROTATES the refresh token on
@@ -53,20 +60,26 @@ export type XeroTenant = {
   tenantName: string;
 };
 
-/** Inputs for a DRAFT timesheet. There is intentionally NO status field. */
+/**
+ * Inputs for a DRAFT timesheet (Payroll 2.0). There is intentionally NO status
+ * field. A SINGLE `earningsRateId` applies to every line — structurally
+ * enforcing the "single ordinary earnings rate" decision (penalty/overtime are
+ * the human's job in Xero). `lines` is one entry PER WORKED DAY.
+ */
 export type XeroDraftTimesheetInput = {
+  payrollCalendarId: string;
   employeeId: string;
-  /** Inclusive calendar dates (YYYY-MM-DD), aligned to the pay calendar. */
+  /** Inclusive period bounds (YYYY-MM-DD), aligned to the pay calendar. */
   startDate: string;
   endDate: string;
   earningsRateId: string;
-  /** Hours per day across StartDate..EndDate inclusive (one entry per day). */
-  numberOfUnits: number[];
+  /** Hours per worked day: { date: YYYY-MM-DD, numberOfUnits: hours }. */
+  lines: Array<{ date: string; numberOfUnits: number }>;
 };
 
 export type XeroTimesheetResult = {
   timesheetId: string;
-  /** Xero's status; we only ever create DRAFT, but reads may see others. */
+  /** Xero's status; we only ever create Draft, but reads may see others. */
   status: string;
 };
 
@@ -80,7 +93,7 @@ export interface XeroClient {
   refreshAccessToken(refreshToken: string): Promise<XeroTokenSet>;
   /** Organisations the token can act on (to pick the Xero-Tenant-Id + name). */
   getConnections(accessToken: string): Promise<XeroTenant[]>;
-  /** Create a DRAFT timesheet (Status hard-coded DRAFT). `idempotencyKey` is
+  /** Create a DRAFT timesheet (status hard-coded Draft). `idempotencyKey` is
    * sent as Xero's Idempotency-Key header. Returns the new timesheet id. */
   createDraftTimesheet(
     accessToken: string,
@@ -88,21 +101,19 @@ export interface XeroClient {
     input: XeroDraftTimesheetInput,
     idempotencyKey: string,
   ): Promise<XeroTimesheetResult>;
-  /** Read a timesheet's current id + status (to check it's still DRAFT). */
+  /** Read a timesheet's current id + status (to check it's still Draft). */
   getTimesheet(
     accessToken: string,
     tenantId: string,
     timesheetId: string,
   ): Promise<XeroTimesheetResult>;
-  /** Update an existing DRAFT timesheet (Status stays DRAFT). Used by re-push
-   * and by cancel-to-empty; both guard on the current status first. */
-  updateDraftTimesheet(
+  /** Delete a timesheet (the real cancel). The caller guards that it's still
+   * Draft first; a 404 is treated as already-gone (success). */
+  deleteTimesheet(
     accessToken: string,
     tenantId: string,
     timesheetId: string,
-    input: XeroDraftTimesheetInput,
-    idempotencyKey: string,
-  ): Promise<XeroTimesheetResult>;
+  ): Promise<void>;
 }
 
 /** Whether OAuth env vars AND the shared encryption key are all present. */
@@ -168,6 +179,28 @@ async function readErrorBody(res: Response): Promise<string> {
   } catch {
     return "";
   }
+}
+
+/** Map a payroll HTTP error; a 403 most often means "not a payroll admin". */
+function payrollError(status: number, action: string): Error {
+  logger.error({ status, action }, "Xero payroll API error");
+  if (status === 403) {
+    return new XeroPayrollAdminRequired();
+  }
+  return new XeroApiError(`Xero ${action} failed (${status})`, status);
+}
+
+/** Payroll 2.0 wraps a single timesheet under `timesheet`. */
+type TimesheetEnvelope = {
+  timesheet?: { timesheetID?: string; status?: string };
+};
+
+function parseTimesheet(data: TimesheetEnvelope): XeroTimesheetResult {
+  const ts = data.timesheet;
+  if (!ts?.timesheetID) {
+    throw new XeroApiError("Xero timesheet response missing timesheetID");
+  }
+  return { timesheetId: ts.timesheetID, status: ts.status ?? "" };
 }
 
 export const xeroClient: XeroClient = {
@@ -271,13 +304,35 @@ export const xeroClient: XeroClient = {
     input,
     idempotencyKey,
   ): Promise<XeroTimesheetResult> {
-    return postTimesheet({
-      accessToken,
-      tenantId,
-      idempotencyKey,
-      url: `${XERO_PAYROLL_AU_BASE}/Timesheets`,
-      input,
+    // The ONE place a timesheet payload is built. `status` is hard-coded
+    // "Draft" and there is no input path to any other status.
+    const body = {
+      payrollCalendarID: input.payrollCalendarId,
+      employeeID: input.employeeId,
+      startDate: toXeroTimesheetDate(input.startDate),
+      endDate: toXeroTimesheetDate(input.endDate),
+      status: "Draft", // <-- the boundary, in code
+      timesheetLines: input.lines.map((l) => ({
+        date: toXeroTimesheetDate(l.date),
+        earningsRateID: input.earningsRateId, // single ordinary rate for all lines
+        numberOfUnits: l.numberOfUnits,
+      })),
+    };
+    const res = await fetch(`${XERO_TIMESHEET_BASE_PATH}/Timesheets`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Xero-Tenant-Id": tenantId,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify(body),
     });
+    if (!res.ok) {
+      throw payrollError(res.status, "createDraftTimesheet");
+    }
+    return parseTimesheet((await res.json()) as TimesheetEnvelope);
   },
 
   async getTimesheet(
@@ -286,7 +341,7 @@ export const xeroClient: XeroClient = {
     timesheetId,
   ): Promise<XeroTimesheetResult> {
     const res = await fetch(
-      `${XERO_PAYROLL_AU_BASE}/Timesheets/${encodeURIComponent(timesheetId)}`,
+      `${XERO_TIMESHEET_BASE_PATH}/Timesheets/${encodeURIComponent(timesheetId)}`,
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -298,90 +353,24 @@ export const xeroClient: XeroClient = {
     if (!res.ok) {
       throw payrollError(res.status, "getTimesheet");
     }
-    return firstTimesheet((await res.json()) as TimesheetEnvelope);
+    return parseTimesheet((await res.json()) as TimesheetEnvelope);
   },
 
-  async updateDraftTimesheet(
-    accessToken,
-    tenantId,
-    timesheetId,
-    input,
-    idempotencyKey,
-  ): Promise<XeroTimesheetResult> {
-    return postTimesheet({
-      accessToken,
-      tenantId,
-      idempotencyKey,
-      url: `${XERO_PAYROLL_AU_BASE}/Timesheets/${encodeURIComponent(timesheetId)}`,
-      input,
-    });
-  },
-};
-
-type TimesheetEnvelope = {
-  Timesheets?: Array<{ TimesheetID?: string; Status?: string }>;
-};
-
-/** Map a payroll HTTP error; a 403 most often means "not a payroll admin". */
-function payrollError(status: number, action: string): Error {
-  logger.error({ status, action }, "Xero payroll API error");
-  // A 403 on a payroll call most often means the authorising Xero user is not a
-  // payroll administrator — surface the delegated-bookkeeper fix.
-  if (status === 403) {
-    return new XeroPayrollAdminRequired();
-  }
-  return new XeroApiError(`Xero ${action} failed (${status})`, status);
-}
-
-function firstTimesheet(env_: TimesheetEnvelope): XeroTimesheetResult {
-  const row = env_.Timesheets?.[0];
-  if (!row?.TimesheetID) {
-    throw new XeroApiError("Xero timesheet response missing TimesheetID");
-  }
-  return { timesheetId: row.TimesheetID, status: row.Status ?? "" };
-}
-
-/**
- * POST a timesheet (create or update). Status is HARD-CODED "DRAFT" here — the
- * one and only place a timesheet payload is built — so no caller can ever push
- * a non-draft timesheet. `NumberOfUnits` is the per-day array Xero expects.
- */
-async function postTimesheet(opts: {
-  accessToken: string;
-  tenantId: string;
-  idempotencyKey: string;
-  url: string;
-  input: XeroDraftTimesheetInput;
-}): Promise<XeroTimesheetResult> {
-  const body = {
-    Timesheets: [
+  async deleteTimesheet(accessToken, tenantId, timesheetId): Promise<void> {
+    const res = await fetch(
+      `${XERO_TIMESHEET_BASE_PATH}/Timesheets/${encodeURIComponent(timesheetId)}`,
       {
-        EmployeeID: opts.input.employeeId,
-        StartDate: toXeroMsDate(opts.input.startDate),
-        EndDate: toXeroMsDate(opts.input.endDate),
-        Status: "DRAFT", // <-- the boundary, in code
-        TimesheetLines: [
-          {
-            EarningsRateID: opts.input.earningsRateId,
-            NumberOfUnits: opts.input.numberOfUnits,
-          },
-        ],
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Xero-Tenant-Id": tenantId,
+          Accept: "application/json",
+        },
       },
-    ],
-  };
-  const res = await fetch(opts.url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${opts.accessToken}`,
-      "Xero-Tenant-Id": opts.tenantId,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      "Idempotency-Key": opts.idempotencyKey,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    throw payrollError(res.status, "postTimesheet");
-  }
-  return firstTimesheet((await res.json()) as TimesheetEnvelope);
-}
+    );
+    // 404 = already gone in Xero; treat as success so our row can be cancelled.
+    if (!res.ok && res.status !== 404) {
+      throw payrollError(res.status, "deleteTimesheet");
+    }
+  },
+};

@@ -4,9 +4,10 @@ import {
   emailFromIdToken,
   isTokenExpired,
   scopesIncludePayrun,
-  toXeroMsDate,
+  toXeroTimesheetDate,
   XERO_SCOPE_STRING,
   XERO_SCOPES,
+  XERO_TIMESHEET_SCOPE,
 } from "@/lib/xero/tokens";
 
 /** Pure Xero helper coverage — no DB, no network. The boundary-relevant bits
@@ -14,7 +15,9 @@ import {
 
 describe("xero token/scope helpers", () => {
   it("requests read/timesheet scopes and NEVER a pay-run scope", () => {
-    expect(XERO_SCOPES).toContain("payroll.timesheets");
+    // The timesheet scope is the isolated live-verify constant.
+    expect(XERO_TIMESHEET_SCOPE).toBe("payroll.timesheets");
+    expect(XERO_SCOPES).toContain(XERO_TIMESHEET_SCOPE);
     expect(XERO_SCOPES).toContain("payroll.employees.read");
     expect(XERO_SCOPES).toContain("payroll.settings.read");
     expect(XERO_SCOPES).toContain("offline_access");
@@ -83,9 +86,10 @@ describe("xero token/scope helpers", () => {
     expect(emailFromIdToken(`h.${noEmail}.s`)).toBe("");
   });
 
-  it("toXeroMsDate emits Xero's MS-JSON date format", () => {
-    const ms = Date.parse("2026-07-08T00:00:00.000Z");
-    expect(toXeroMsDate("2026-07-08")).toBe(`/Date(${ms})/`);
-    expect(() => toXeroMsDate("not-a-date")).toThrow();
+  it("toXeroTimesheetDate validates + passes through ISO YYYY-MM-DD (2.0)", () => {
+    expect(toXeroTimesheetDate("2026-07-08")).toBe("2026-07-08");
+    expect(() => toXeroTimesheetDate("not-a-date")).toThrow();
+    expect(() => toXeroTimesheetDate("08/07/2026")).toThrow(); // wrong format
+    expect(() => toXeroTimesheetDate("2026-13-40")).toThrow(); // impossible date
   });
 });

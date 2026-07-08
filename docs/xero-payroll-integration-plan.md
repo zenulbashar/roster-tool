@@ -52,6 +52,14 @@ guarantees human review before money moves.
 
 ## 2. Xero Payroll AU — verified API facts
 
+> **⚠️ SUPERSEDED for timesheets — the build uses Payroll 2.0.** The 1.0 facts
+> below (§2 lead bullets + §2a) are retained as the original verification record;
+> the timesheet client was switched to **AU Payroll 2.0** (ISO dates,
+> `payrollCalendarID`, per-day scalar lines, title-case `Draft`, real `DELETE`).
+> See the reversal block after §2a and the decision history in §2b. The OAuth /
+> connection / `Xero-Tenant-Id` / `GET /connections` facts here are unchanged and
+> version-independent.
+
 - **Separate API:** base `https://api.xero.com/payroll.xro/1.0/` (Accounting is
   `api.xro/2.0`). By default apps get accounting only; payroll needs its scopes.
 - **Authorising user must be a payroll administrator** (plus Standard/Adviser +
@@ -159,13 +167,46 @@ Verified from the authoritative machine-readable contract — the XeroAPI
 > and the aggregation-to-lines (#16) are **not built yet**, so targeting 2.0 there
 > is a build choice, not rework — the aggregation just emits per-day lines.
 >
-> **DECISION (pending owner):** if the owner confirms the two open AU-specific
-> items, **switch to 2.0** and restore the originally-approved real `DELETE`
-> cancel (guard it's still `Draft` → `DELETE /Timesheets/{id}`; else
-> `XeroTimesheetAlreadyActioned`). The Option A zero-out workaround is then
-> dropped. If an AU-specific quirk makes it ripple beyond the bounded surface
-> above, fall back to **1.0 + Option A** (guard-then-zero-then-mark-cancelled via
-> `updateDraftTimesheet`), which is already built and tested.
+> **DECISION — SWITCHED TO 2.0 (owner-approved).** The owner approved the switch.
+> The timesheet client is now built on AU Payroll 2.0 with the originally-approved
+> real `DELETE` cancel (guard it's still `Draft` → `DELETE /Timesheets/{id}`; else
+> `XeroTimesheetAlreadyActioned`). The Option A zero-out workaround is dropped.
+> Base path + scope are isolated to two named constants locked at first live
+> connect; if an AU-specific quirk appears there, the bounded blast radius keeps
+> the fix inside the timesheet client.
+
+### 2b. Decision history (kept deliberately — a record of how this was decided)
+
+This sequence is retained, not cleaned up: it is a legitimate record of how the
+API-version decision was actually reached, including a wrong turn and its
+correction against a dated primary source.
+
+1. **Initial (1.0 assumption + workaround).** Built the client on AU Payroll
+   1.0. Source-verify (from the `xero-python` `payrollau` SDK) showed 1.0 has no
+   delete-timesheet and no `DELETED` status, so the approved DELETE cancel wasn't
+   possible on 1.0 → owner chose **Option A** (guard-then-zero-then-mark-cancelled).
+2. **Discrepancy found.** Owner recalled a Xero changelog entry announcing AU
+   timesheets on Payroll 2.0. First 2.0 check (also from the `payrollau` module)
+   still showed only create/get/update — and I **overreached**, writing that AU
+   orgs are "region-blocked from 2.0 entirely."
+3. **Overreach corrected.** Re-examined: `payrollau` is the **pre-March-2026,
+   1.0-specific** binding — the wrong module to judge a 2.0 feature by. I could
+   not reach the primary docs (developer.xero.com 403s; Wayback blocked here) and
+   said so rather than assert a retraction I couldn't find; downgraded the claim
+   to "unconfirmed."
+4. **2.0 confirmed real via a dated primary source.** Owner fetched the changelog
+   directly: **"AU Timesheets in the Payroll 2.0 API", 6 March 2026, unretracted.**
+   AU Payroll 2.0 timesheets are real.
+5. **2.0 wire shape verified + switched.** Verified the unified 2.0 shape from the
+   fetchable generated SDK models (ISO dates, `payrollCalendarID`, per-day scalar
+   `numberOfUnits`, title-case `Draft`, `{ timesheet }` envelope, DELETE + Approve
+   - RevertToDraft lifecycle). Rebuilt the timesheet client on 2.0; excluded
+     `Approve`/`RevertToDraft` with a guard test (as deliberately as pay-runs);
+     restored the real `DELETE` cancel. **The base path + scope are the ONE pair of
+     details not confirmable from the fetchable sources** — isolated into two named
+     constants (`XERO_TIMESHEET_BASE_PATH`, `XERO_TIMESHEET_SCOPE`) to be **verified
+     live** at the first AU demo-company connect, not guessed from docs that proved
+     unreliable on this specific point across three checks.
 
 Scopes: still requested as below; the `scope` field of the token response is
 stored as `authorised_scopes` and audited to prove `payroll.payruns` was never
