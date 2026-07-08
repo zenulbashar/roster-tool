@@ -42,6 +42,7 @@ import {
   staffDocuments,
   xeroConnections,
   xeroConnectInvites,
+  xeroEmployeeMaps,
   type FormFieldOption,
 } from "@/lib/db/schema";
 import { formResponseTitle, type NotificationType } from "@/lib/notifications";
@@ -3883,6 +3884,75 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             eq(xeroConnectInvites.businessId, businessId),
             isNull(xeroConnectInvites.consumedAt),
             isNull(xeroConnectInvites.revokedAt),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    /* ---- Xero staff↔employee mapping (#15) ------------------------------- */
+
+    /** All staff↔employee mappings for this business (for the mapping UI). */
+    listXeroEmployeeMaps() {
+      return database
+        .select()
+        .from(xeroEmployeeMaps)
+        .where(eq(xeroEmployeeMaps.businessId, businessId));
+    },
+
+    /** One staff member's mapping, or null. */
+    getXeroEmployeeMapForStaff(staffMemberId: string) {
+      return first(
+        database
+          .select()
+          .from(xeroEmployeeMaps)
+          .where(
+            and(
+              eq(xeroEmployeeMaps.businessId, businessId),
+              eq(xeroEmployeeMaps.staffMemberId, staffMemberId),
+            ),
+          ),
+      );
+    },
+
+    /**
+     * Create or replace a staff member's Xero employee mapping (one per staff
+     * per business). The `earningsRateId` is the resolved/owner-chosen ordinary
+     * rate; null means unresolved → that person is blocked from push. The
+     * `payrollCalendarId` is snapshotted from the Xero employee.
+     */
+    async upsertXeroEmployeeMap(input: {
+      staffMemberId: string;
+      xeroEmployeeId: string;
+      xeroEmployeeName: string;
+      earningsRateId: string | null;
+      payrollCalendarId: string | null;
+    }) {
+      const [row] = await database
+        .insert(xeroEmployeeMaps)
+        .values({ ...input, businessId })
+        .onConflictDoUpdate({
+          target: [xeroEmployeeMaps.businessId, xeroEmployeeMaps.staffMemberId],
+          set: {
+            xeroEmployeeId: input.xeroEmployeeId,
+            xeroEmployeeName: input.xeroEmployeeName,
+            earningsRateId: input.earningsRateId,
+            payrollCalendarId: input.payrollCalendarId,
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+      return row!;
+    },
+
+    /** Remove a staff member's mapping. Business-scoped. */
+    async deleteXeroEmployeeMap(staffMemberId: string) {
+      const [row] = await database
+        .delete(xeroEmployeeMaps)
+        .where(
+          and(
+            eq(xeroEmployeeMaps.businessId, businessId),
+            eq(xeroEmployeeMaps.staffMemberId, staffMemberId),
           ),
         )
         .returning();

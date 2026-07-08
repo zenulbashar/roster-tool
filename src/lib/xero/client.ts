@@ -83,6 +83,27 @@ export type XeroTimesheetResult = {
   status: string;
 };
 
+/** A Xero employee (read-only) — for the owner's staff↔employee mapping. */
+export type XeroEmployee = {
+  employeeId: string;
+  firstName: string;
+  lastName: string;
+  /** The employee's pay calendar id (drives the push period); may be null. */
+  payrollCalendarId: string | null;
+};
+
+/** An org earnings rate (read-only). `earningsType` "RegularEarnings" = ordinary. */
+export type XeroEarningsRate = {
+  earningsRateId: string;
+  name: string;
+  earningsType: string;
+};
+
+/** One earnings line on an employee's pay template (read-only). */
+export type XeroPayTemplateEarning = {
+  earningsRateId: string;
+};
+
 export interface XeroClient {
   /** Consent URL for the (owner or delegated bookkeeper) to authorise. */
   buildAuthUrl(state: string): string;
@@ -114,6 +135,19 @@ export interface XeroClient {
     tenantId: string,
     timesheetId: string,
   ): Promise<void>;
+  /** READ: the org's employees (for the owner's staff↔employee mapping). */
+  listEmployees(accessToken: string, tenantId: string): Promise<XeroEmployee[]>;
+  /** READ: the org's earnings rates (to resolve/override the ordinary rate). */
+  listEarningsRates(
+    accessToken: string,
+    tenantId: string,
+  ): Promise<XeroEarningsRate[]>;
+  /** READ: an employee's pay-template earnings lines (auto-resolve the rate). */
+  getEmployeePayTemplateEarnings(
+    accessToken: string,
+    tenantId: string,
+    employeeId: string,
+  ): Promise<XeroPayTemplateEarning[]>;
 }
 
 /** Whether OAuth env vars AND the shared encryption key are all present. */
@@ -373,4 +407,96 @@ export const xeroClient: XeroClient = {
       throw payrollError(res.status, "deleteTimesheet");
     }
   },
+
+  async listEmployees(accessToken, tenantId): Promise<XeroEmployee[]> {
+    const data = await payrollGet(
+      accessToken,
+      tenantId,
+      "/Employees",
+      "listEmployees",
+    );
+    const rows = (data.employees ?? []) as Array<{
+      employeeID?: string;
+      firstName?: string;
+      lastName?: string;
+      payrollCalendarID?: string;
+    }>;
+    return rows
+      .filter((r) => r.employeeID)
+      .map((r) => ({
+        employeeId: r.employeeID!,
+        firstName: r.firstName ?? "",
+        lastName: r.lastName ?? "",
+        payrollCalendarId: r.payrollCalendarID ?? null,
+      }));
+  },
+
+  async listEarningsRates(accessToken, tenantId): Promise<XeroEarningsRate[]> {
+    const data = await payrollGet(
+      accessToken,
+      tenantId,
+      "/PayItems",
+      "listEarningsRates",
+    );
+    // 2.0 wraps earnings rates under `payItems.earningsRates`; tolerate a flat
+    // `earningsRates` too (the read envelope is one of the two live-verify items).
+    const rows = ((data.payItems as { earningsRates?: unknown })
+      ?.earningsRates ??
+      data.earningsRates ??
+      []) as Array<{
+      earningsRateID?: string;
+      name?: string;
+      earningsType?: string;
+    }>;
+    return rows
+      .filter((r) => r.earningsRateID)
+      .map((r) => ({
+        earningsRateId: r.earningsRateID!,
+        name: r.name ?? "",
+        earningsType: r.earningsType ?? "",
+      }));
+  },
+
+  async getEmployeePayTemplateEarnings(
+    accessToken,
+    tenantId,
+    employeeId,
+  ): Promise<XeroPayTemplateEarning[]> {
+    const data = await payrollGet(
+      accessToken,
+      tenantId,
+      `/Employees/${encodeURIComponent(employeeId)}/PayTemplateEarnings`,
+      "getEmployeePayTemplateEarnings",
+    );
+    const rows = (data.payTemplateEarnings ??
+      data.earningsTemplates ??
+      []) as Array<{ earningsRateID?: string }>;
+    return rows
+      .filter((r) => r.earningsRateID)
+      .map((r) => ({ earningsRateId: r.earningsRateID! }));
+  },
 };
+
+/**
+ * Shared GET for read-only Payroll 2.0 endpoints. All hang off the isolated
+ * `XERO_TIMESHEET_BASE_PATH` (the shared 2.0 base). A 403 maps to the
+ * payroll-admin prompt, like the timesheet writes.
+ */
+async function payrollGet(
+  accessToken: string,
+  tenantId: string,
+  path: string,
+  action: string,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${XERO_TIMESHEET_BASE_PATH}${path}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Xero-Tenant-Id": tenantId,
+      Accept: "application/json",
+    },
+  });
+  if (!res.ok) {
+    throw payrollError(res.status, action);
+  }
+  return (await res.json()) as Record<string, unknown>;
+}

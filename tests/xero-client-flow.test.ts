@@ -87,6 +87,15 @@ class FakeXeroClient implements XeroClient {
   async deleteTimesheet(): Promise<void> {
     /* no-op fake */
   }
+  async listEmployees() {
+    return [];
+  }
+  async listEarningsRates() {
+    return [];
+  }
+  async getEmployeePayTemplateEarnings() {
+    return [];
+  }
 }
 
 describe("xero connection service", () => {
@@ -302,6 +311,10 @@ describe("xero client DRAFT-timesheet boundary (real client, Payroll 2.0)", () =
       "createDraftTimesheet",
       "getTimesheet",
       "deleteTimesheet",
+      // read-only mapping helpers (payroll.employees.read / payroll.settings.read)
+      "listEmployees",
+      "listEarningsRates",
+      "getEmployeePayTemplateEarnings",
     ]);
   });
 });
