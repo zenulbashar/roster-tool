@@ -96,6 +96,9 @@ class FakeXeroClient implements XeroClient {
   async getEmployeePayTemplateEarnings() {
     return [];
   }
+  async getPayrollCalendar() {
+    return null;
+  }
 }
 
 describe("xero connection service", () => {
@@ -315,6 +318,7 @@ describe("xero client DRAFT-timesheet boundary (real client, Payroll 2.0)", () =
       "listEmployees",
       "listEarningsRates",
       "getEmployeePayTemplateEarnings",
+      "getPayrollCalendar",
     ]);
   });
 });

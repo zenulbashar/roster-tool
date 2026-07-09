@@ -9,6 +9,7 @@ import {
   lte,
   lt,
   isNull,
+  isNotNull,
   inArray,
   notExists,
   sql,
@@ -43,6 +44,7 @@ import {
   xeroConnections,
   xeroConnectInvites,
   xeroEmployeeMaps,
+  xeroTimesheetPushes,
   type FormFieldOption,
 } from "@/lib/db/schema";
 import { formResponseTitle, type NotificationType } from "@/lib/notifications";
@@ -3953,6 +3955,212 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           and(
             eq(xeroEmployeeMaps.businessId, businessId),
             eq(xeroEmployeeMaps.staffMemberId, staffMemberId),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    /* ---- Xero timesheet push (#16) -------------------------------------- */
+
+    /**
+     * APPROVED, CLOSED timesheet entries (clock-out present) whose clock-in is
+     * in [startUtc, endUtc), per staff member — the eligible hours for a push.
+     * Business-scoped, READ-ONLY. The pure `buildTimesheetLines` buckets these
+     * by business-local day within the Xero period.
+     */
+    listApprovedClosedEntriesForPush(startUtc: Date, endUtc: Date) {
+      return database
+        .select({
+          staffMemberId: timesheetEntries.staffMemberId,
+          clockInAt: timesheetEntries.clockInAt,
+          clockOutAt: timesheetEntries.clockOutAt,
+        })
+        .from(timesheetEntries)
+        .where(
+          and(
+            eq(timesheetEntries.businessId, businessId),
+            eq(timesheetEntries.approved, true),
+            isNotNull(timesheetEntries.clockOutAt),
+            gte(timesheetEntries.clockInAt, startUtc),
+            lt(timesheetEntries.clockInAt, endUtc),
+          ),
+        )
+        .orderBy(asc(timesheetEntries.clockInAt));
+    },
+
+    /** One push row for a (staff, period), or null. */
+    getXeroPush(staffMemberId: string, periodStart: string, periodEnd: string) {
+      return first(
+        database
+          .select()
+          .from(xeroTimesheetPushes)
+          .where(
+            and(
+              eq(xeroTimesheetPushes.businessId, businessId),
+              eq(xeroTimesheetPushes.staffMemberId, staffMemberId),
+              eq(xeroTimesheetPushes.periodStart, periodStart),
+              eq(xeroTimesheetPushes.periodEnd, periodEnd),
+            ),
+          ),
+      );
+    },
+
+    /** One push row by id (for the owner's cancel action). Business-scoped. */
+    getXeroPushById(id: string) {
+      return first(
+        database
+          .select()
+          .from(xeroTimesheetPushes)
+          .where(
+            and(
+              eq(xeroTimesheetPushes.id, id),
+              eq(xeroTimesheetPushes.businessId, businessId),
+            ),
+          ),
+      );
+    },
+
+    /** All push rows for a period (for the owner's push panel). */
+    listXeroPushesForPeriod(periodStart: string, periodEnd: string) {
+      return database
+        .select()
+        .from(xeroTimesheetPushes)
+        .where(
+          and(
+            eq(xeroTimesheetPushes.businessId, businessId),
+            eq(xeroTimesheetPushes.periodStart, periodStart),
+            eq(xeroTimesheetPushes.periodEnd, periodEnd),
+          ),
+        );
+    },
+
+    /**
+     * Record a LIVE draft (first push success OR re-push create success). Upsert
+     * on the period-unique key: sets `status = draft`, the Xero timesheet id,
+     * hours/hash/key/attempt, and `pushed_at`. INVARIANT: a `draft` row always
+     * has a non-null `xero_timesheet_id`.
+     */
+    async saveXeroPushDraft(input: {
+      staffMemberId: string;
+      xeroEmployeeId: string;
+      periodStart: string;
+      periodEnd: string;
+      xeroTimesheetId: string;
+      hoursTotal: number;
+      payloadHash: string;
+      idempotencyKey: string;
+      attempt: number;
+      now?: Date;
+    }) {
+      const now = input.now ?? new Date();
+      const [row] = await database
+        .insert(xeroTimesheetPushes)
+        .values({
+          businessId,
+          staffMemberId: input.staffMemberId,
+          xeroEmployeeId: input.xeroEmployeeId,
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          xeroTimesheetId: input.xeroTimesheetId,
+          status: "draft",
+          hoursTotal: input.hoursTotal,
+          payloadHash: input.payloadHash,
+          idempotencyKey: input.idempotencyKey,
+          attempt: input.attempt,
+          pushedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [
+            xeroTimesheetPushes.businessId,
+            xeroTimesheetPushes.staffMemberId,
+            xeroTimesheetPushes.periodStart,
+            xeroTimesheetPushes.periodEnd,
+          ],
+          set: {
+            xeroEmployeeId: input.xeroEmployeeId,
+            xeroTimesheetId: input.xeroTimesheetId,
+            status: "draft",
+            hoursTotal: input.hoursTotal,
+            payloadHash: input.payloadHash,
+            idempotencyKey: input.idempotencyKey,
+            attempt: input.attempt,
+            pushedAt: now,
+            updatedAt: now,
+          },
+        })
+        .returning();
+      return row!;
+    },
+
+    /**
+     * Enter the "NO LIVE DRAFT" state — `status = failed`, `xero_timesheet_id =
+     * NULL`. Used BOTH as the gap marker (persisted the instant a delete
+     * succeeds, BEFORE the recreate, with the incremented `attempt`) AND as the
+     * terminal state when a create fails. Because a crash mid-gap leaves exactly
+     * this row, the invariant "id non-null ⟺ live draft" holds even on crash;
+     * the owner sees the distinct "no draft currently exists" state, never a
+     * pointer to a deleted timesheet. Upsert on the period-unique key.
+     */
+    async markXeroPushNoDraft(input: {
+      staffMemberId: string;
+      xeroEmployeeId: string;
+      periodStart: string;
+      periodEnd: string;
+      hoursTotal: number;
+      payloadHash: string;
+      idempotencyKey: string;
+      attempt: number;
+      now?: Date;
+    }) {
+      const now = input.now ?? new Date();
+      const [row] = await database
+        .insert(xeroTimesheetPushes)
+        .values({
+          businessId,
+          staffMemberId: input.staffMemberId,
+          xeroEmployeeId: input.xeroEmployeeId,
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          xeroTimesheetId: null,
+          status: "failed",
+          hoursTotal: input.hoursTotal,
+          payloadHash: input.payloadHash,
+          idempotencyKey: input.idempotencyKey,
+          attempt: input.attempt,
+        })
+        .onConflictDoUpdate({
+          target: [
+            xeroTimesheetPushes.businessId,
+            xeroTimesheetPushes.staffMemberId,
+            xeroTimesheetPushes.periodStart,
+            xeroTimesheetPushes.periodEnd,
+          ],
+          set: {
+            xeroEmployeeId: input.xeroEmployeeId,
+            xeroTimesheetId: null,
+            status: "failed",
+            hoursTotal: input.hoursTotal,
+            payloadHash: input.payloadHash,
+            idempotencyKey: input.idempotencyKey,
+            attempt: input.attempt,
+            updatedAt: now,
+          },
+        })
+        .returning();
+      return row!;
+    },
+
+    /** Cancel a push row: `status = cancelled`, `xero_timesheet_id = NULL` (same
+     * invariant — no live draft ⇒ null id). Business-scoped, by row id. */
+    async markXeroPushCancelled(id: string, now: Date = new Date()) {
+      const [row] = await database
+        .update(xeroTimesheetPushes)
+        .set({ status: "cancelled", xeroTimesheetId: null, updatedAt: now })
+        .where(
+          and(
+            eq(xeroTimesheetPushes.id, id),
+            eq(xeroTimesheetPushes.businessId, businessId),
           ),
         )
         .returning();

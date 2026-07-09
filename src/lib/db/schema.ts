@@ -1433,6 +1433,12 @@ export const xeroTimesheetPushes = pgTable(
     hoursTotal: doublePrecision("hours_total").notNull(),
     payloadHash: text("payload_hash").notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
+    // Monotonic push-attempt counter. The Xero Idempotency-Key is derived as
+    // (deterministic base + ":attempt=" + attempt), incremented on every
+    // delete-then-recreate cycle so a replay after a delete can NEVER return
+    // Xero's cached response for the now-deleted timesheet. A network retry of
+    // the SAME attempt reuses the same key (safe de-dupe); a new cycle varies it.
+    attempt: integer("attempt").notNull().default(1),
     pushedAt: timestamp("pushed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

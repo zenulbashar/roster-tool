@@ -375,6 +375,20 @@ ordinary rate, 2dp to match the CSV/report). Per employee →
 `xero_timesheet_id`. Skips (unmapped / no rate / open / unapproved) are shown,
 never silently dropped.
 
+**Pay period — resolved as option (3): consume Xero's dates directly, NO local
+math.** Source-verified the 2.0 `PayRunCalendar` model — it exposes
+`periodStartDate`, `periodEndDate`, `paymentDate` and `calendarType` **directly**.
+So `getPayrollCalendar` reads those and the push uses `periodStartDate`/
+`periodEndDate` verbatim as the timesheet's `startDate`/`endDate`; the preview
+shows them for the owner to confirm before pushing. **No period arithmetic is
+performed** — a wrong period fails silently, so it is never computed (option (2)
+was explicitly rejected for this reason). If Xero omits `periodEndDate`, that
+calendar's push is blocked with a clear message rather than guessed. Offering a
+CHOICE of PRIOR periods (which would require stepping by `calendarType`) is a
+deliberate follow-up, not built here; the current-period push is the safe core.
+`buildTimesheetLines` buckets approved entries by business-local day within
+`[periodStartDate, periodEndDate]`.
+
 **Re-push on 2.0 = DELETE-then-CREATE (no update fallback), and its gap must be
 designed in, not patched later.** 2.0 has no update-timesheet verb, so replacing
 a pushed draft means deleting the old one and creating a new one — two

@@ -104,6 +104,20 @@ export type XeroPayTemplateEarning = {
   earningsRateId: string;
 };
 
+/**
+ * A pay calendar (read-only). Xero exposes the period dates DIRECTLY, so the
+ * push consumes `periodStartDate`/`periodEndDate` as-is — no local period math
+ * (a wrong period would fail silently, so it is never computed here).
+ */
+export type XeroPayrollCalendar = {
+  payrollCalendarId: string;
+  name: string;
+  calendarType: string;
+  periodStartDate: string | null;
+  periodEndDate: string | null;
+  paymentDate: string | null;
+};
+
 export interface XeroClient {
   /** Consent URL for the (owner or delegated bookkeeper) to authorise. */
   buildAuthUrl(state: string): string;
@@ -148,6 +162,12 @@ export interface XeroClient {
     tenantId: string,
     employeeId: string,
   ): Promise<XeroPayTemplateEarning[]>;
+  /** READ: a pay calendar (its period dates drive the push period directly). */
+  getPayrollCalendar(
+    accessToken: string,
+    tenantId: string,
+    payrollCalendarId: string,
+  ): Promise<XeroPayrollCalendar | null>;
 }
 
 /** Whether OAuth env vars AND the shared encryption key are all present. */
@@ -474,6 +494,38 @@ export const xeroClient: XeroClient = {
     return rows
       .filter((r) => r.earningsRateID)
       .map((r) => ({ earningsRateId: r.earningsRateID! }));
+  },
+
+  async getPayrollCalendar(
+    accessToken,
+    tenantId,
+    payrollCalendarId,
+  ): Promise<XeroPayrollCalendar | null> {
+    const data = await payrollGet(
+      accessToken,
+      tenantId,
+      `/PayrollCalendars/${encodeURIComponent(payrollCalendarId)}`,
+      "getPayrollCalendar",
+    );
+    const cal = (data.payrollCalendar ?? data.payRunCalendar) as
+      | {
+          payrollCalendarID?: string;
+          name?: string;
+          calendarType?: string;
+          periodStartDate?: string;
+          periodEndDate?: string;
+          paymentDate?: string;
+        }
+      | undefined;
+    if (!cal?.payrollCalendarID) return null;
+    return {
+      payrollCalendarId: cal.payrollCalendarID,
+      name: cal.name ?? "",
+      calendarType: cal.calendarType ?? "",
+      periodStartDate: cal.periodStartDate ?? null,
+      periodEndDate: cal.periodEndDate ?? null,
+      paymentDate: cal.paymentDate ?? null,
+    };
   },
 };
 

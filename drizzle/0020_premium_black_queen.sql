@@ -1,0 +1,1 @@
+ALTER TABLE "xero_timesheet_push" ADD COLUMN "attempt" integer DEFAULT 1 NOT NULL;
