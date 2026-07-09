@@ -21,11 +21,13 @@ import {
   googleDriveClient,
   isDriveConfigured,
 } from "@/lib/google-drive/client";
+import { isXeroConfigured } from "@/lib/xero/client";
 import { logger } from "@/lib/logger";
 import { initials } from "@/lib/avatar";
 import {
   Banner,
   Button,
+  ButtonLink,
   Field,
   Icon,
   PageHeader,
@@ -39,6 +41,7 @@ import { UseMyLocationButton } from "@/components/UseMyLocationButton";
 const PATH = "/app/settings";
 const LINK_COOKIE = "kiosk_link_once";
 const CLOCK_LINK_COOKIE = "personal_clock_link_once";
+const XERO_INVITE_COOKIE = "xero_invite_once";
 
 export default async function SettingsPage({
   searchParams,
@@ -49,6 +52,11 @@ export default async function SettingsPage({
     driveConnected?: string;
     driveDisconnected?: string;
     driveError?: string;
+    xeroConnected?: string;
+    xeroConfirmed?: string;
+    xeroDisconnected?: string;
+    xeroInvited?: string;
+    xeroError?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -78,6 +86,19 @@ export default async function SettingsPage({
   // owner manages the connection here.
   const driveConfigured = isDriveConfigured();
   const driveConnection = await repo.getDriveConnection();
+
+  // Xero payroll. Connect/callback live in API routes; the owner connects (or
+  // invites a bookkeeper), confirms the org name, and disconnects here.
+  const xeroConfigured = isXeroConfigured();
+  const xeroConnection = await repo.getXeroConnection();
+  const xeroInvites = xeroConnection ? [] : await repo.listXeroConnectInvites();
+  const activeXeroInvites = xeroInvites.filter(
+    (i) => !i.consumedAt && !i.revokedAt && i.expiresAt > new Date(),
+  );
+  const freshInviteToken = cookieStore.get(XERO_INVITE_COOKIE)?.value ?? null;
+  const freshInviteLink = freshInviteToken
+    ? `${env.APP_URL}/xero/connect/${freshInviteToken}`
+    : null;
 
   async function togglePhoto(formData: FormData) {
     "use server";
@@ -202,6 +223,71 @@ export default async function SettingsPage({
     redirect(`${PATH}?driveDisconnected=1`);
   }
 
+  // --- Xero payroll actions ----------------------------------------------
+  async function confirmXero(formData: FormData) {
+    "use server";
+    const owner = await requireOwner();
+    const repo = createTenantRepo(owner.businessId);
+    const expectedTenantId = String(formData.get("tenantId") ?? "");
+    // Only activates when the org id matches what the owner was shown.
+    await repo.confirmXeroConnection({
+      userId: owner.userId,
+      expectedTenantId,
+    });
+    revalidatePath(PATH);
+    redirect(`${PATH}?xeroConfirmed=1`);
+  }
+
+  async function disconnectXero() {
+    "use server";
+    const repo = await ownerRepo();
+    await repo.deleteXeroConnection();
+    revalidatePath(PATH);
+    redirect(`${PATH}?xeroDisconnected=1`);
+  }
+
+  async function createXeroInvite(formData: FormData) {
+    "use server";
+    const owner = await requireOwner();
+    const repo = createTenantRepo(owner.businessId);
+    const email = String(formData.get("email") ?? "")
+      .trim()
+      .toLowerCase();
+    if (!email || !email.includes("@")) {
+      redirect(
+        `${PATH}?xeroError=${encodeURIComponent(
+          "Enter a valid email for your bookkeeper.",
+        )}`,
+      );
+    }
+    const { token, tokenHash } = generateToken();
+    await repo.createXeroConnectInvite({
+      tokenHash,
+      sentToEmail: email,
+      createdByUserId: owner.userId,
+      expiresAt: new Date(Date.now() + 72 * 60 * 60 * 1000), // 72h
+    });
+    // Show the raw link exactly once (only its hash is stored).
+    const store = await cookies();
+    store.set(XERO_INVITE_COOKIE, token, {
+      path: PATH,
+      maxAge: 300,
+      httpOnly: false,
+      sameSite: "lax",
+      secure: env.NODE_ENV === "production",
+    });
+    revalidatePath(PATH);
+    redirect(`${PATH}?xeroInvited=1`);
+  }
+
+  async function revokeXeroInvite(formData: FormData) {
+    "use server";
+    const repo = await ownerRepo();
+    await repo.revokeXeroConnectInvite(String(formData.get("id") ?? ""));
+    revalidatePath(PATH);
+    redirect(PATH);
+  }
+
   const selectClass =
     "rounded-[8px] border border-[#E5E7EB] bg-white px-[10px] py-[7px] text-[12.5px] font-medium text-[#374151] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.16)]";
   const linkInputClass =
@@ -227,6 +313,25 @@ export default async function SettingsPage({
         </Banner>
       ) : null}
       {sp.driveError ? <Banner tone="warn">{sp.driveError}</Banner> : null}
+      {sp.xeroConnected ? (
+        <Banner tone="success">
+          Xero connected. Confirm your organisation below to finish.
+        </Banner>
+      ) : null}
+      {sp.xeroConfirmed ? (
+        <Banner tone="success">
+          Xero organisation confirmed — you can now push approved hours.
+        </Banner>
+      ) : null}
+      {sp.xeroDisconnected ? (
+        <Banner tone="success">Xero disconnected.</Banner>
+      ) : null}
+      {sp.xeroInvited ? (
+        <Banner tone="success">
+          Bookkeeper invite created — copy the link below and send it to them.
+        </Banner>
+      ) : null}
+      {sp.xeroError ? <Banner tone="warn">{sp.xeroError}</Banner> : null}
 
       <div className="grid grid-cols-1 items-start gap-[18px] lg:grid-cols-2">
         {/* LEFT COLUMN */}
@@ -615,6 +720,201 @@ export default async function SettingsPage({
                     Connect Google Drive
                   </Button>
                 </form>
+              </>
+            )}
+          </SectionCard>
+
+          {/* Xero Payroll -------------------------------------------- */}
+          <SectionCard title="Xero Payroll">
+            {!xeroConfigured ? (
+              <Banner tone="info">
+                Xero isn’t set up on this server yet. Once your administrator
+                configures it, you’ll be able to connect here.
+              </Banner>
+            ) : xeroConnection ? (
+              <>
+                {xeroConnection.status === "pending_confirmation" ? (
+                  <div className="mb-[14px]">
+                    <Banner tone="info">
+                      Connected to <strong>{xeroConnection.orgName}</strong>
+                      {xeroConnection.connectedAccountEmail
+                        ? ` (${xeroConnection.connectedAccountEmail})`
+                        : ""}
+                      . Is this your Xero organisation? Confirm to finish —
+                      nothing can be pushed until you do.
+                    </Banner>
+                    <form action={confirmXero} className="mt-[12px]">
+                      <input
+                        type="hidden"
+                        name="tenantId"
+                        value={xeroConnection.xeroTenantId}
+                      />
+                      <Button type="submit">
+                        Yes — that’s my organisation
+                      </Button>
+                    </form>
+                  </div>
+                ) : (
+                  <>
+                    {xeroConnection.needsReconnect ? (
+                      <div className="mb-[14px]">
+                        <Banner tone="warn">
+                          Xero needs to be reconnected — access expired or was
+                          revoked.
+                        </Banner>
+                      </div>
+                    ) : null}
+                    <div className="mb-[14px] flex items-center gap-3">
+                      <span
+                        aria-hidden="true"
+                        className="flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-[11px] bg-[#ECFDF3]"
+                      >
+                        <Icon
+                          name="check_circle"
+                          fill
+                          className="text-[24px] text-[#16A34A]"
+                        />
+                      </span>
+                      <div>
+                        <div className="text-[14px] font-bold text-[#111827]">
+                          Connected to {xeroConnection.orgName}
+                        </div>
+                        <div className="text-[12.5px] text-[#6B7280]">
+                          {xeroConnection.connectedAccountEmail ||
+                            "Xero organisation"}{" "}
+                          · draft timesheets only
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mb-[14px] flex flex-wrap gap-2">
+                      <ButtonLink href="/app/xero" variant="secondary">
+                        Map staff to Xero
+                      </ButtonLink>
+                      <ButtonLink href="/app/timesheets" variant="ghost">
+                        Push hours from Timesheets
+                      </ButtonLink>
+                    </div>
+                  </>
+                )}
+                <div className="flex flex-wrap items-center gap-3 border-t border-[#F3F4F6] pt-[14px]">
+                  {xeroConnection.needsReconnect ? (
+                    <form action="/api/integrations/xero/connect" method="get">
+                      <Button type="submit">Reconnect Xero</Button>
+                    </form>
+                  ) : null}
+                  <form action={disconnectXero}>
+                    <button
+                      type="submit"
+                      className="rounded-[9px] border border-[#FECACA] bg-white px-[15px] py-[9px] text-[13px] font-semibold text-[#B91C1C] transition-colors hover:bg-[#FEF2F2]"
+                    >
+                      Disconnect
+                    </button>
+                  </form>
+                  <span className="flex-1 text-[11.5px] text-[#9CA3AF]">
+                    Roster only ever creates DRAFT timesheets — you approve and
+                    run pay in Xero.
+                  </span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-start gap-[13px]">
+                  <span
+                    aria-hidden="true"
+                    className="flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-[11px] bg-[#F3F4F6]"
+                  >
+                    <Icon
+                      name="sync_alt"
+                      className="text-[24px] text-[#9CA3AF]"
+                    />
+                  </span>
+                  <div className="flex-1">
+                    <div className="text-[14px] font-bold text-[#111827]">
+                      Connect Xero
+                    </div>
+                    <div className="mt-[3px] text-[12.5px] leading-[1.5] text-[#6B7280]">
+                      Push approved hours to Xero as <strong>draft</strong>{" "}
+                      timesheets for a human to review and run. Roster never
+                      calculates or finalises pay. The person who authorises
+                      must be a Xero payroll administrator.
+                    </div>
+                  </div>
+                </div>
+                <form
+                  action="/api/integrations/xero/connect"
+                  method="get"
+                  className="mt-[14px]"
+                >
+                  <Button type="submit" className="w-full">
+                    Connect Xero
+                  </Button>
+                </form>
+
+                {/* Delegated bookkeeper invite */}
+                <div className="mt-[16px] border-t border-[#F3F4F6] pt-[14px]">
+                  <div className="text-[13px] font-bold text-[#111827]">
+                    Not the payroll admin? Invite your bookkeeper
+                  </div>
+                  <div className="mt-[3px] text-[12px] leading-[1.5] text-[#6B7280]">
+                    Send a one-time link so your bookkeeper or accountant can
+                    connect Xero for you. You’ll still confirm the organisation
+                    before anything can be pushed.
+                  </div>
+                  {freshInviteLink ? (
+                    <div className="mt-[12px]">
+                      <ClearFlashCookie name={XERO_INVITE_COOKIE} />
+                      <Banner tone="success">
+                        Copy this link now — for security we won’t show it
+                        again.
+                      </Banner>
+                      <input
+                        readOnly
+                        aria-label="Bookkeeper connect link"
+                        value={freshInviteLink}
+                        className={`${linkInputClass} mt-[7px] w-full`}
+                      />
+                    </div>
+                  ) : null}
+                  <form
+                    action={createXeroInvite}
+                    className="mt-[12px] flex flex-wrap gap-2"
+                  >
+                    <input
+                      type="email"
+                      name="email"
+                      required
+                      placeholder="bookkeeper@example.com"
+                      aria-label="Bookkeeper email"
+                      className="min-w-[180px] flex-1 rounded-[9px] border border-[#E5E7EB] px-3 py-[9px] text-[13px] text-[#374151] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.16)]"
+                    />
+                    <Button type="submit" variant="secondary">
+                      Create invite link
+                    </Button>
+                  </form>
+                  {activeXeroInvites.length > 0 ? (
+                    <div className="mt-[12px] flex flex-col gap-[8px]">
+                      {activeXeroInvites.map((inv) => (
+                        <div
+                          key={inv.id}
+                          className="flex items-center justify-between gap-3 rounded-[9px] bg-[#F9FAFB] px-[11px] py-[8px]"
+                        >
+                          <span className="text-[12.5px] text-[#374151]">
+                            Invite for {inv.sentToEmail}
+                          </span>
+                          <form action={revokeXeroInvite}>
+                            <input type="hidden" name="id" value={inv.id} />
+                            <button
+                              type="submit"
+                              className="text-[12px] font-semibold text-[#B91C1C] hover:underline"
+                            >
+                              Revoke
+                            </button>
+                          </form>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               </>
             )}
           </SectionCard>
