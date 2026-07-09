@@ -216,6 +216,43 @@ Redeploy. Owners will then see **Connect Google Drive** in Settings. The flow
 **fails closed**: if any of these four are missing, connecting stays disabled and
 no token is ever stored. The worker does **not** need these (no Drive jobs).
 
+### 7. (Optional) Enable Xero Payroll AU
+
+Owners connect their Xero org and push **approved** hours as **DRAFT** timesheets
+for a human to approve + run inside Xero. The app has **no pay-run capability**
+and never calculates pay. It's off until you configure it. On **developer.xero.com**:
+
+1. Create an **OAuth 2.0 app** and add this exact redirect URI:
+   `https://roster.zaleit.com.au/api/integrations/xero/callback`
+2. Grant only **read/timesheet** scopes: `openid profile email offline_access
+payroll.timesheets payroll.employees.read payroll.settings.read` — **never
+   `payroll.payruns`**.
+3. In **Vercel → Environment Variables (Production)** set `XERO_CLIENT_ID`,
+   `XERO_CLIENT_SECRET`, `XERO_OAUTH_REDIRECT_URI` (the URI above), and reuse the
+   same `TOKEN_ENCRYPTION_KEY` as Google Drive. The connect flow **fails closed**
+   until all are present. Both the owner and a delegated bookkeeper (via a
+   one-time invite link) can complete the connection; the owner then confirms the
+   org name before anything can push.
+
+> #### ⚠️ Xero — live-verify checklist (do at the FIRST live AU connect, before any real business uses it)
+>
+> Two Xero facts could not be confirmed from the docs (they 403 automated fetch)
+> and are isolated in `src/lib/xero/tokens.ts` for exactly this reason. Verify
+> them against a **real AU demo company** post-connect, before go-live:
+>
+> 1. **`XERO_TIMESHEET_BASE_PATH`** (`https://api.xero.com/payroll.xro/2.0`) — a
+>    `GET`/`POST` to `/Timesheets` is accepted for an **AU** tenant. If AU uses a
+>    different base for 2.0 timesheets, change this one constant.
+> 2. **`XERO_TIMESHEET_SCOPE`** (`payroll.timesheets`) — this scope actually grants
+>    AU 2.0 timesheet access. If AU needs a version-specific scope, change this one
+>    constant (no re-consent concern before launch — no owner is connected yet).
+>
+> Everything else (ISO dates, `payrollCalendarID`, per-day scalar `numberOfUnits`,
+> title-case `Draft`, the DELETE/response envelope) is verified from Xero's
+> generated 2.0 SDK models. Full history + rationale: `docs/xero-payroll-integration-plan.md`.
+
+The worker does **not** need the Xero env (pushes are owner-initiated, no cron).
+
 ## Project layout
 
 ```
@@ -262,3 +299,4 @@ tests/            unit + integration tests
 - [x] M23 — Form builder Phase 3a (new-response notifications): the owner gets a coalesced in-app bell notification when a form response arrives (public or staff). A new `form_response` event reuses the existing bell + a per-event preference; notifications collapse into one updating "N new responses to <form>" item per form (count only — never answer content or respondent identity, so anonymous and attributed read identically) and reset when read. Fired best-effort after the response commits, so a notification failure can never break a submit. In-app only (email digest deferred); additive migration `0016`.
 - [x] M24 — Google Drive document storage (Phase 1 of 4): owners connect their own Google Drive (drive.file scope only — an additional authorization, NOT a login) from Settings and upload per-staff documents that live in their Drive, with the app storing only a reference. OAuth tokens are AES-256-GCM encrypted (`TOKEN_ENCRYPTION_KEY`, fail-closed); the flow handles refresh + revoke→reconnect without crashing. Uploads stream through the server (10 MB cap + mime allow-list, bytes never stored/logged); delete removes the reference and the Drive file; disconnect leaves Drive files untouched. Additive migration `0017`. Requires Google Cloud setup + env vars (see Production deployment). Later phases (separate): OneDrive, Dropbox, onboarding checklists.
 - [x] M26 — High-fidelity UI redesign to the "Roster" design handoff (stored in `design/`, tracked in `docs/design-implementation-plan.md`): presentation-only (no schema/logic/tenancy change). Widened the owner app to a 1340px dark-nav layout with the ROSTER wordmark, expanded the shared UI kit (`src/components/ui.tsx`) + a deterministic avatar helper, and restyled every screen — dashboard, rosters/builder, shift types, timesheets, reports, staff, leave, certs, stock, items, suppliers, settings, notifications, the marketing landing, passwordless auth/onboarding, and the dark kiosk + phone clock-in — to match the design screenshots. Data-model gaps (item category/reorder, supplier category, staff role) are shown as labelled placeholders. Follow-up: the four staff phone pages (/me, /r, /a, /me forms) got bespoke light designs via a shared StaffHeader, and the kiosk/personal-phone sub-flow forms were dark-themed for a coherent clock-in experience.
+- [x] M27 — Xero Payroll AU integration: owners connect their Xero org (owner OAuth **or** a delegated single-use bookkeeper invite consumed atomically in the callback), confirm the org name, map staff to Xero employees with an auto-resolved + editable ordinary earnings rate, and push **approved** hours as **DRAFT** timesheets for each employee's Xero pay period (dates read straight from Xero — no local period math). **HARD BOUNDARY: draft timesheets only — the narrow `fetch` client has NO pay-run, approve/revert, or employee-write method (guard-tested), and never requests `payroll.payruns`; a human approves + runs pay in Xero.** Payroll 2.0 wire shapes source-verified from Xero's generated SDK models; the base-path + scope are isolated for a first-live-connect verify (see the Xero live-verify checklist). Re-push is a delete-then-create with an invariant (`xero_timesheet_id` non-null ⟺ a live Draft) and a per-attempt idempotency key so a post-delete replay can't hit Xero's cache; cancel guards still-Draft. Tokens AES-256-GCM encrypted (shared `TOKEN_ENCRYPTION_KEY`, fail-closed). Additive migrations `0019` (4 tables) + `0020` (`attempt`). Plan/history: `docs/xero-payroll-integration-plan.md`.

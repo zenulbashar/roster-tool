@@ -4,10 +4,12 @@ import {
   desc,
   eq,
   ne,
+  gt,
   gte,
   lte,
   lt,
   isNull,
+  isNotNull,
   inArray,
   notExists,
   sql,
@@ -39,6 +41,10 @@ import {
   formResponseAnswers,
   googleDriveConnections,
   staffDocuments,
+  xeroConnections,
+  xeroConnectInvites,
+  xeroEmployeeMaps,
+  xeroTimesheetPushes,
   type FormFieldOption,
 } from "@/lib/db/schema";
 import { formResponseTitle, type NotificationType } from "@/lib/notifications";
@@ -49,7 +55,7 @@ import type {
   FormFieldInput,
 } from "@/lib/validation";
 import type { AnswerRow } from "@/lib/form-submission";
-import { generateSlug } from "@/lib/tokens";
+import { generateSlug, hashToken } from "@/lib/tokens";
 import type { StockStatus } from "@/lib/order-reminder";
 import type { ReminderStage } from "@/lib/certification";
 import type { SetupFlags } from "@/lib/getting-started";
@@ -3700,7 +3706,513 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .returning();
       return row ?? null;
     },
+
+    /* ---------------------------------------------------------------------- */
+    /* Xero Payroll AU: connection + delegated connect invites                */
+    /*                                                                        */
+    /* One connection per business; OAuth tokens are stored already-encrypted */
+    /* by the caller (this layer never encrypts/decrypts, mirroring Drive).   */
+    /* A connection is stored `pending_confirmation` on every (re)connect and */
+    /* only becomes push-eligible once the OWNER confirms the org name.       */
+    /* Invites are the delegated bookkeeper "Connect Xero" link (mint here,   */
+    /* consumed atomically — cross-tenant — in xero-invite-access.ts). Every  */
+    /* method is business-scoped EXCEPT the consume, which has no session.    */
+    /* ---------------------------------------------------------------------- */
+
+    getXeroConnection() {
+      return first(
+        database
+          .select()
+          .from(xeroConnections)
+          .where(eq(xeroConnections.businessId, businessId)),
+      );
+    },
+
+    /**
+     * Create or replace this business's single Xero connection. ALWAYS stored
+     * `pending_confirmation` with the confirmation cleared — a (re)connect is a
+     * security-relevant event, so the owner must re-confirm the connected org's
+     * name before any push. Tokens arrive already AES-256-GCM encrypted.
+     */
+    async upsertXeroConnection(input: {
+      xeroTenantId: string;
+      orgName: string;
+      connectedAccountEmail: string;
+      accessTokenEnc: string;
+      refreshTokenEnc: string;
+      tokenExpiry: Date;
+      authorisedScopes: string | null;
+      connectedViaInviteId: string | null;
+      connectedIp: string | null;
+      connectedUserAgent: string | null;
+    }) {
+      const [row] = await database
+        .insert(xeroConnections)
+        .values({
+          ...input,
+          businessId,
+          needsReconnect: false,
+          status: "pending_confirmation",
+          confirmedByUserId: null,
+          confirmedAt: null,
+        })
+        .onConflictDoUpdate({
+          target: xeroConnections.businessId,
+          set: {
+            xeroTenantId: input.xeroTenantId,
+            orgName: input.orgName,
+            connectedAccountEmail: input.connectedAccountEmail,
+            accessTokenEnc: input.accessTokenEnc,
+            refreshTokenEnc: input.refreshTokenEnc,
+            tokenExpiry: input.tokenExpiry,
+            authorisedScopes: input.authorisedScopes,
+            connectedViaInviteId: input.connectedViaInviteId,
+            connectedIp: input.connectedIp,
+            connectedUserAgent: input.connectedUserAgent,
+            needsReconnect: false,
+            status: "pending_confirmation",
+            confirmedByUserId: null,
+            confirmedAt: null,
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+      return row!;
+    },
+
+    /**
+     * Owner confirms the connected org's name, activating the connection so it
+     * can push. Guarded on the exact tenant id the owner was shown AND on the
+     * still-`pending_confirmation` status, so a stale/raced confirmation can't
+     * activate a different org. Returns the row, or null when nothing matched.
+     */
+    async confirmXeroConnection(input: {
+      userId: string;
+      expectedTenantId: string;
+    }) {
+      const [row] = await database
+        .update(xeroConnections)
+        .set({
+          status: "active",
+          confirmedByUserId: input.userId,
+          confirmedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(xeroConnections.businessId, businessId),
+            eq(xeroConnections.xeroTenantId, input.expectedTenantId),
+            eq(xeroConnections.status, "pending_confirmation"),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    /**
+     * Persist freshly refreshed tokens (clears needs_reconnect). Xero ROTATES
+     * the refresh token on every refresh, so BOTH the access and refresh tokens
+     * are replaced here — unlike Google Drive, which keeps one refresh token.
+     */
+    async updateXeroTokens(input: {
+      accessTokenEnc: string;
+      refreshTokenEnc: string;
+      tokenExpiry: Date;
+    }) {
+      const [row] = await database
+        .update(xeroConnections)
+        .set({
+          accessTokenEnc: input.accessTokenEnc,
+          refreshTokenEnc: input.refreshTokenEnc,
+          tokenExpiry: input.tokenExpiry,
+          needsReconnect: false,
+          updatedAt: new Date(),
+        })
+        .where(eq(xeroConnections.businessId, businessId))
+        .returning();
+      return row ?? null;
+    },
+
+    /** Record that the stored Xero refresh token no longer works. */
+    async markXeroNeedsReconnect() {
+      const [row] = await database
+        .update(xeroConnections)
+        .set({ needsReconnect: true, updatedAt: new Date() })
+        .where(eq(xeroConnections.businessId, businessId))
+        .returning();
+      return row ?? null;
+    },
+
+    /** Disconnect: forget the tokens entirely (nothing in Xero is touched). */
+    async deleteXeroConnection() {
+      await database
+        .delete(xeroConnections)
+        .where(eq(xeroConnections.businessId, businessId));
+    },
+
+    /** Mint a delegated "Connect Xero" invite (owner-only; raw token emailed,
+     * only its hash stored). Expiry is computed by the caller (72h). */
+    async createXeroConnectInvite(input: {
+      tokenHash: string;
+      sentToEmail: string;
+      createdByUserId: string;
+      expiresAt: Date;
+    }) {
+      const [row] = await database
+        .insert(xeroConnectInvites)
+        .values({ ...input, businessId })
+        .returning();
+      return row!;
+    },
+
+    /** Invites for the owner's audit panel, newest first. */
+    listXeroConnectInvites() {
+      return database
+        .select()
+        .from(xeroConnectInvites)
+        .where(eq(xeroConnectInvites.businessId, businessId))
+        .orderBy(desc(xeroConnectInvites.createdAt));
+    },
+
+    /** Owner revokes a still-pending invite (sets `revoked_at` if not already
+     * consumed/revoked). Business-scoped; returns the row or null. */
+    async revokeXeroConnectInvite(id: string, now: Date = new Date()) {
+      const [row] = await database
+        .update(xeroConnectInvites)
+        .set({ revokedAt: now })
+        .where(
+          and(
+            eq(xeroConnectInvites.id, id),
+            eq(xeroConnectInvites.businessId, businessId),
+            isNull(xeroConnectInvites.consumedAt),
+            isNull(xeroConnectInvites.revokedAt),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    /* ---- Xero staff↔employee mapping (#15) ------------------------------- */
+
+    /** All staff↔employee mappings for this business (for the mapping UI). */
+    listXeroEmployeeMaps() {
+      return database
+        .select()
+        .from(xeroEmployeeMaps)
+        .where(eq(xeroEmployeeMaps.businessId, businessId));
+    },
+
+    /** One staff member's mapping, or null. */
+    getXeroEmployeeMapForStaff(staffMemberId: string) {
+      return first(
+        database
+          .select()
+          .from(xeroEmployeeMaps)
+          .where(
+            and(
+              eq(xeroEmployeeMaps.businessId, businessId),
+              eq(xeroEmployeeMaps.staffMemberId, staffMemberId),
+            ),
+          ),
+      );
+    },
+
+    /**
+     * Create or replace a staff member's Xero employee mapping (one per staff
+     * per business). The `earningsRateId` is the resolved/owner-chosen ordinary
+     * rate; null means unresolved → that person is blocked from push. The
+     * `payrollCalendarId` is snapshotted from the Xero employee.
+     */
+    async upsertXeroEmployeeMap(input: {
+      staffMemberId: string;
+      xeroEmployeeId: string;
+      xeroEmployeeName: string;
+      earningsRateId: string | null;
+      payrollCalendarId: string | null;
+    }) {
+      const [row] = await database
+        .insert(xeroEmployeeMaps)
+        .values({ ...input, businessId })
+        .onConflictDoUpdate({
+          target: [xeroEmployeeMaps.businessId, xeroEmployeeMaps.staffMemberId],
+          set: {
+            xeroEmployeeId: input.xeroEmployeeId,
+            xeroEmployeeName: input.xeroEmployeeName,
+            earningsRateId: input.earningsRateId,
+            payrollCalendarId: input.payrollCalendarId,
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+      return row!;
+    },
+
+    /** Remove a staff member's mapping. Business-scoped. */
+    async deleteXeroEmployeeMap(staffMemberId: string) {
+      const [row] = await database
+        .delete(xeroEmployeeMaps)
+        .where(
+          and(
+            eq(xeroEmployeeMaps.businessId, businessId),
+            eq(xeroEmployeeMaps.staffMemberId, staffMemberId),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    /* ---- Xero timesheet push (#16) -------------------------------------- */
+
+    /**
+     * APPROVED, CLOSED timesheet entries (clock-out present) whose clock-in is
+     * in [startUtc, endUtc), per staff member — the eligible hours for a push.
+     * Business-scoped, READ-ONLY. The pure `buildTimesheetLines` buckets these
+     * by business-local day within the Xero period.
+     */
+    listApprovedClosedEntriesForPush(startUtc: Date, endUtc: Date) {
+      return database
+        .select({
+          staffMemberId: timesheetEntries.staffMemberId,
+          clockInAt: timesheetEntries.clockInAt,
+          clockOutAt: timesheetEntries.clockOutAt,
+        })
+        .from(timesheetEntries)
+        .where(
+          and(
+            eq(timesheetEntries.businessId, businessId),
+            eq(timesheetEntries.approved, true),
+            isNotNull(timesheetEntries.clockOutAt),
+            gte(timesheetEntries.clockInAt, startUtc),
+            lt(timesheetEntries.clockInAt, endUtc),
+          ),
+        )
+        .orderBy(asc(timesheetEntries.clockInAt));
+    },
+
+    /** One push row for a (staff, period), or null. */
+    getXeroPush(staffMemberId: string, periodStart: string, periodEnd: string) {
+      return first(
+        database
+          .select()
+          .from(xeroTimesheetPushes)
+          .where(
+            and(
+              eq(xeroTimesheetPushes.businessId, businessId),
+              eq(xeroTimesheetPushes.staffMemberId, staffMemberId),
+              eq(xeroTimesheetPushes.periodStart, periodStart),
+              eq(xeroTimesheetPushes.periodEnd, periodEnd),
+            ),
+          ),
+      );
+    },
+
+    /** One push row by id (for the owner's cancel action). Business-scoped. */
+    getXeroPushById(id: string) {
+      return first(
+        database
+          .select()
+          .from(xeroTimesheetPushes)
+          .where(
+            and(
+              eq(xeroTimesheetPushes.id, id),
+              eq(xeroTimesheetPushes.businessId, businessId),
+            ),
+          ),
+      );
+    },
+
+    /** All push rows for a period (for the owner's push panel). */
+    listXeroPushesForPeriod(periodStart: string, periodEnd: string) {
+      return database
+        .select()
+        .from(xeroTimesheetPushes)
+        .where(
+          and(
+            eq(xeroTimesheetPushes.businessId, businessId),
+            eq(xeroTimesheetPushes.periodStart, periodStart),
+            eq(xeroTimesheetPushes.periodEnd, periodEnd),
+          ),
+        );
+    },
+
+    /**
+     * Record a LIVE draft (first push success OR re-push create success). Upsert
+     * on the period-unique key: sets `status = draft`, the Xero timesheet id,
+     * hours/hash/key/attempt, and `pushed_at`. INVARIANT: a `draft` row always
+     * has a non-null `xero_timesheet_id`.
+     */
+    async saveXeroPushDraft(input: {
+      staffMemberId: string;
+      xeroEmployeeId: string;
+      periodStart: string;
+      periodEnd: string;
+      xeroTimesheetId: string;
+      hoursTotal: number;
+      payloadHash: string;
+      idempotencyKey: string;
+      attempt: number;
+      now?: Date;
+    }) {
+      const now = input.now ?? new Date();
+      const [row] = await database
+        .insert(xeroTimesheetPushes)
+        .values({
+          businessId,
+          staffMemberId: input.staffMemberId,
+          xeroEmployeeId: input.xeroEmployeeId,
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          xeroTimesheetId: input.xeroTimesheetId,
+          status: "draft",
+          hoursTotal: input.hoursTotal,
+          payloadHash: input.payloadHash,
+          idempotencyKey: input.idempotencyKey,
+          attempt: input.attempt,
+          pushedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [
+            xeroTimesheetPushes.businessId,
+            xeroTimesheetPushes.staffMemberId,
+            xeroTimesheetPushes.periodStart,
+            xeroTimesheetPushes.periodEnd,
+          ],
+          set: {
+            xeroEmployeeId: input.xeroEmployeeId,
+            xeroTimesheetId: input.xeroTimesheetId,
+            status: "draft",
+            hoursTotal: input.hoursTotal,
+            payloadHash: input.payloadHash,
+            idempotencyKey: input.idempotencyKey,
+            attempt: input.attempt,
+            pushedAt: now,
+            updatedAt: now,
+          },
+        })
+        .returning();
+      return row!;
+    },
+
+    /**
+     * Enter the "NO LIVE DRAFT" state — `status = failed`, `xero_timesheet_id =
+     * NULL`. Used BOTH as the gap marker (persisted the instant a delete
+     * succeeds, BEFORE the recreate, with the incremented `attempt`) AND as the
+     * terminal state when a create fails. Because a crash mid-gap leaves exactly
+     * this row, the invariant "id non-null ⟺ live draft" holds even on crash;
+     * the owner sees the distinct "no draft currently exists" state, never a
+     * pointer to a deleted timesheet. Upsert on the period-unique key.
+     */
+    async markXeroPushNoDraft(input: {
+      staffMemberId: string;
+      xeroEmployeeId: string;
+      periodStart: string;
+      periodEnd: string;
+      hoursTotal: number;
+      payloadHash: string;
+      idempotencyKey: string;
+      attempt: number;
+      now?: Date;
+    }) {
+      const now = input.now ?? new Date();
+      const [row] = await database
+        .insert(xeroTimesheetPushes)
+        .values({
+          businessId,
+          staffMemberId: input.staffMemberId,
+          xeroEmployeeId: input.xeroEmployeeId,
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          xeroTimesheetId: null,
+          status: "failed",
+          hoursTotal: input.hoursTotal,
+          payloadHash: input.payloadHash,
+          idempotencyKey: input.idempotencyKey,
+          attempt: input.attempt,
+        })
+        .onConflictDoUpdate({
+          target: [
+            xeroTimesheetPushes.businessId,
+            xeroTimesheetPushes.staffMemberId,
+            xeroTimesheetPushes.periodStart,
+            xeroTimesheetPushes.periodEnd,
+          ],
+          set: {
+            xeroEmployeeId: input.xeroEmployeeId,
+            xeroTimesheetId: null,
+            status: "failed",
+            hoursTotal: input.hoursTotal,
+            payloadHash: input.payloadHash,
+            idempotencyKey: input.idempotencyKey,
+            attempt: input.attempt,
+            updatedAt: now,
+          },
+        })
+        .returning();
+      return row!;
+    },
+
+    /** Cancel a push row: `status = cancelled`, `xero_timesheet_id = NULL` (same
+     * invariant — no live draft ⇒ null id). Business-scoped, by row id. */
+    async markXeroPushCancelled(id: string, now: Date = new Date()) {
+      const [row] = await database
+        .update(xeroTimesheetPushes)
+        .set({ status: "cancelled", xeroTimesheetId: null, updatedAt: now })
+        .where(
+          and(
+            eq(xeroTimesheetPushes.id, id),
+            eq(xeroTimesheetPushes.businessId, businessId),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
   };
+}
+
+/**
+ * Atomically consume a delegated Xero "Connect" invite in the OAuth callback.
+ *
+ * Deliberately CROSS-TENANT (like `resolveKioskBusiness`): the bookkeeper who
+ * follows the link has NO owner session, so the business is resolved FROM the
+ * winning invite — not from a pre-known id. The whole check-and-consume is a
+ * SINGLE atomic `UPDATE … WHERE consumed_at IS NULL AND revoked_at IS NULL AND
+ * expires_at > now RETURNING`, so:
+ *   - two concurrent callbacks can't both win (exactly one UPDATE affects the row),
+ *   - an owner who revokes mid-flow stops the completion, and
+ *   - an expired link can't be consumed —
+ * all WITHOUT a race-prone SELECT-then-UPDATE. Returns the consumed invite row
+ * (carrying `businessId`) when THIS call won, else null. We look up by the
+ * SHA-256 token hash, never the raw token.
+ */
+export async function consumeXeroConnectInvite(
+  rawToken: string,
+  opts: {
+    now?: Date;
+    consumedIp?: string | null;
+    consumedUserAgent?: string | null;
+  } = {},
+  database: Db = defaultDb,
+): Promise<typeof xeroConnectInvites.$inferSelect | null> {
+  if (!rawToken) return null;
+  const now = opts.now ?? new Date();
+  const tokenHash = hashToken(rawToken);
+  const [row] = await database
+    .update(xeroConnectInvites)
+    .set({
+      consumedAt: now,
+      consumedIp: opts.consumedIp ?? null,
+      consumedUserAgent: opts.consumedUserAgent ?? null,
+    })
+    .where(
+      and(
+        eq(xeroConnectInvites.tokenHash, tokenHash),
+        isNull(xeroConnectInvites.consumedAt),
+        isNull(xeroConnectInvites.revokedAt),
+        gt(xeroConnectInvites.expiresAt, now),
+      ),
+    )
+    .returning();
+  return row ?? null;
 }
 
 /** Result of `saveForm` — see its doc for the publish-lock rule. */

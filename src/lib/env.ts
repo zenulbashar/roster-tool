@@ -66,6 +66,22 @@ const baseEnvSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_OAUTH_REDIRECT_URI: z.string().url().optional(),
   TOKEN_ENCRYPTION_KEY: z.string().optional(),
+
+  // Xero Payroll AU integration (owner connects their business's Xero org so
+  // APPROVED hours push as DRAFT timesheets — a human finalises pay in Xero;
+  // this build has NO pay-run capability). Like Google Drive, this is an
+  // ADDITIONAL authorization, NOT a sign-in method (owner Auth.js login is
+  // untouched). All three are OPTIONAL so the app always boots; the connect
+  // flow FAILS CLOSED (refuses to start, shows a clear message) when any are
+  // missing OR when TOKEN_ENCRYPTION_KEY (shared with Drive) is unset/invalid,
+  // so an OAuth token can never be written without encryption.
+  //  - XERO_CLIENT_ID / XERO_CLIENT_SECRET: the Xero OAuth 2.0 app credentials.
+  //  - XERO_OAUTH_REDIRECT_URI: must EXACTLY match a redirect URI registered on
+  //    the Xero app, e.g.
+  //    https://roster.zaleit.com.au/api/integrations/xero/callback
+  XERO_CLIENT_ID: z.string().optional(),
+  XERO_CLIENT_SECRET: z.string().optional(),
+  XERO_OAUTH_REDIRECT_URI: z.string().url().optional(),
 });
 
 const envSchema = baseEnvSchema.superRefine((val, ctx) => {

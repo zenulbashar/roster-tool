@@ -40,7 +40,11 @@ emails (see below).
 **Out of scope (post-MVP):** SMS/WhatsApp, **payroll / wage calculation**
 (award interpretation, penalty rates, overtime, loading, super, STP — the app
 only records hours and a rate the owner typed, and shows an `hours × rate`
-estimate), **payroll API integration** (Xero/MYOB — file export only),
+estimate), **MYOB API integration** (file export only) and any **payroll
+CALCULATION via API** — note a **Xero DRAFT-timesheet push** was later added at
+the owner's request (M27; draft timesheets only, no pay-run/wage calculation —
+see "Xero Payroll AU" under Key product decisions), so "no payroll API" now means
+no pay-run/wage-calc API, not no API at all,
 **leave balances / accruals / entitlements** and any **NES/award leave
 calculation** (leave is request → approve/deny → record only),
 **persistent staff logins/accounts** (staff notices use a per-staff capability
@@ -554,6 +558,73 @@ hmac`, AUTH_SECRET-signed, 15 min — `src/lib/notices-verification.ts`,
     Drive (`tests/google-drive-flow.test.ts`). Pure helpers
     (`isTokenExpired`, `buildGoogleAuthUrl`, `validateUpload`, the AES helpers)
     are unit-tested in `tests/google-drive-helpers.test.ts` + `tests/crypto.test.ts`.
+- **Xero Payroll AU (M27)**: owners push **approved, closed** hours to Xero as
+  **DRAFT timesheets** for a human to approve + run pay on inside Xero. **HARD
+  BOUNDARY — Roster never calculates or processes pay**: the integration only
+  ever creates/updates/deletes DRAFT timesheets; there is **NO code path** to a
+  Xero pay run, to approving/reverting a timesheet, or to writing employee bank/
+  tax/super details, and `payroll.payruns` is never requested. Full plan +
+  decision history: `docs/xero-payroll-integration-plan.md`.
+  - **Uses AU Payroll 2.0 for timesheets** (`payroll.xro/2.0`): ISO
+    `YYYY-MM-DD` dates, explicit `payrollCalendarID`, one line **per day** with a
+    scalar `numberOfUnits`, title-case `"Draft"` status, a `{ timesheet }`
+    response envelope, and a **real `DELETE`**. Verified from Xero's generated 2.0
+    SDK models. (An earlier 1.0 attempt was reversed once the owner confirmed —
+    via a dated Xero changelog — that AU 2.0 timesheets exist; history is in the
+    plan doc.) **Two isolated live-verify constants** in `src/lib/xero/tokens.ts`
+    (`XERO_TIMESHEET_BASE_PATH`, `XERO_TIMESHEET_SCOPE`) are the ONLY details not
+    confirmable from the docs (they 403 automated fetch) — lock them at the first
+    live AU demo-company connect (README "Xero — live-verify checklist").
+  - **Narrow, mockable client** (`src/lib/xero/client.ts`): raw `fetch` (NOT the
+    `xero-node` SDK, so the boundary is structural — the forbidden methods simply
+    don't exist). Exposes OAuth + `getConnections` + read-only
+    `listEmployees`/`listEarningsRates`/`getEmployeePayTemplateEarnings`/
+    `getPayrollCalendar` + `createDraftTimesheet` (status hard-coded `"Draft"`,
+    the input has no status field) + `getTimesheet` + `deleteTimesheet`. A guard
+    test (`tests/xero-client-flow.test.ts`) pins the EXACT method set — no
+    approve/revert/pay-run/employee-write. `service.ts` mirrors the Drive service
+    (`completeXeroConnection`, `ensureFreshXeroAccessToken` — Xero rotates the
+    refresh token, so BOTH tokens are persisted on refresh; `invalid_grant` →
+    `needs_reconnect`). Tokens reuse `crypto.ts` (AES-256-GCM, shared
+    `TOKEN_ENCRYPTION_KEY`), fail-closed via `isXeroConfigured()`.
+  - **Connection is `pending_confirmation` until the owner confirms the org
+    name** (the link-interception catch): stored inactive on every (re)connect;
+    `confirmXeroConnection` activates ONLY when the owner confirms the exact
+    tenant id shown; a push is refused unless `active`. Connect works two ways —
+    the owner's own OAuth, or a **delegated single-use bookkeeper invite**
+    (`xero_connect_invite`): the raw token rides through OAuth in an httpOnly
+    cookie and is consumed by a **single atomic `UPDATE … WHERE consumed_at IS
+NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
+    (cross-tenant `consumeXeroConnectInvite`; single-use, revoke/expiry-safe,
+    race-safe), so a mail-client prefetch can't burn it.
+  - **Mapping + earnings rate** (`resolve.ts`, pure): each active staff → a Xero
+    employee; the ordinary earnings rate is the employee's pay-template
+    `RegularEarnings` line, else the org's sole `RegularEarnings` rate, else
+    UNRESOLVED (owner picks; blocked from push until then). Owner-editable. The
+    pay **period** comes straight from the employee's Xero calendar
+    (`periodStartDate`/`periodEndDate`) — **no local period math** (a wrong
+    period fails silently, so it is never computed).
+  - **Push / re-push / cancel** (`push.ts`): eligible = `approved`, closed
+    entries for mapped staff with a resolved rate. Aggregation
+    (`timesheet-lines.ts`, pure) → per-business-local-day lines (2dp, matching the
+    CSV/report) under a single ordinary rate. Re-push on 2.0 = **delete-then-
+    create** (no update verb), holding one INVARIANT: **`xero_timesheet_id` is
+    non-null ⟺ a live Draft exists** — the id is set to NULL the instant a delete
+    succeeds (before the recreate), so a failed/crashed recreate leaves a DISTINCT
+    `{status: failed, id: NULL}` "no draft currently exists" state, never a
+    pointer to a deleted id. The **Idempotency-Key varies per create attempt**
+    (`base + ":attempt=" + attempt`, `attempt` bumped each cycle, migration 0020)
+    so a post-delete replay can't return Xero's cached deleted-timesheet response;
+    the durable `UNIQUE (business, staff, period_start, period_end)` push row is
+    the long-window de-dupe guard. Cancel guards still-`Draft` (typed
+    `XeroTimesheetAlreadyActioned`) → real `DELETE` → `cancelled` + null id. Every
+    surface shows the **single-ordinary-rate** disclaimer (Roster classifies no
+    penalty/overtime/weekend rates — the human does that in Xero).
+  - **Owner UI**: Settings → Xero card (connect / invite bookkeeper /
+    confirm-org / reconnect / disconnect), `/app/xero` (staff mapping),
+    `/app/xero/push` (per-employee preview + push + cancel, reached from a
+    Timesheets entry card). All against the shared `ui.tsx` kit + Roster tokens.
+    The public bookkeeper landing is `/xero/connected`.
 
 ## Non-negotiable conventions
 
@@ -673,8 +744,9 @@ connection, the worker uses the direct connection (pg-boss needs session mode).
 `roster_assignment`, `published_roster`, `timesheet_entry`, `clock_photo`,
 `leave_request`, `shift_offer`, `staff_certification`, `supplier`, `item`,
 `stock_check_entry`, `notification`, `staff_notification`, `form`, `form_field`,
-`google_drive_connection`, `staff_document`. All domain tables are
-business-scoped. Plus one non-tenant infrastructure table:
+`google_drive_connection`, `staff_document`, `xero_connection`,
+`xero_employee_map`, `xero_timesheet_push`, `xero_connect_invite`. All domain
+tables are business-scoped. Plus one non-tenant infrastructure table:
 `sso_consumed_tokens` (the inbound prompt2eat SSO replay guard — no `business_id`,
 like the Auth.js `session`/`verificationToken` tables).
 
@@ -1032,3 +1104,4 @@ charset=utf-8` + attachment with a slugified filename. **Buffered, newest-10k
 - [x] M24 — Inbound SSO from prompt2eat (`POST /api/sso/prompt2eat`): verify a single-use EdDSA/Ed25519 JWS (POST body, ≤60s TTL) against the pinned `PROMPT2EAT_SSO_PUBLIC_KEY` (fail-closed); pin `iss`/`aud`/`alg` + `exp`/`iat` (≤30s skew); `jti` single-use via `sso_consumed_tokens` (GC'd ~10 min); match-or-provision the owner by verified email in Roster's own `user` table (case-insensitive); mint Roster's own Auth.js database session and 303-redirect to a fixed `/app` (failures → `/sign-in?error=sso`). Separate identity stores, no shared cookie/table/secret; Roster verifies but never mints. Additive migration 0017. Contract in `docs/roster-sso-contract.md`.
 - [x] M25 — Google Drive document storage (Phase 1 of 4): owners connect their OWN Google Drive (drive.file scope only, additive OAuth authorization — NOT a login; Auth.js untouched) and upload per-staff documents stored in their Drive with the app holding only a reference. AES-256-GCM token encryption (`TOKEN_ENCRYPTION_KEY`, fail-closed), CSRF-state OAuth connect/callback (businessId from session), token refresh + revoke→reconnect handling, 10 MB + mime-allow-list upload-through-server (bytes never persisted/logged), document list + delete (also deletes the Drive file the app created), disconnect ≠ delete. Mockable `DriveClient` (google-auth-library + Drive v3 REST). Additive migration 0018 (`google_drive_connection`, `staff_document`). **Later phases (separate PRs): OneDrive, Dropbox, per-employee onboarding/offboarding checklists.**
 - [x] M26 — High-fidelity redesign to the "Roster" design handoff (`design/`, plan in `docs/design-implementation-plan.md`): a **presentation-only** overhaul — no schema, server-action, validation or tenancy changes. Widened the owner area to the design's 1340px layout with a single-row dark top bar + ROSTER wordmark; expanded `src/components/ui.tsx` into the full kit (Button variants, Card/SectionCard/Eyebrow, KpiTile, Avatar, Switch, Toast, refined Badge/Banner/Field/TextInput/PageHeader) plus `src/lib/avatar.ts` (deterministic initials+colour). Restyled every screen to its screenshot: dashboard, roster periods, shift types, the roster builder (staff×day matrix grid + preserved assignment editor), timesheets, reports, staff (two-pane list+detail), leave, certs, stock, items, suppliers, settings, notifications, and the bare/staff surfaces (marketing landing, sign-in/check-email/onboarding on the green wash, and the dark kiosk + personal-phone clock-in). Design elements without backing data (item Category/Reorder, supplier Category, staff role) are shown as clearly-labelled placeholders and tracked in the plan doc. Follow-up: designed the four staff phone surfaces the handoff left visually undefined — /me notices (per-type icon chips + branded PIN gate), /r public roster (per-day cards with shift-colour dots), /a availability (colour dots + I-can-work/Can't toggles) via a shared StaffHeader — and gave the kiosk/personal-phone sub-flows (leave/stock/shift-swap forms + shift lists) a coherent dark treatment (shared KioskForm module).
+- [x] M27 — Xero Payroll AU integration: owners connect their Xero org (owner OAuth **or** a delegated single-use bookkeeper invite consumed atomically in the callback), confirm the org name (a push is refused until `active`), map staff→Xero employees with an auto-resolved + owner-editable ordinary earnings rate, and push **approved, closed** hours as **DRAFT** timesheets per employee's Xero pay period (dates read straight from Xero — no local period math). **HARD BOUNDARY: draft timesheets only.** The narrow raw-`fetch` client (NOT `xero-node`) has NO pay-run, NO approve/revert, NO employee-write method (a guard test pins the exact method set), and never requests `payroll.payruns`. Payroll **2.0** wire shapes (ISO dates, `payrollCalendarID`, per-day scalar `numberOfUnits`, title-case `Draft`, `{timesheet}` envelope, real DELETE) source-verified from Xero's generated 2.0 SDK models; the **base-path + scope are isolated in `src/lib/xero/tokens.ts` for a first-live-AU-connect verify** (README checklist). Re-push = delete-then-create with the invariant `xero_timesheet_id` non-null ⟺ a live Draft (id nulled the instant delete succeeds → a distinct "no draft exists" failure state) and a **per-attempt idempotency key** (`base + ":attempt=" + attempt`) so a post-delete replay can't return Xero's cached deleted-timesheet response; cancel guards still-Draft (typed `XeroTimesheetAlreadyActioned`). Tokens AES-256-GCM encrypted (shared `TOKEN_ENCRYPTION_KEY`, fail-closed; Xero rotates refresh tokens → both persisted on refresh). Additive migrations `0019` (4 tables) + `0020` (`attempt`). Full plan + decision history (incl. the corrected 1.0→2.0 reversal): `docs/xero-payroll-integration-plan.md`.

@@ -16,6 +16,7 @@ import {
   Badge,
   Banner,
   Button,
+  ButtonLink,
   Card,
   EmptyState,
   Field,
@@ -100,6 +101,12 @@ export default async function TimesheetsPage({
   const endUtc = zonedDateTimeToUtc(weekEnd, "00:00", tz);
 
   const entries = await repo.listEntriesBetween(startUtc, endUtc);
+
+  // Xero payroll: a lightweight entry point to the push flow (no live Xero
+  // calls here — the heavy period preview lives on /app/xero/push).
+  const xeroConnection = await repo.getXeroConnection();
+  const xeroActive =
+    xeroConnection?.status === "active" && !xeroConnection.needsReconnect;
 
   // Photo thumbnails, grouped by entry.
   const photos = await repo.listPhotosForEntries(entries.map((e) => e.id));
@@ -194,6 +201,39 @@ export default async function TimesheetsPage({
 
       {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
       {sp.saved ? <Banner tone="success">Timesheet updated.</Banner> : null}
+
+      {/* Xero payroll — push approved hours as DRAFT timesheets. */}
+      {xeroConnection ? (
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-[14px] border border-[var(--color-border)] bg-[var(--color-surface)] px-[16px] py-[13px] shadow-[0_1px_2px_rgba(17,24,39,.04)]">
+          <span
+            aria-hidden="true"
+            className="flex h-[38px] w-[38px] flex-shrink-0 items-center justify-center rounded-[10px] bg-[#F4F8E9]"
+          >
+            <Icon name="sync_alt" className="text-[20px] text-[#5A7D17]" />
+          </span>
+          <div className="min-w-[180px] flex-1">
+            <div className="text-[13.5px] font-bold text-[#111827]">
+              Push approved hours to Xero
+            </div>
+            <div className="text-[12px] text-[#6B7280]">
+              {xeroActive
+                ? `Connected to ${xeroConnection.orgName} — sends DRAFT timesheets a human approves in Xero.`
+                : xeroConnection.status === "pending_confirmation"
+                  ? "Confirm your Xero organisation in Settings to enable pushing."
+                  : "Xero needs reconnecting in Settings."}
+            </div>
+          </div>
+          {xeroActive ? (
+            <ButtonLink href="/app/xero/push" variant="secondary">
+              Review &amp; push
+            </ButtonLink>
+          ) : (
+            <ButtonLink href="/app/settings" variant="secondary">
+              Open Settings
+            </ButtonLink>
+          )}
+        </div>
+      ) : null}
 
       {/* Filter row: week range (prev/next) + status chip + live tally. */}
       <div className="mb-4 mt-4 flex flex-wrap items-center gap-2.5">
