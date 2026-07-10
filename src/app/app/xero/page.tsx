@@ -104,11 +104,16 @@ export default async function XeroMappingPage({
     <>
       <PageHeader
         title="Map staff to Xero"
-        subtitle={`Connected to ${connection.orgName}. Match each person to their Xero employee; hours push under a single ordinary earnings rate.`}
+        subtitle={`Connected to ${connection.orgName}. Match each person to their Xero employee; their ordinary earnings rate is where pushed hours land.`}
         action={
-          <ButtonLink href="/app/timesheets" variant="secondary">
-            Go to Timesheets to push
-          </ButtonLink>
+          <div className="flex flex-wrap items-center gap-2">
+            <ButtonLink href="/app/xero/rules" variant="secondary">
+              Pay rules
+            </ButtonLink>
+            <ButtonLink href="/app/timesheets" variant="secondary">
+              Go to Timesheets to push
+            </ButtonLink>
+          </div>
         }
       />
 
@@ -117,9 +122,10 @@ export default async function XeroMappingPage({
       {loadError ? <Banner tone="warn">{loadError}</Banner> : null}
 
       <Banner tone="info">
-        Every mapped person’s hours push under one{" "}
-        <strong>ordinary earnings rate</strong> — Roster does not classify
-        penalty, overtime or weekend rates. Review each timesheet in Xero.
+        Every mapped person’s hours push under their{" "}
+        <strong>ordinary earnings rate</strong>, except hours your own{" "}
+        <strong>pay rules</strong> move onto another of your Xero pay items —
+        Roster sets no rates itself. Review each timesheet in Xero.
       </Banner>
 
       <Card padded={false}>

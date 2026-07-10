@@ -264,6 +264,47 @@ describe("xero client DRAFT-timesheet boundary (real client, Payroll 2.0)", () =
     expect(JSON.stringify(body)).not.toMatch(/Approved|Completed|Requested/);
   });
 
+  it("a line-level earningsRateId (an owner pay rule) overrides the default, per line", async () => {
+    let captured: { init: RequestInit } | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        captured = { init };
+        return new Response(
+          JSON.stringify({
+            timesheet: { timesheetID: "ts-100", status: "Draft" },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+
+    await xeroClient.createDraftTimesheet(
+      "access-token",
+      "tenant-1",
+      {
+        payrollCalendarId: "cal-1",
+        employeeId: "emp-1",
+        startDate: "2026-07-06",
+        endDate: "2026-07-12",
+        earningsRateId: "rate-ordinary",
+        lines: [
+          // Same day split across two of the OWNER's pay items by their rules.
+          { date: "2026-07-11", numberOfUnits: 6 },
+          { date: "2026-07-11", numberOfUnits: 2, earningsRateId: "rate-sat" },
+        ],
+      },
+      "idem-key-def",
+    );
+
+    const body = JSON.parse(captured!.init.body as string);
+    expect(body.status).toBe("Draft"); // the boundary is untouched by rules
+    expect(body.timesheetLines).toEqual([
+      { date: "2026-07-11", earningsRateID: "rate-ordinary", numberOfUnits: 6 },
+      { date: "2026-07-11", earningsRateID: "rate-sat", numberOfUnits: 2 },
+    ]);
+  });
+
   it("deleteTimesheet issues a real DELETE and treats 404 as already-gone", async () => {
     const calls: Array<{ url: string; method?: string }> = [];
     vi.stubGlobal(

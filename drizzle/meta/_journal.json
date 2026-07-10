@@ -148,6 +148,13 @@
       "when": 1783558079882,
       "tag": "0020_premium_black_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1783680722963,
+      "tag": "0021_chief_slapstick",
+      "breakpoints": true
     }
   ]
 }
