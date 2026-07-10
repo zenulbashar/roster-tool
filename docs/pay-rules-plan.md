@@ -1,8 +1,9 @@
 # Pay classification rules — plan of record
 
-**Status: approved to build** (research + plan reviewed; build authorized on the
-same session). Extends M27 (Xero Payroll AU, `docs/xero-payroll-integration-plan.md`)
-additively — same 2.0 client, same push path, same hard boundary.
+**Status: BUILT (M28)** — research + plan reviewed, build authorized and landed
+in the same session. Extends M27 (Xero Payroll AU,
+`docs/xero-payroll-integration-plan.md`) additively — same 2.0 client, same
+push path, same hard boundary. Delivered as planned; §6's four decisions held.
 
 ## 0. What this is (and is not)
 
@@ -55,7 +56,7 @@ Business-scoped; **ships empty** (no seed, no defaults). Columns:
   the explicit precedence; lower evaluates first), `is_active` (default true),
 - `condition_type` enum `pay_rule_condition_type`:
   `day_of_week | time_of_day_after | time_of_day_before | daily_hours_beyond |
-  weekly_hours_beyond`,
+weekly_hours_beyond`,
 - `condition_config` jsonb (zod-validated per type; stored WITHOUT the type —
   the enum column carries it):
   - `day_of_week` → `{ days: number[] }` (ISO 1–7, matching
@@ -110,12 +111,12 @@ Semantics (mechanical, documented in UI copy):
 
 - `XeroDraftTimesheetInput.lines[*]` gains optional `earningsRateId`; the ONE
   payload builder becomes `earningsRateID: l.earningsRateId ??
-  input.earningsRateId`. **No client method added or removed** — the guard test
+input.earningsRateId`. **No client method added or removed** — the guard test
   key-set is untouched.
 - `pushEmployeeTimesheet` gains `rules: ActivePayRule[]` (default `[]`) and
   calls `classifyEntries` instead of `buildTimesheetLines`; every line carries
   an explicit rate id. `hashPushPayload` now hashes `[date, earningsRateId,
-  numberOfUnits]` per line, so **changing a rule re-pushes via the existing
+numberOfUnits]` per line, so **changing a rule re-pushes via the existing
   delete-then-create path** (one-time hash churn for existing drafts: first
   re-push after deploy recreates an identical draft — harmless, still Draft).
 - The push action + preview page fetch entries from the Monday-of-week of

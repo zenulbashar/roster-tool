@@ -377,8 +377,7 @@ describe("xero push with owner pay rules", () => {
       .returning();
     businessId = b!.id;
     repo = createTenantRepo(businessId);
-    staffId = (await repo.addStaff({ name: "Cam", email: "cam@push.test" }))
-      .id;
+    staffId = (await repo.addStaff({ name: "Cam", email: "cam@push.test" })).id;
   });
 
   afterAll(async () => {
