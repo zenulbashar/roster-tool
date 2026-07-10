@@ -1493,6 +1493,58 @@ export const xeroConnectInvites = pgTable(
   (t) => [index("xero_connect_invite_business_idx").on(t.businessId)],
 );
 
+// The five mechanical condition shapes an owner can pick for a pay rule.
+export const payRuleConditionType = pgEnum("pay_rule_condition_type", [
+  "day_of_week",
+  "time_of_day_after",
+  "time_of_day_before",
+  "daily_hours_beyond",
+  "weekly_hours_beyond",
+]);
+
+/**
+ * One OWNER-AUTHORED pay-classification rule: a mechanical condition
+ * (`condition_type` + zod-validated `condition_config`) mapping matched hours
+ * to ONE of the owner's OWN Xero pay items (`earnings_rate_id` — a reference;
+ * `earnings_rate_name` is a display snapshot). `priority` is the owner-visible
+ * precedence — lower evaluates first, first match wins per sub-block.
+ *
+ * THE BOUNDARY: this table deliberately has NO rate, multiplier, percentage or
+ * dollar column, ships EMPTY (no seed, no defaults), and Roster ships zero
+ * built-in award rules. All pay math lives in the Xero pay item the owner
+ * points at. Rows are business-scoped and only ever written through the
+ * owner's tenant-scoped, zod-validated actions.
+ */
+export const payRules = pgTable(
+  "pay_rule",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    priority: integer("priority").notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    conditionType: payRuleConditionType("condition_type").notNull(),
+    // Per-type config WITHOUT the type (the enum column carries it):
+    // day_of_week → {days: number[]} (ISO 1–7); time_of_day_* → {time: "HH:MM"};
+    // daily/weekly_hours_beyond → {hours: number}.
+    conditionConfig: jsonb("condition_config").notNull(),
+    earningsRateId: text("earnings_rate_id").notNull(),
+    earningsRateName: text("earnings_rate_name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("pay_rule_business_idx").on(t.businessId),
+    index("pay_rule_business_priority_idx").on(t.businessId, t.priority),
+  ],
+);
+
 /* -------------------------------------------------------------------------- */
 /* Relations (for relational queries)                                         */
 /* -------------------------------------------------------------------------- */

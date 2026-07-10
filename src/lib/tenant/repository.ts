@@ -45,6 +45,7 @@ import {
   xeroConnectInvites,
   xeroEmployeeMaps,
   xeroTimesheetPushes,
+  payRules,
   type FormFieldOption,
 } from "@/lib/db/schema";
 import { formResponseTitle, type NotificationType } from "@/lib/notifications";
@@ -4163,6 +4164,145 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             eq(xeroTimesheetPushes.businessId, businessId),
           ),
         )
+        .returning();
+      return row ?? null;
+    },
+
+    /* ---- Pay classification rules (owner-authored, ships empty) ----------- */
+
+    /** All of this business's pay rules in precedence order (the owner's
+     * visible list — lower `priority` evaluates first). */
+    listPayRules() {
+      return database
+        .select()
+        .from(payRules)
+        .where(eq(payRules.businessId, businessId))
+        .orderBy(asc(payRules.priority), asc(payRules.createdAt), asc(payRules.id));
+    },
+
+    /** One pay rule by id (for the edit form). Business-scoped. */
+    getPayRule(id: string) {
+      return first(
+        database
+          .select()
+          .from(payRules)
+          .where(and(eq(payRules.id, id), eq(payRules.businessId, businessId))),
+      );
+    },
+
+    /**
+     * Create a rule at the END of the precedence list (priority = max + 1).
+     * `conditionConfig` arrives already zod-validated by the action; this layer
+     * stores the mechanical mapping only — there is no rate/multiplier to store.
+     */
+    async createPayRule(input: {
+      name: string;
+      conditionType: (typeof payRules.$inferSelect)["conditionType"];
+      conditionConfig: unknown;
+      earningsRateId: string;
+      earningsRateName: string;
+      isActive?: boolean;
+    }) {
+      return database.transaction(async (tx) => {
+        const [maxRow] = await tx
+          .select({
+            max: sql<number>`coalesce(max(${payRules.priority}), 0)`,
+          })
+          .from(payRules)
+          .where(eq(payRules.businessId, businessId));
+        const [row] = await tx
+          .insert(payRules)
+          .values({
+            businessId,
+            name: input.name,
+            priority: Number(maxRow?.max ?? 0) + 1,
+            isActive: input.isActive ?? true,
+            conditionType: input.conditionType,
+            conditionConfig: input.conditionConfig,
+            earningsRateId: input.earningsRateId,
+            earningsRateName: input.earningsRateName,
+          })
+          .returning();
+        return row!;
+      });
+    },
+
+    /** Replace a rule's editable fields (never its priority — reordering is
+     * explicit via `movePayRule`). Business-scoped; returns the row or null. */
+    async updatePayRule(
+      id: string,
+      input: {
+        name: string;
+        conditionType: (typeof payRules.$inferSelect)["conditionType"];
+        conditionConfig: unknown;
+        earningsRateId: string;
+        earningsRateName: string;
+        isActive: boolean;
+      },
+    ) {
+      const [row] = await database
+        .update(payRules)
+        .set({ ...input, updatedAt: new Date() })
+        .where(and(eq(payRules.id, id), eq(payRules.businessId, businessId)))
+        .returning();
+      return row ?? null;
+    },
+
+    /** Turn a rule on/off without touching its place in the list. */
+    async setPayRuleActive(id: string, isActive: boolean) {
+      const [row] = await database
+        .update(payRules)
+        .set({ isActive, updatedAt: new Date() })
+        .where(and(eq(payRules.id, id), eq(payRules.businessId, businessId)))
+        .returning();
+      return row ?? null;
+    },
+
+    /**
+     * Move a rule one step up/down the owner-visible precedence list. Inside
+     * one transaction the whole list is renumbered 1..n in its current order,
+     * then the two neighbours swap — so a move always works even if priorities
+     * ever carry gaps or duplicates. Returns the moved row or null.
+     */
+    async movePayRule(id: string, direction: "up" | "down") {
+      return database.transaction(async (tx) => {
+        const rules = await tx
+          .select()
+          .from(payRules)
+          .where(eq(payRules.businessId, businessId))
+          .orderBy(
+            asc(payRules.priority),
+            asc(payRules.createdAt),
+            asc(payRules.id),
+          );
+        const idx = rules.findIndex((r) => r.id === id);
+        if (idx === -1) return null;
+        const target = direction === "up" ? idx - 1 : idx + 1;
+        const order = rules.map((r) => r.id);
+        if (target >= 0 && target < order.length) {
+          [order[idx], order[target]] = [order[target]!, order[idx]!];
+        }
+        const now = new Date();
+        for (let i = 0; i < order.length; i++) {
+          await tx
+            .update(payRules)
+            .set({ priority: i + 1, updatedAt: now })
+            .where(
+              and(
+                eq(payRules.id, order[i]!),
+                eq(payRules.businessId, businessId),
+              ),
+            );
+        }
+        return rules[idx]!;
+      });
+    },
+
+    /** Delete a rule. Business-scoped; returns the row or null. */
+    async deletePayRule(id: string) {
+      const [row] = await database
+        .delete(payRules)
+        .where(and(eq(payRules.id, id), eq(payRules.businessId, businessId)))
         .returning();
       return row ?? null;
     },
