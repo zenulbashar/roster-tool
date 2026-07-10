@@ -7,9 +7,16 @@ import {
   XeroPayrollAdminRequired,
   XeroReconnectRequired,
 } from "@/lib/xero/errors";
-import { buildTimesheetLines } from "@/lib/xero/timesheet-lines";
+import {
+  classifyEntries,
+  mondayOfWeek,
+  toActivePayRules,
+  type ClassifiedLine,
+  type ShiftBreakdown,
+} from "@/lib/xero/pay-rules";
 import {
   zonedDateTimeToUtc,
+  formatDateOnly,
   formatDateRange,
   DEFAULT_TIMEZONE,
 } from "@/lib/time";
@@ -27,8 +34,8 @@ import { pushAllAction, cancelPushAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 
-const SINGLE_RATE_NOTE =
-  "All hours push under a single ordinary earnings rate — Roster does not classify penalty, overtime or weekend rates. Review each draft in Xero, then approve and run pay there. Roster never finalises pay.";
+const RATE_NOTE =
+  "Hours push under each person's ordinary pay item, except where YOUR pay rules move them onto another of YOUR Xero pay items — Roster sets no rates and calculates no pay. Open a row to see exactly how each shift was split. Review each draft in Xero, then approve and run pay there. Roster never finalises pay.";
 
 function nextDay(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
@@ -89,12 +96,17 @@ export default async function XeroPushPage({
     rateName: string | null;
     status: "ready" | "no_rate" | "no_period" | "no_hours";
     push?: { status: string; xeroTimesheetId: string | null; id: string };
+    lines: ClassifiedLine[];
+    breakdown: ShiftBreakdown[];
   };
   const rows: Row[] = [];
   let loadError: string | null = null;
+  let staleRuleName: string | null = null;
   const staff = await repo.listStaff({ activeOnly: true });
   const nameOf = (id: string) =>
     staff.find((s) => s.id === id)?.name ?? "Former staff";
+  const rules = toActivePayRules(await repo.listPayRules());
+  const liveRateNames = new Map<string, string>();
 
   try {
     const accessToken = await ensureFreshXeroAccessToken({
@@ -104,8 +116,14 @@ export default async function XeroPushPage({
     });
     const tenantId = connection.xeroTenantId;
     const rates = await xeroClient.listEarningsRates(accessToken, tenantId);
+    for (const r of rates) liveRateNames.set(r.earningsRateId, r.name);
     const rateName = (id: string | null) =>
-      id ? (rates.find((r) => r.earningsRateId === id)?.name ?? "Rate") : null;
+      id ? (liveRateNames.get(id) ?? "Rate") : null;
+
+    // A rule pointing at a pay item that no longer exists in Xero blocks the
+    // push (named + fixable) — never a silent skip or a cryptic Xero error.
+    staleRuleName =
+      rules.find((r) => !liveRateNames.has(r.earningsRateId))?.name ?? null;
 
     const calCache = new Map<string, XeroPayrollCalendar | null>();
     const getCal = async (id: string) => {
@@ -136,6 +154,8 @@ export default async function XeroPushPage({
         hours: 0,
         rateName: rateName(m.earningsRateId),
         status: "no_rate",
+        lines: [],
+        breakdown: [],
       };
       if (!m.earningsRateId) {
         rows.push(base);
@@ -150,7 +170,13 @@ export default async function XeroPushPage({
       }
       const key = `${cal.periodStartDate}|${cal.periodEndDate}`;
       if (!entriesCache.has(key)) {
-        const startUtc = zonedDateTimeToUtc(cal.periodStartDate, "00:00", tz);
+        // Reach back to the Monday of the period-start week so weekly rules
+        // see the whole business-local week (context only — no extra lines).
+        const startUtc = zonedDateTimeToUtc(
+          mondayOfWeek(cal.periodStartDate),
+          "00:00",
+          tz,
+        );
         const endUtc = zonedDateTimeToUtc(
           nextDay(cal.periodEndDate),
           "00:00",
@@ -171,8 +197,10 @@ export default async function XeroPushPage({
       const staffEntries = entriesCache
         .get(key)!
         .filter((e) => e.staffMemberId === m.staffMemberId);
-      const { totalHours } = buildTimesheetLines({
+      const classified = classifyEntries({
         entries: staffEntries,
+        rules,
+        ordinaryEarningsRateId: m.earningsRateId,
         timezone: tz,
         periodStart: cal.periodStartDate,
         periodEnd: cal.periodEndDate,
@@ -183,8 +211,10 @@ export default async function XeroPushPage({
       rows.push({
         ...base,
         period: formatDateRange(cal.periodStartDate, cal.periodEndDate),
-        hours: totalHours,
-        status: totalHours > 0 ? "ready" : "no_hours",
+        hours: classified.totalHours,
+        status: classified.totalHours > 0 ? "ready" : "no_hours",
+        lines: classified.lines,
+        breakdown: classified.breakdown,
         push: push
           ? {
               status: push.status,
@@ -212,6 +242,42 @@ export default async function XeroPushPage({
 
   const readyCount = rows.filter((r) => r.status === "ready").length;
   const pushedFlash = Number(sp.pushed ?? 0);
+  const localTime = timeFormatter(tz);
+  const lineName = (l: ClassifiedLine, ordinaryName: string | null) =>
+    liveRateNames.get(l.earningsRateId) ??
+    l.earningsRateName ??
+    ordinaryName ??
+    "Pay item";
+  const grid = "grid grid-cols-[1.3fr_1.2fr_1.3fr_0.7fr_1.1fr] gap-3";
+
+  const rowCells = (r: (typeof rows)[number], expandable: boolean) => (
+    <>
+      <div className="flex items-center gap-[10px]">
+        <Avatar name={r.name} colorKey={r.staffId} size={30} />
+        <span className="truncate text-[13.5px] font-semibold text-[#111827]">
+          {r.name}
+        </span>
+        {expandable ? (
+          <span
+            aria-hidden
+            className="material-symbols-rounded text-[18px] text-[#9CA3AF] transition-transform group-open:rotate-180"
+          >
+            expand_more
+          </span>
+        ) : null}
+      </div>
+      <span className="truncate text-[13px] text-[#374151]">
+        {r.employeeName}
+      </span>
+      <span className="text-[12.5px] text-[#6B7280]">{r.period ?? "—"}</span>
+      <span className="text-right font-archivo text-[13.5px] font-bold tabular-nums text-[#111827]">
+        {r.status === "ready" || r.hours > 0 ? `${r.hours}h` : "—"}
+      </span>
+      <div className="flex items-center justify-end gap-2">
+        <RowStatus row={r} />
+      </div>
+    </>
+  );
 
   return (
     <>
@@ -219,9 +285,14 @@ export default async function XeroPushPage({
         title="Push hours to Xero"
         subtitle={`Connected to ${connection.orgName}. Approved hours push as DRAFT timesheets for each employee's Xero pay period.`}
         action={
-          <ButtonLink href="/app/xero" variant="secondary">
-            Staff mapping
-          </ButtonLink>
+          <div className="flex flex-wrap items-center gap-2">
+            <ButtonLink href="/app/xero/rules" variant="secondary">
+              Pay rules
+            </ButtonLink>
+            <ButtonLink href="/app/xero" variant="secondary">
+              Staff mapping
+            </ButtonLink>
+          </div>
         }
       />
 
@@ -240,50 +311,135 @@ export default async function XeroPushPage({
         </Banner>
       ) : null}
 
-      <Banner tone="info">{SINGLE_RATE_NOTE}</Banner>
+      <Banner tone="info">{RATE_NOTE}</Banner>
+      {staleRuleName ? (
+        <Banner tone="warn">
+          The rule “{staleRuleName}” points at a pay item that no longer exists
+          in Xero. Fix or turn it off on the Pay rules page — pushing is paused
+          until then.
+        </Banner>
+      ) : null}
 
       <Card padded={false}>
         <div className="overflow-x-auto">
           <div className="min-w-[820px]">
-            <div className="grid grid-cols-[1.3fr_1.2fr_1.3fr_0.7fr_1.1fr] gap-3 border-b border-[#F1F3F5] bg-[#FAFBFC] px-[18px] py-[11px] text-[11px] font-bold uppercase tracking-[.06em] text-[#6B7280]">
+            <div
+              className={`${grid} border-b border-[#F1F3F5] bg-[#FAFBFC] px-[18px] py-[11px] text-[11px] font-bold uppercase tracking-[.06em] text-[#6B7280]`}
+            >
               <span>Staff member</span>
               <span>Xero employee</span>
               <span>Pay period</span>
               <span className="text-right">Hours</span>
               <span className="text-right">Status</span>
             </div>
-            {rows.map((r) => (
-              <div
-                key={r.staffId}
-                className="grid grid-cols-[1.3fr_1.2fr_1.3fr_0.7fr_1.1fr] items-center gap-3 border-b border-[#F5F6F7] px-[18px] py-[12px]"
-              >
-                <div className="flex items-center gap-[10px]">
-                  <Avatar name={r.name} colorKey={r.staffId} size={30} />
-                  <span className="truncate text-[13.5px] font-semibold text-[#111827]">
-                    {r.name}
-                  </span>
+            {rows.map((r) =>
+              r.lines.length > 0 ? (
+                <details
+                  key={r.staffId}
+                  className="group border-b border-[#F5F6F7]"
+                >
+                  <summary
+                    className={`${grid} cursor-pointer list-none items-center px-[18px] py-[12px] hover:bg-[#FAFBFC] [&::-webkit-details-marker]:hidden`}
+                  >
+                    {rowCells(r, true)}
+                  </summary>
+                  <div className="border-t border-[#F5F6F7] bg-[#FAFBFC] px-[18px] py-[14px]">
+                    <div className="grid gap-[18px] lg:grid-cols-2">
+                      <div>
+                        <h3 className="mb-[8px] text-[11px] font-bold uppercase tracking-[.06em] text-[#6B7280]">
+                          Lines that will be sent
+                        </h3>
+                        <ul className="grid gap-[6px]">
+                          {r.lines.map((l, i) => (
+                            <li
+                              key={`${l.date}-${l.earningsRateId}-${i}`}
+                              className="flex flex-wrap items-baseline gap-x-[8px] text-[12.5px] text-[#374151]"
+                            >
+                              <span className="w-[92px] shrink-0 text-[#6B7280]">
+                                {formatDateOnly(l.date)}
+                              </span>
+                              <span className="font-archivo font-bold tabular-nums">
+                                {l.numberOfUnits}h
+                              </span>
+                              <span>→ {lineName(l, r.rateName)}</span>
+                              {l.ruleNames.length > 0 ? (
+                                <span className="text-[11.5px] text-[#9CA3AF]">
+                                  via {l.ruleNames.join(", ")}
+                                </span>
+                              ) : (
+                                <span className="text-[11.5px] text-[#9CA3AF]">
+                                  ordinary
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div>
+                        <h3 className="mb-[8px] text-[11px] font-bold uppercase tracking-[.06em] text-[#6B7280]">
+                          How each shift was classified
+                        </h3>
+                        <ul className="grid gap-[10px]">
+                          {r.breakdown.map((b, i) => (
+                            <li
+                              key={i}
+                              className="text-[12.5px] text-[#374151]"
+                            >
+                              <div className="font-semibold text-[#111827]">
+                                {formatDateOnly(b.date)} ·{" "}
+                                {localTime(b.clockInAt)} –{" "}
+                                {localTime(b.clockOutAt)} · {b.hours}h
+                              </div>
+                              <ul className="mt-[3px] grid gap-[2px] pl-[14px]">
+                                {b.segments.map((s, j) => (
+                                  <li key={j} className="text-[12px]">
+                                    {localTime(s.startUtc)} –{" "}
+                                    {localTime(s.endUtc)} · {s.hours}h →{" "}
+                                    {s.ruleName ? (
+                                      <>
+                                        <span className="font-semibold">
+                                          {liveRateNames.get(
+                                            s.earningsRateId,
+                                          ) ?? s.earningsRateName}
+                                        </span>{" "}
+                                        <span className="text-[#9CA3AF]">
+                                          (rule: {s.ruleName})
+                                        </span>
+                                      </>
+                                    ) : (
+                                      <span>
+                                        {r.rateName ?? "ordinary pay item"}
+                                      </span>
+                                    )}
+                                  </li>
+                                ))}
+                              </ul>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+              ) : (
+                <div
+                  key={r.staffId}
+                  className={`${grid} items-center border-b border-[#F5F6F7] px-[18px] py-[12px]`}
+                >
+                  {rowCells(r, false)}
                 </div>
-                <span className="truncate text-[13px] text-[#374151]">
-                  {r.employeeName}
-                </span>
-                <span className="text-[12.5px] text-[#6B7280]">
-                  {r.period ?? "—"}
-                </span>
-                <span className="text-right font-archivo text-[13.5px] font-bold tabular-nums text-[#111827]">
-                  {r.status === "ready" || r.hours > 0 ? `${r.hours}h` : "—"}
-                </span>
-                <div className="flex items-center justify-end gap-2">
-                  <RowStatus row={r} />
-                </div>
-              </div>
-            ))}
+              ),
+            )}
           </div>
         </div>
       </Card>
 
       <div className="mt-[16px] flex flex-wrap items-center gap-3">
         <form action={pushAllAction}>
-          <Button type="submit" disabled={readyCount === 0}>
+          <Button
+            type="submit"
+            disabled={readyCount === 0 || staleRuleName !== null}
+          >
             Push {readyCount > 0 ? `${readyCount} ` : ""}approved timesheet
             {readyCount === 1 ? "" : "s"} to Xero
           </Button>
@@ -295,6 +451,17 @@ export default async function XeroPushPage({
       </div>
     </>
   );
+}
+
+/** "9:00 am"-style business-local time for a UTC instant. */
+function timeFormatter(tz: string): (d: Date) => string {
+  const fmt = new Intl.DateTimeFormat("en-AU", {
+    timeZone: tz,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+  return (d: Date) => fmt.format(d).replace(/\u202f/g, " ");
 }
 
 function RowStatus({
