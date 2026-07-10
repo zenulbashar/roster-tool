@@ -3,11 +3,8 @@ import type { TenantRepo } from "@/lib/tenant/repository";
 import type { XeroClient } from "./client";
 import { XeroApiError, XeroTimesheetAlreadyActioned } from "./errors";
 import { attemptIdempotencyKey, baseIdempotencyKey } from "./idempotency";
-import {
-  buildTimesheetLines,
-  type PushEntry,
-  type TimesheetDayLine,
-} from "./timesheet-lines";
+import { classifyEntries, type ActivePayRule } from "./pay-rules";
+import type { PushEntry } from "./timesheet-lines";
 
 /**
  * Push orchestration (#16): turn APPROVED, closed hours into a DRAFT Xero
@@ -30,28 +27,34 @@ export type PushOutcome =
   | { status: "blocked"; reason: "no_rate" | "already_actioned" }
   | { status: "failed"; reason: "no_draft_exists" | "delete_failed" };
 
-/** Stable content hash — lets a re-push with unchanged hours be a no-op. */
+/** Stable content hash — lets a re-push with unchanged hours be a no-op. Each
+ * line's pay item is part of the content, so an owner editing a pay rule
+ * changes the hash and the next push replaces the draft (delete-then-create). */
 export function hashPushPayload(input: {
   xeroEmployeeId: string;
   earningsRateId: string;
   periodStart: string;
   periodEnd: string;
-  lines: TimesheetDayLine[];
+  lines: Array<{ date: string; numberOfUnits: number; earningsRateId: string }>;
 }): string {
   const canonical = JSON.stringify({
     e: input.xeroEmployeeId,
     r: input.earningsRateId,
     s: input.periodStart,
     d: input.periodEnd,
-    l: input.lines.map((l) => [l.date, l.numberOfUnits]),
+    l: input.lines.map((l) => [l.date, l.earningsRateId, l.numberOfUnits]),
   });
   return createHash("sha256").update(canonical).digest("hex");
 }
 
 /**
  * Push ONE mapped employee's approved hours as a DRAFT timesheet for one period.
- * `entries` are this employee's APPROVED, closed entries; `periodStart/End` come
- * straight from the Xero pay calendar (no local period math).
+ * `entries` are this employee's APPROVED, closed entries (they may reach back
+ * to the Monday of the week containing `periodStart` purely as cumulation
+ * context for weekly rules); `periodStart/End` come straight from the Xero pay
+ * calendar (no local period math). `rules` are the owner's ACTIVE, parsed pay
+ * rules (`toActivePayRules`); with none, every line carries the ordinary rate —
+ * identical to the pre-rules behaviour.
  */
 export async function pushEmployeeTimesheet(opts: {
   repo: TenantRepo;
@@ -67,6 +70,7 @@ export async function pushEmployeeTimesheet(opts: {
   periodStart: string;
   periodEnd: string;
   entries: PushEntry[];
+  rules?: ActivePayRule[];
   now?: Date;
 }): Promise<PushOutcome> {
   const {
@@ -83,18 +87,27 @@ export async function pushEmployeeTimesheet(opts: {
     periodStart,
     periodEnd,
     entries,
+    rules = [],
     now = new Date(),
   } = opts;
 
   // Gate: an unresolved earnings rate blocks push (never a silent guess).
   if (!earningsRateId) return { status: "blocked", reason: "no_rate" };
 
-  const { lines, totalHours } = buildTimesheetLines({
+  const classified = classifyEntries({
     entries,
+    rules,
+    ordinaryEarningsRateId: earningsRateId,
     timezone,
     periodStart,
     periodEnd,
   });
+  const { totalHours } = classified;
+  const lines = classified.lines.map((l) => ({
+    date: l.date,
+    numberOfUnits: l.numberOfUnits,
+    earningsRateId: l.earningsRateId,
+  }));
   if (lines.length === 0) return { status: "skipped", reason: "no_hours" };
 
   const payloadHash = hashPushPayload({

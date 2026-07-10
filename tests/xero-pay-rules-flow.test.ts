@@ -107,7 +107,10 @@ describe("pay rule persistence", () => {
 
   it("movePayRule swaps neighbours and clamps at the ends", async () => {
     const before = await repoA.listPayRules();
-    expect(before.map((r) => r.name)).toEqual(["Saturday hours", "Night hours"]);
+    expect(before.map((r) => r.name)).toEqual([
+      "Saturday hours",
+      "Night hours",
+    ]);
 
     await repoA.movePayRule(before[1]!.id, "up");
     const after = await repoA.listPayRules();

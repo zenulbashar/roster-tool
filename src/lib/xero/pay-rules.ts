@@ -128,7 +128,9 @@ export function toActivePayRules(rows: PayRuleRowLike[]): ActivePayRule[] {
       earningsRateName: r.earningsRateName,
     });
   }
-  return out.sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
+  return out.sort(
+    (a, b) => a.priority - b.priority || a.id.localeCompare(b.id),
+  );
 }
 
 const DAY_NAMES = [
@@ -251,7 +253,12 @@ export function classifyEntries(input: {
   skippedOpen: number;
   breakdown: ShiftBreakdown[];
 } {
-  const { timezone: tz, periodStart, periodEnd, ordinaryEarningsRateId } = input;
+  const {
+    timezone: tz,
+    periodStart,
+    periodEnd,
+    ordinaryEarningsRateId,
+  } = input;
   const rules = [...input.rules].sort(
     (a, b) => a.priority - b.priority || a.id.localeCompare(b.id),
   );

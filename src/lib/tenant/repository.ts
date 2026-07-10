@@ -4177,7 +4177,11 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .select()
         .from(payRules)
         .where(eq(payRules.businessId, businessId))
-        .orderBy(asc(payRules.priority), asc(payRules.createdAt), asc(payRules.id));
+        .orderBy(
+          asc(payRules.priority),
+          asc(payRules.createdAt),
+          asc(payRules.id),
+        );
     },
 
     /** One pay rule by id (for the edit form). Business-scoped. */

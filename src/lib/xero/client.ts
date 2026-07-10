@@ -62,9 +62,12 @@ export type XeroTenant = {
 
 /**
  * Inputs for a DRAFT timesheet (Payroll 2.0). There is intentionally NO status
- * field. A SINGLE `earningsRateId` applies to every line — structurally
- * enforcing the "single ordinary earnings rate" decision (penalty/overtime are
- * the human's job in Xero). `lines` is one entry PER WORKED DAY.
+ * field. The top-level `earningsRateId` is the employee's ordinary rate and
+ * the default for every line; a line may carry its OWN `earningsRateId` when
+ * the owner's pay-classification rules routed those hours to another of the
+ * owner's pay items. Roster only ever moves hours BETWEEN the owner's pay
+ * items — the rates/multipliers live in Xero, and a human still approves the
+ * draft there. `lines` may hold several entries per worked day (one per rate).
  */
 export type XeroDraftTimesheetInput = {
   payrollCalendarId: string;
@@ -73,8 +76,12 @@ export type XeroDraftTimesheetInput = {
   startDate: string;
   endDate: string;
   earningsRateId: string;
-  /** Hours per worked day: { date: YYYY-MM-DD, numberOfUnits: hours }. */
-  lines: Array<{ date: string; numberOfUnits: number }>;
+  /** Hours per worked day (per pay item): the owner's rules may split a day. */
+  lines: Array<{
+    date: string;
+    numberOfUnits: number;
+    earningsRateId?: string;
+  }>;
 };
 
 export type XeroTimesheetResult = {
@@ -368,7 +375,8 @@ export const xeroClient: XeroClient = {
       status: "Draft", // <-- the boundary, in code
       timesheetLines: input.lines.map((l) => ({
         date: toXeroTimesheetDate(l.date),
-        earningsRateID: input.earningsRateId, // single ordinary rate for all lines
+        // The line's classified pay item, defaulting to the ordinary rate.
+        earningsRateID: l.earningsRateId ?? input.earningsRateId,
         numberOfUnits: l.numberOfUnits,
       })),
     };

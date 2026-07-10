@@ -3,13 +3,18 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { businesses, timesheetEntries } from "@/lib/db/schema";
 import { createTenantRepo, type TenantRepo } from "@/lib/tenant/repository";
-import type { XeroClient, XeroTokenSet } from "@/lib/xero/client";
+import type {
+  XeroClient,
+  XeroDraftTimesheetInput,
+  XeroTokenSet,
+} from "@/lib/xero/client";
 import { XeroApiError, XeroTimesheetAlreadyActioned } from "@/lib/xero/errors";
 import {
   attemptIdempotencyKey,
   baseIdempotencyKey,
 } from "@/lib/xero/idempotency";
 import { cancelPush, pushEmployeeTimesheet } from "@/lib/xero/push";
+import type { ActivePayRule } from "@/lib/xero/pay-rules";
 import type { PushEntry } from "@/lib/xero/timesheet-lines";
 
 /**
@@ -32,13 +37,16 @@ class FakePushClient implements XeroClient {
   deleteThrows = false;
   lastCreatedId: string | null = null;
 
+  lastInput: XeroDraftTimesheetInput | null = null;
+
   async createDraftTimesheet(
     _a: string,
     _t: string,
-    _input: unknown,
+    input: XeroDraftTimesheetInput,
     key: string,
   ) {
     this.createKeys.push(key);
+    this.lastInput = input;
     if (this.createThrows) throw new XeroApiError("create failed", 500);
     this.lastCreatedId = `ts-${++GLOBAL_TS_SEQ}`;
     return { timesheetId: this.lastCreatedId, status: "Draft" };
@@ -320,6 +328,120 @@ describe("xero push orchestration", () => {
       }),
     ).rejects.toBeInstanceOf(XeroTimesheetAlreadyActioned);
     expect(cancelClient.deleteIds).toHaveLength(0);
+  });
+});
+
+describe("xero push with owner pay rules", () => {
+  let businessId = "";
+  let repo: TenantRepo;
+  let staffId = "";
+
+  const SAT_RULE: ActivePayRule = {
+    id: "rule-sat",
+    name: "Saturday hours",
+    priority: 1,
+    condition: { type: "day_of_week", days: [6] },
+    earningsRateId: "rate-sat",
+    earningsRateName: "Saturday item",
+  };
+  // Sat 11 Jul 09:00–17:00 Sydney (8h, all on Saturday) + Mon 6 Jul 4h.
+  const ENTRIES: PushEntry[] = [
+    {
+      clockInAt: new Date("2026-07-06T00:00:00Z"),
+      clockOutAt: new Date("2026-07-06T04:00:00Z"),
+    },
+    {
+      clockInAt: new Date("2026-07-10T23:00:00Z"),
+      clockOutAt: new Date("2026-07-11T07:00:00Z"),
+    },
+  ];
+
+  const common = () => ({
+    repo,
+    accessToken: "at",
+    tenantId: "tenant-1",
+    businessId,
+    timezone: TZ,
+    staffMemberId: staffId,
+    xeroEmployeeId: "emp-2",
+    earningsRateId: "rate-1" as string | null,
+    payrollCalendarId: "cal-1",
+    periodStart: PERIOD.start,
+    periodEnd: PERIOD.end,
+  });
+
+  beforeAll(async () => {
+    const [b] = await db
+      .insert(businesses)
+      .values({ name: "Xero Rules Push Café" })
+      .returning();
+    businessId = b!.id;
+    repo = createTenantRepo(businessId);
+    staffId = (await repo.addStaff({ name: "Cam", email: "cam@push.test" }))
+      .id;
+  });
+
+  afterAll(async () => {
+    if (businessId)
+      await db.delete(businesses).where(eq(businesses.id, businessId));
+    // Pool closed in the LAST describe's afterAll (all share one `db`).
+  });
+
+  it("rules split the payload into per-pay-item lines; hours total is unchanged", async () => {
+    const client = new FakePushClient();
+    const out = await pushEmployeeTimesheet({
+      ...common(),
+      client,
+      entries: ENTRIES,
+      rules: [SAT_RULE],
+    });
+    expect(out.status).toBe("pushed");
+    expect(client.lastInput!.lines).toEqual([
+      { date: "2026-07-06", numberOfUnits: 4, earningsRateId: "rate-1" },
+      { date: "2026-07-11", numberOfUnits: 8, earningsRateId: "rate-sat" },
+    ]);
+    const row = await repo.getXeroPush(staffId, PERIOD.start, PERIOD.end);
+    expect(row!.hoursTotal).toBe(12); // rules move hours, never change them
+  });
+
+  it("the same rules re-pushed are a no-op; a rule edit re-pushes (new hash)", async () => {
+    const unchanged = await pushEmployeeTimesheet({
+      ...common(),
+      client: new FakePushClient(),
+      entries: ENTRIES,
+      rules: [SAT_RULE],
+    });
+    expect(unchanged.status).toBe("unchanged");
+
+    // Owner re-points the rule at a different one of THEIR pay items →
+    // content changed → delete-then-create replaces the draft.
+    const before = await repo.getXeroPush(staffId, PERIOD.start, PERIOD.end);
+    const client = new FakePushClient();
+    const out = await pushEmployeeTimesheet({
+      ...common(),
+      client,
+      entries: ENTRIES,
+      rules: [{ ...SAT_RULE, earningsRateId: "rate-sat-v2" }],
+    });
+    expect(out.status).toBe("pushed");
+    expect(client.deleteIds).toEqual([before!.xeroTimesheetId]);
+    expect(client.lastInput!.lines[1]!.earningsRateId).toBe("rate-sat-v2");
+    const row = await repo.getXeroPush(staffId, PERIOD.start, PERIOD.end);
+    expect(row!.attempt).toBe(before!.attempt + 1);
+  });
+
+  it("removing all rules re-pushes back to ordinary-only lines", async () => {
+    const client = new FakePushClient();
+    const out = await pushEmployeeTimesheet({
+      ...common(),
+      client,
+      entries: ENTRIES,
+      rules: [],
+    });
+    expect(out.status).toBe("pushed");
+    expect(
+      client.lastInput!.lines.every((l) => l.earningsRateId === "rate-1"),
+    ).toBe(true);
   });
 });
 

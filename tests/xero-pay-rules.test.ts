@@ -70,9 +70,9 @@ describe("parsePayRuleCondition / toActivePayRules", () => {
       type: "day_of_week",
       days: [6, 7],
     });
-    expect(parsePayRuleCondition("time_of_day_after", { time: "22:00" })).toEqual(
-      { type: "time_of_day_after", time: "22:00" },
-    );
+    expect(
+      parsePayRuleCondition("time_of_day_after", { time: "22:00" }),
+    ).toEqual({ type: "time_of_day_after", time: "22:00" });
     expect(parsePayRuleCondition("daily_hours_beyond", { hours: 8 })).toEqual({
       type: "daily_hours_beyond",
       hours: 8,
@@ -80,11 +80,21 @@ describe("parsePayRuleCondition / toActivePayRules", () => {
     // Invalid: out-of-range day, malformed time, zero hours, wrong shape.
     expect(parsePayRuleCondition("day_of_week", { days: [0] })).toBeNull();
     expect(parsePayRuleCondition("day_of_week", { days: [] })).toBeNull();
-    expect(parsePayRuleCondition("time_of_day_after", { time: "24:00" })).toBeNull();
-    expect(parsePayRuleCondition("time_of_day_before", { time: "9pm" })).toBeNull();
-    expect(parsePayRuleCondition("daily_hours_beyond", { hours: 0 })).toBeNull();
-    expect(parsePayRuleCondition("weekly_hours_beyond", { hours: 200 })).toBeNull();
-    expect(parsePayRuleCondition("daily_hours_beyond", { days: [1] })).toBeNull();
+    expect(
+      parsePayRuleCondition("time_of_day_after", { time: "24:00" }),
+    ).toBeNull();
+    expect(
+      parsePayRuleCondition("time_of_day_before", { time: "9pm" }),
+    ).toBeNull();
+    expect(
+      parsePayRuleCondition("daily_hours_beyond", { hours: 0 }),
+    ).toBeNull();
+    expect(
+      parsePayRuleCondition("weekly_hours_beyond", { hours: 200 }),
+    ).toBeNull();
+    expect(
+      parsePayRuleCondition("daily_hours_beyond", { days: [1] }),
+    ).toBeNull();
   });
 
   it("keeps active parsable rows in precedence order, drops the rest", () => {
@@ -141,9 +151,9 @@ describe("parsePayRuleCondition / toActivePayRules", () => {
 
 describe("describePayRuleCondition", () => {
   it("describes every condition type in plain words", () => {
-    expect(
-      describePayRuleCondition({ type: "day_of_week", days: [6] }),
-    ).toBe("Hours on Saturday");
+    expect(describePayRuleCondition({ type: "day_of_week", days: [6] })).toBe(
+      "Hours on Saturday",
+    );
     expect(
       describePayRuleCondition({ type: "day_of_week", days: [7, 6, 1] }),
     ).toBe("Hours on Monday, Saturday & Sunday");
@@ -175,12 +185,24 @@ describe("classifyEntries — zero rules (backward compatibility)", () => {
   it("matches buildTimesheetLines exactly under the ordinary rate", () => {
     const entries = [
       // Mon 6 Jul: 09:00–12:00 + 13:00–17:00 (Sydney) = 7h
-      { clockInAt: at("2026-07-05T23:00:00Z"), clockOutAt: at("2026-07-06T02:00:00Z") },
-      { clockInAt: at("2026-07-06T03:00:00Z"), clockOutAt: at("2026-07-06T07:00:00Z") },
+      {
+        clockInAt: at("2026-07-05T23:00:00Z"),
+        clockOutAt: at("2026-07-06T02:00:00Z"),
+      },
+      {
+        clockInAt: at("2026-07-06T03:00:00Z"),
+        clockOutAt: at("2026-07-06T07:00:00Z"),
+      },
       // Tue 7 Jul: 4.5h; plus an open entry and a 20-minute entry
-      { clockInAt: at("2026-07-06T23:00:00Z"), clockOutAt: at("2026-07-07T03:30:00Z") },
+      {
+        clockInAt: at("2026-07-06T23:00:00Z"),
+        clockOutAt: at("2026-07-07T03:30:00Z"),
+      },
       { clockInAt: at("2026-07-07T04:00:00Z"), clockOutAt: null },
-      { clockInAt: at("2026-07-07T05:00:00Z"), clockOutAt: at("2026-07-07T05:20:00Z") },
+      {
+        clockInAt: at("2026-07-07T05:00:00Z"),
+        clockOutAt: at("2026-07-07T05:20:00Z"),
+      },
     ];
     const legacy = buildTimesheetLines({
       entries,
@@ -199,14 +221,22 @@ describe("classifyEntries — zero rules (backward compatibility)", () => {
     // Every in-period shift appears in the breakdown as one ordinary segment.
     expect(out.breakdown).toHaveLength(4);
     expect(out.breakdown.every((b) => b.segments.length === 1)).toBe(true);
-    expect(out.breakdown.every((b) => b.segments[0]!.ruleId === null)).toBe(true);
+    expect(out.breakdown.every((b) => b.segments[0]!.ruleId === null)).toBe(
+      true,
+    );
   });
 
   it("excludes out-of-period days and uses the business-local date", () => {
     const out = classify(
       [
-        { clockInAt: at("2026-07-06T23:30:00Z"), clockOutAt: at("2026-07-07T01:30:00Z") }, // 7 Jul local
-        { clockInAt: at("2026-07-13T00:00:00Z"), clockOutAt: at("2026-07-13T02:00:00Z") }, // 13 Jul → out
+        {
+          clockInAt: at("2026-07-06T23:30:00Z"),
+          clockOutAt: at("2026-07-07T01:30:00Z"),
+        }, // 7 Jul local
+        {
+          clockInAt: at("2026-07-13T00:00:00Z"),
+          clockOutAt: at("2026-07-13T02:00:00Z"),
+        }, // 13 Jul → out
       ],
       [],
       { start: "2026-07-07", end: "2026-07-07" },
@@ -227,14 +257,23 @@ describe("classifyEntries — day_of_week", () => {
   it("splits an over-midnight shift at local midnight (the moments' own weekday)", () => {
     // Fri 10 Jul 20:00 → Sat 11 Jul 02:00 Sydney. The 2h past midnight ARE
     // Saturday moments; the whole 6h still lands on Friday's line date.
-    const saturday = rule(1, { type: "day_of_week", days: [6] }, {
-      id: "sat",
-      name: "Saturday hours",
-      earningsRateId: "rate-sat",
-      earningsRateName: "Saturday item",
-    });
+    const saturday = rule(
+      1,
+      { type: "day_of_week", days: [6] },
+      {
+        id: "sat",
+        name: "Saturday hours",
+        earningsRateId: "rate-sat",
+        earningsRateName: "Saturday item",
+      },
+    );
     const out = classify(
-      [{ clockInAt: at("2026-07-10T10:00:00Z"), clockOutAt: at("2026-07-10T16:00:00Z") }],
+      [
+        {
+          clockInAt: at("2026-07-10T10:00:00Z"),
+          clockOutAt: at("2026-07-10T16:00:00Z"),
+        },
+      ],
       [saturday],
     );
     expect(out.lines).toEqual([
@@ -268,7 +307,12 @@ describe("classifyEntries — day_of_week", () => {
     const saturday = rule(1, { type: "day_of_week", days: [6] });
     const out = classify(
       // Sat 11 Jul 09:00–17:00 Sydney
-      [{ clockInAt: at("2026-07-10T23:00:00Z"), clockOutAt: at("2026-07-11T07:00:00Z") }],
+      [
+        {
+          clockInAt: at("2026-07-10T23:00:00Z"),
+          clockOutAt: at("2026-07-11T07:00:00Z"),
+        },
+      ],
       [saturday],
     );
     expect(out.lines).toHaveLength(1);
@@ -282,18 +326,30 @@ describe("classifyEntries — time of day", () => {
     // Fri 20:00 → Sat 02:00. "After 22:00" matches 22:00–24:00 ONLY (after
     // midnight the clock reads 00:00–02:00 — the owner adds a before-rule for
     // that if they want it). 20:00–22:00 and 00:00–02:00 stay ordinary.
-    const late = rule(1, { type: "time_of_day_after", time: "22:00" }, {
-      id: "late",
-      name: "Late hours",
-      earningsRateId: "rate-late",
-    });
+    const late = rule(
+      1,
+      { type: "time_of_day_after", time: "22:00" },
+      {
+        id: "late",
+        name: "Late hours",
+        earningsRateId: "rate-late",
+      },
+    );
     const out = classify(
-      [{ clockInAt: at("2026-07-10T10:00:00Z"), clockOutAt: at("2026-07-10T16:00:00Z") }],
+      [
+        {
+          clockInAt: at("2026-07-10T10:00:00Z"),
+          clockOutAt: at("2026-07-10T16:00:00Z"),
+        },
+      ],
       [late],
     );
     expect(out.lines).toEqual([
       expect.objectContaining({ earningsRateId: ORD, numberOfUnits: 4 }),
-      expect.objectContaining({ earningsRateId: "rate-late", numberOfUnits: 2 }),
+      expect.objectContaining({
+        earningsRateId: "rate-late",
+        numberOfUnits: 2,
+      }),
     ]);
     // Segments: 20:00–22:00 ordinary, 22:00–24:00 late, 00:00–02:00 ordinary.
     const segs = out.breakdown[0]!.segments;
@@ -308,7 +364,12 @@ describe("classifyEntries — time of day", () => {
     const late = rule(1, { type: "time_of_day_after", time: "22:00" });
     const out = classify(
       // Fri 22:00 → Sat 00:00 Sydney (12:00Z–14:00Z)
-      [{ clockInAt: at("2026-07-10T12:00:00Z"), clockOutAt: at("2026-07-10T14:00:00Z") }],
+      [
+        {
+          clockInAt: at("2026-07-10T12:00:00Z"),
+          clockOutAt: at("2026-07-10T14:00:00Z"),
+        },
+      ],
       [late],
     );
     expect(out.lines).toHaveLength(1);
@@ -317,33 +378,54 @@ describe("classifyEntries — time of day", () => {
   });
 
   it("time_of_day_before matches wall clock strictly before the cutoff", () => {
-    const early = rule(1, { type: "time_of_day_before", time: "06:00" }, {
-      id: "early",
-      name: "Early hours",
-      earningsRateId: "rate-early",
-    });
+    const early = rule(
+      1,
+      { type: "time_of_day_before", time: "06:00" },
+      {
+        id: "early",
+        name: "Early hours",
+        earningsRateId: "rate-early",
+      },
+    );
     const out = classify(
       // Mon 6 Jul 05:00–09:00 Sydney (19:00Z Sun –23:00Z Sun)
-      [{ clockInAt: at("2026-07-05T19:00:00Z"), clockOutAt: at("2026-07-05T23:00:00Z") }],
+      [
+        {
+          clockInAt: at("2026-07-05T19:00:00Z"),
+          clockOutAt: at("2026-07-05T23:00:00Z"),
+        },
+      ],
       [early],
     );
     expect(out.lines).toEqual([
       expect.objectContaining({ earningsRateId: ORD, numberOfUnits: 3 }),
-      expect.objectContaining({ earningsRateId: "rate-early", numberOfUnits: 1 }),
+      expect.objectContaining({
+        earningsRateId: "rate-early",
+        numberOfUnits: 1,
+      }),
     ]);
   });
 });
 
 describe("classifyEntries — cumulative thresholds", () => {
   it("daily_hours_beyond splits a single long shift at the crossing instant", () => {
-    const beyond8 = rule(1, { type: "daily_hours_beyond", hours: 8 }, {
-      id: "d8",
-      name: "Beyond 8",
-      earningsRateId: "rate-d8",
-    });
+    const beyond8 = rule(
+      1,
+      { type: "daily_hours_beyond", hours: 8 },
+      {
+        id: "d8",
+        name: "Beyond 8",
+        earningsRateId: "rate-d8",
+      },
+    );
     const out = classify(
       // Mon 6 Jul 09:00–19:00 Sydney = 10h
-      [{ clockInAt: at("2026-07-05T23:00:00Z"), clockOutAt: at("2026-07-06T09:00:00Z") }],
+      [
+        {
+          clockInAt: at("2026-07-05T23:00:00Z"),
+          clockOutAt: at("2026-07-06T09:00:00Z"),
+        },
+      ],
       [beyond8],
     );
     expect(out.lines).toEqual([
@@ -351,20 +433,30 @@ describe("classifyEntries — cumulative thresholds", () => {
       expect.objectContaining({ earningsRateId: "rate-d8", numberOfUnits: 2 }),
     ]);
     // Crossing at 09:00 + 8h = 17:00 local (07:00Z).
-    expect(
-      out.breakdown[0]!.segments[1]!.startUtc.toISOString(),
-    ).toBe("2026-07-06T07:00:00.000Z");
+    expect(out.breakdown[0]!.segments[1]!.startUtc.toISOString()).toBe(
+      "2026-07-06T07:00:00.000Z",
+    );
   });
 
   it("daily_hours_beyond accumulates across a day's multiple shifts", () => {
-    const beyond8 = rule(1, { type: "daily_hours_beyond", hours: 8 }, {
-      earningsRateId: "rate-d8",
-    });
+    const beyond8 = rule(
+      1,
+      { type: "daily_hours_beyond", hours: 8 },
+      {
+        earningsRateId: "rate-d8",
+      },
+    );
     const out = classify(
       [
         // Mon 6 Jul: 06:00–10:00 (4h), then 12:00–18:00 (6h; crosses at 16:00)
-        { clockInAt: at("2026-07-05T20:00:00Z"), clockOutAt: at("2026-07-06T00:00:00Z") },
-        { clockInAt: at("2026-07-06T02:00:00Z"), clockOutAt: at("2026-07-06T08:00:00Z") },
+        {
+          clockInAt: at("2026-07-05T20:00:00Z"),
+          clockOutAt: at("2026-07-06T00:00:00Z"),
+        },
+        {
+          clockInAt: at("2026-07-06T02:00:00Z"),
+          clockOutAt: at("2026-07-06T08:00:00Z"),
+        },
       ],
       [beyond8],
     );
@@ -380,15 +472,28 @@ describe("classifyEntries — cumulative thresholds", () => {
   });
 
   it("weekly_hours_beyond counts context entries from before the period", () => {
-    const beyond20 = rule(1, { type: "weekly_hours_beyond", hours: 20 }, {
-      earningsRateId: "rate-w20",
-    });
+    const beyond20 = rule(
+      1,
+      { type: "weekly_hours_beyond", hours: 20 },
+      {
+        earningsRateId: "rate-w20",
+      },
+    );
     const entries = [
       // Context: Mon 6 + Tue 7 Jul, 10h each (period starts Wed 8 Jul).
-      { clockInAt: at("2026-07-05T22:00:00Z"), clockOutAt: at("2026-07-06T08:00:00Z") },
-      { clockInAt: at("2026-07-06T22:00:00Z"), clockOutAt: at("2026-07-07T08:00:00Z") },
+      {
+        clockInAt: at("2026-07-05T22:00:00Z"),
+        clockOutAt: at("2026-07-06T08:00:00Z"),
+      },
+      {
+        clockInAt: at("2026-07-06T22:00:00Z"),
+        clockOutAt: at("2026-07-07T08:00:00Z"),
+      },
       // In period: Wed 8 Jul 09:00–17:00 — the weekly count is already 20.
-      { clockInAt: at("2026-07-07T23:00:00Z"), clockOutAt: at("2026-07-08T07:00:00Z") },
+      {
+        clockInAt: at("2026-07-07T23:00:00Z"),
+        clockOutAt: at("2026-07-08T07:00:00Z"),
+      },
     ];
     const out = classify(entries, [beyond20], {
       start: "2026-07-08",
@@ -407,16 +512,29 @@ describe("classifyEntries — cumulative thresholds", () => {
   });
 
   it("weekly_hours_beyond crosses mid-entry and resets on Monday", () => {
-    const beyond20 = rule(1, { type: "weekly_hours_beyond", hours: 20 }, {
-      earningsRateId: "rate-w20",
-    });
+    const beyond20 = rule(
+      1,
+      { type: "weekly_hours_beyond", hours: 20 },
+      {
+        earningsRateId: "rate-w20",
+      },
+    );
     const entries = [
       // Week 1 context: Mon 6 Jul, 15h (Sydney 05:00–20:00).
-      { clockInAt: at("2026-07-05T19:00:00Z"), clockOutAt: at("2026-07-06T10:00:00Z") },
+      {
+        clockInAt: at("2026-07-05T19:00:00Z"),
+        clockOutAt: at("2026-07-06T10:00:00Z"),
+      },
       // Wed 8 Jul 09:00–17:00: crosses 20h after 5h → 3h beyond.
-      { clockInAt: at("2026-07-07T23:00:00Z"), clockOutAt: at("2026-07-08T07:00:00Z") },
+      {
+        clockInAt: at("2026-07-07T23:00:00Z"),
+        clockOutAt: at("2026-07-08T07:00:00Z"),
+      },
       // NEXT week, Mon 13 Jul 09:00–17:00: counter reset → all ordinary.
-      { clockInAt: at("2026-07-12T23:00:00Z"), clockOutAt: at("2026-07-13T07:00:00Z") },
+      {
+        clockInAt: at("2026-07-12T23:00:00Z"),
+        clockOutAt: at("2026-07-13T07:00:00Z"),
+      },
     ];
     const out = classify(entries, [beyond20], {
       start: "2026-07-08",
@@ -446,12 +564,23 @@ describe("classifyEntries — precedence", () => {
   it("first match wins by the owner's visible order, deterministically", () => {
     // Both rules match every Saturday moment; only the higher one applies.
     const satFirst = [
-      rule(1, { type: "day_of_week", days: [6] }, { id: "sat", earningsRateId: "rate-sat" }),
-      rule(2, { type: "time_of_day_after", time: "00:00" }, { id: "any", earningsRateId: "rate-any" }),
+      rule(
+        1,
+        { type: "day_of_week", days: [6] },
+        { id: "sat", earningsRateId: "rate-sat" },
+      ),
+      rule(
+        2,
+        { type: "time_of_day_after", time: "00:00" },
+        { id: "any", earningsRateId: "rate-any" },
+      ),
     ];
     const entry = [
       // Sat 11 Jul 09:00–17:00 Sydney
-      { clockInAt: at("2026-07-10T23:00:00Z"), clockOutAt: at("2026-07-11T07:00:00Z") },
+      {
+        clockInAt: at("2026-07-10T23:00:00Z"),
+        clockOutAt: at("2026-07-11T07:00:00Z"),
+      },
     ];
     const a = classify(entry, satFirst);
     expect(a.lines).toHaveLength(1);
@@ -469,37 +598,66 @@ describe("classifyEntries — precedence", () => {
 
   it("a lower-priority rule still applies where the higher one doesn't match", () => {
     const rules = [
-      rule(1, { type: "time_of_day_after", time: "14:00" }, { id: "arvo", earningsRateId: "rate-arvo" }),
-      rule(2, { type: "day_of_week", days: [6] }, { id: "sat", earningsRateId: "rate-sat" }),
+      rule(
+        1,
+        { type: "time_of_day_after", time: "14:00" },
+        { id: "arvo", earningsRateId: "rate-arvo" },
+      ),
+      rule(
+        2,
+        { type: "day_of_week", days: [6] },
+        { id: "sat", earningsRateId: "rate-sat" },
+      ),
     ];
     const out = classify(
       // Sat 11 Jul 09:00–17:00: 09:00–14:00 → sat (arvo doesn't match),
       // 14:00–17:00 → arvo (first match wins).
-      [{ clockInAt: at("2026-07-10T23:00:00Z"), clockOutAt: at("2026-07-11T07:00:00Z") }],
+      [
+        {
+          clockInAt: at("2026-07-10T23:00:00Z"),
+          clockOutAt: at("2026-07-11T07:00:00Z"),
+        },
+      ],
       rules,
     );
     expect(out.lines).toEqual([
-      expect.objectContaining({ earningsRateId: "rate-arvo", numberOfUnits: 3 }),
+      expect.objectContaining({
+        earningsRateId: "rate-arvo",
+        numberOfUnits: 3,
+      }),
       expect.objectContaining({ earningsRateId: "rate-sat", numberOfUnits: 5 }),
     ]);
   });
 
   it("two rules mapping to the SAME pay item merge into one line", () => {
     const rules = [
-      rule(1, { type: "time_of_day_before", time: "06:00" }, {
-        name: "Early",
-        earningsRateId: "rate-x",
-        earningsRateName: "Item X",
-      }),
-      rule(2, { type: "time_of_day_after", time: "22:00" }, {
-        name: "Late",
-        earningsRateId: "rate-x",
-        earningsRateName: "Item X",
-      }),
+      rule(
+        1,
+        { type: "time_of_day_before", time: "06:00" },
+        {
+          name: "Early",
+          earningsRateId: "rate-x",
+          earningsRateName: "Item X",
+        },
+      ),
+      rule(
+        2,
+        { type: "time_of_day_after", time: "22:00" },
+        {
+          name: "Late",
+          earningsRateId: "rate-x",
+          earningsRateName: "Item X",
+        },
+      ),
     ];
     const out = classify(
       // Mon 6 Jul 05:00–23:30 Sydney (long day: 1h early + 1.5h late match)
-      [{ clockInAt: at("2026-07-05T19:00:00Z"), clockOutAt: at("2026-07-06T13:30:00Z") }],
+      [
+        {
+          clockInAt: at("2026-07-05T19:00:00Z"),
+          clockOutAt: at("2026-07-06T13:30:00Z"),
+        },
+      ],
       rules,
     );
     expect(out.lines).toEqual([
@@ -517,12 +675,21 @@ describe("classifyEntries — rounding reconciliation", () => {
   it("split lines always sum to the canonical 2dp day total", () => {
     // 20-minute shift split down the middle → raw thirds of an hour that
     // round to 0.17 + 0.17 = 0.34, but the canonical entry total is 0.33.
-    const mid = rule(1, { type: "time_of_day_after", time: "09:10" }, {
-      earningsRateId: "rate-mid",
-    });
+    const mid = rule(
+      1,
+      { type: "time_of_day_after", time: "09:10" },
+      {
+        earningsRateId: "rate-mid",
+      },
+    );
     const out = classify(
       // Mon 6 Jul 09:00–09:20 Sydney
-      [{ clockInAt: at("2026-07-05T23:00:00Z"), clockOutAt: at("2026-07-05T23:20:00Z") }],
+      [
+        {
+          clockInAt: at("2026-07-05T23:00:00Z"),
+          clockOutAt: at("2026-07-05T23:20:00Z"),
+        },
+      ],
       [mid],
     );
     const sum = out.lines.reduce((s, l) => s + l.numberOfUnits, 0);
@@ -533,8 +700,14 @@ describe("classifyEntries — rounding reconciliation", () => {
 
   it("a day's split lines reconcile to the same total buildTimesheetLines gives", () => {
     const entries = [
-      { clockInAt: at("2026-07-05T23:07:00Z"), clockOutAt: at("2026-07-06T02:11:00Z") },
-      { clockInAt: at("2026-07-06T03:03:00Z"), clockOutAt: at("2026-07-06T08:49:00Z") },
+      {
+        clockInAt: at("2026-07-05T23:07:00Z"),
+        clockOutAt: at("2026-07-06T02:11:00Z"),
+      },
+      {
+        clockInAt: at("2026-07-06T03:03:00Z"),
+        clockOutAt: at("2026-07-06T08:49:00Z"),
+      },
     ];
     const legacy = buildTimesheetLines({
       entries,
@@ -543,11 +716,18 @@ describe("classifyEntries — rounding reconciliation", () => {
       periodEnd: "2026-07-12",
     });
     const out = classify(entries, [
-      rule(1, { type: "daily_hours_beyond", hours: 5 }, { earningsRateId: "rate-d5" }),
+      rule(
+        1,
+        { type: "daily_hours_beyond", hours: 5 },
+        { earningsRateId: "rate-d5" },
+      ),
     ]);
     const byDate = new Map<string, number>();
     for (const l of out.lines) {
-      byDate.set(l.date, Math.round(((byDate.get(l.date) ?? 0) + l.numberOfUnits) * 100) / 100);
+      byDate.set(
+        l.date,
+        Math.round(((byDate.get(l.date) ?? 0) + l.numberOfUnits) * 100) / 100,
+      );
     }
     expect([...byDate.entries()]).toEqual(
       legacy.lines.map((l) => [l.date, l.numberOfUnits]),
@@ -573,8 +753,14 @@ describe("classifyEntries — edge cases", () => {
   it("ignores zero/negative-duration entries", () => {
     const out = classify(
       [
-        { clockInAt: at("2026-07-06T02:00:00Z"), clockOutAt: at("2026-07-06T02:00:00Z") },
-        { clockInAt: at("2026-07-06T03:00:00Z"), clockOutAt: at("2026-07-06T02:30:00Z") },
+        {
+          clockInAt: at("2026-07-06T02:00:00Z"),
+          clockOutAt: at("2026-07-06T02:00:00Z"),
+        },
+        {
+          clockInAt: at("2026-07-06T03:00:00Z"),
+          clockOutAt: at("2026-07-06T02:30:00Z"),
+        },
       ],
       [rule(1, { type: "day_of_week", days: [1] })],
     );
@@ -586,7 +772,12 @@ describe("classifyEntries — edge cases", () => {
   it("inactive/unknown rules never appear (toActivePayRules is the only door in)", () => {
     // classifyEntries trusts its input list; the flow test covers the DB side.
     const out = classify(
-      [{ clockInAt: at("2026-07-06T00:00:00Z"), clockOutAt: at("2026-07-06T04:00:00Z") }],
+      [
+        {
+          clockInAt: at("2026-07-06T00:00:00Z"),
+          clockOutAt: at("2026-07-06T04:00:00Z"),
+        },
+      ],
       [],
     );
     expect(out.lines[0]!.ruleNames).toEqual([]);
