@@ -23,6 +23,7 @@ import {
 import { DOC_TYPES, validateUpload } from "@/lib/google-drive/validation";
 import { ClearFlashCookie } from "@/components/ClearFlashCookie";
 import { CopyButton } from "@/components/CopyButton";
+import { AddStaffFields } from "@/components/AddStaffFields";
 import {
   Avatar,
   Badge,
@@ -494,21 +495,7 @@ export default async function StaffPage({
             </span>
             Add someone
           </span>
-          <input
-            name="name"
-            required
-            placeholder="Full name"
-            aria-label="Full name"
-            className="min-w-[150px] flex-1 rounded-[9px] border border-[var(--color-line)] px-3 py-[9px] text-[13.5px] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.15)]"
-          />
-          <input
-            type="email"
-            name="email"
-            required
-            placeholder="Email address"
-            aria-label="Email address"
-            className="min-w-[170px] flex-1 rounded-[9px] border border-[var(--color-line)] px-3 py-[9px] text-[13.5px] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.15)]"
-          />
+          <AddStaffFields />
           <Button type="submit">Add to team</Button>
         </form>
       </Card>
