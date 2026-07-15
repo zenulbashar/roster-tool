@@ -25,11 +25,14 @@ export default async function ShiftsPage({
   const business = await repo.getBusiness();
   const today = businessDateOf(new Date(), business?.timezone);
 
-  const [claims, openOffers, unassigned] = await Promise.all([
+  const [claims, openOffers, unassigned, locationCount] = await Promise.all([
     repo.listPendingClaims(),
     repo.listOpenOffers(),
     repo.listUnassignedPublishedShifts(today),
+    repo.getOrgLocationCount(),
   ]);
+  // In a multi-location business the owner can open a shift to the whole org.
+  const multiLocation = locationCount > 1;
 
   // Compute non-blocking conflict flags for each pending claim: does the
   // claimer have approved leave on the day, or another shift that overlaps?
@@ -111,7 +114,9 @@ export default async function ShiftsPage({
     "use server";
     const repo = await ownerRepo();
     const shiftId = String(formData.get("shiftId"));
-    const res = await repo.postOpenShift(shiftId);
+    // "org" = claimable by staff at any of the owner's locations (M29).
+    const scope = formData.get("scope") === "org" ? "org" : "location";
+    const res = await repo.postOpenShift(shiftId, scope);
     if (!res.ok) {
       redirect(`${PATH}?error=${encodeURIComponent(res.reason)}`);
     }
@@ -259,8 +264,19 @@ export default async function ShiftsPage({
                 className="flex flex-wrap items-center justify-between gap-3"
               >
                 <span className="text-sm">{shiftLine(u)}</span>
-                <form action={postOpen}>
+                <form action={postOpen} className="flex items-center gap-2">
                   <input type="hidden" name="shiftId" value={u.shiftId} />
+                  {multiLocation ? (
+                    <select
+                      name="scope"
+                      defaultValue="location"
+                      aria-label="Who can claim this shift"
+                      className="rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-2.5 py-2 text-[12.5px] text-[var(--color-ink)] outline-none focus:border-[var(--color-button)]"
+                    >
+                      <option value="location">This location only</option>
+                      <option value="org">Any of my locations</option>
+                    </select>
+                  ) : null}
                   <Button type="submit" variant="secondary">
                     Make claimable
                   </Button>

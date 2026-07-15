@@ -334,6 +334,14 @@ export const shiftOfferStatus = pgEnum("shift_offer_status", [
 ]);
 
 /**
+ * How widely an open shift offer can be claimed (M29 Phase 3). `location` = only
+ * staff at the offer's own location (the pre-M29 behaviour, still the default).
+ * `org` = any member of the organisation, so a person can cover a shift at
+ * another of the owner's locations. The owner always approves the handover.
+ */
+export const shiftOfferScope = pgEnum("shift_offer_scope", ["location", "org"]);
+
+/**
  * Kind of certification / qualification tracked for a staff member. `other`
  * carries a free `cert_label`. These are plain expiry-tracked records — the app
  * does no award/compliance interpretation beyond the expiry date.
@@ -771,6 +779,10 @@ export const shiftOffers = pgTable(
       { onDelete: "set null" },
     ),
     status: shiftOfferStatus("status").notNull().default("open"),
+    // How widely the offer can be claimed (M29 Phase 3). `location` (default)
+    // keeps the pre-M29 same-location behaviour; `org` lets any org member claim
+    // it from their own location's kiosk, for cross-location cover.
+    scope: shiftOfferScope("scope").notNull().default("location"),
     // When the owner approved/denied (or it was withdrawn). Null while open.
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     // When the approval email was sent; guards the email job against resends.

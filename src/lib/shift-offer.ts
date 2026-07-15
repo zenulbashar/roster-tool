@@ -16,6 +16,13 @@ export type OfferStatus =
   | "denied"
   | "withdrawn";
 
+/**
+ * How widely an open offer can be claimed (M29 Phase 3). `location` = only the
+ * offer's own location (pre-M29 default); `org` = any member of the
+ * organisation, for cross-location cover. The owner still approves the handover.
+ */
+export type OfferScope = "location" | "org";
+
 /** Statuses that occupy a shift — at most one active offer per shift. */
 export const ACTIVE_OFFER_STATUSES: readonly OfferStatus[] = [
   "open",

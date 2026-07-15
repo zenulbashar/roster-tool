@@ -1,11 +1,15 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, ne } from "drizzle-orm";
 import { db as defaultDb, type Db } from "@/lib/db";
 import {
   businesses,
   organisations,
   staffMembers,
   staffLocations,
+  shiftOffers,
+  shifts,
+  rosterAssignments,
 } from "@/lib/db/schema";
+import { claimEligibility } from "@/lib/shift-offer";
 
 /**
  * Organisation-scoped data access for the multi-location feature (M29). Mirrors
@@ -205,6 +209,175 @@ export function createOrgRepo(orgId: string, database: Db = defaultDb) {
           ),
         );
       return { ok: true };
+    },
+
+    /* ----- Cross-location shift cover (M29 Phase 3) ----- */
+
+    /**
+     * Open, ORG-scoped offers across the whole org — the "shifts at other
+     * locations you can cover" list shown on a staff member's own kiosk/clock.
+     * Excludes the viewer's own location (those appear in the normal per-location
+     * list) and any offer the viewer released. Joins the originating location's
+     * name so the claimer sees where the shift is.
+     */
+    async listOrgOpenOffers(
+      opts: { excludeBusinessId?: string; excludeStaffId?: string } = {},
+    ) {
+      const rows = await database
+        .select({
+          offerId: shiftOffers.id,
+          shiftId: shifts.id,
+          date: shifts.date,
+          label: shifts.label,
+          startTime: shifts.startTime,
+          endTime: shifts.endTime,
+          businessId: shiftOffers.businessId,
+          locationName: businesses.name,
+          offeredByStaffId: shiftOffers.offeredByStaffId,
+        })
+        .from(shiftOffers)
+        .innerJoin(shifts, eq(shiftOffers.shiftId, shifts.id))
+        .innerJoin(businesses, eq(shiftOffers.businessId, businesses.id))
+        .where(
+          and(
+            eq(businesses.orgId, orgId),
+            eq(shiftOffers.status, "open"),
+            eq(shiftOffers.scope, "org"),
+            opts.excludeBusinessId
+              ? ne(shiftOffers.businessId, opts.excludeBusinessId)
+              : undefined,
+          ),
+        )
+        .orderBy(asc(shifts.date), asc(shifts.startTime));
+      // Can't claim a shift you offered up yourself.
+      return opts.excludeStaffId
+        ? rows.filter((r) => r.offeredByStaffId !== opts.excludeStaffId)
+        : rows;
+    },
+
+    /**
+     * A single org-scoped offer with its shift + location detail, validated to
+     * belong to THIS org (for the cross-location claim confirmation screen).
+     */
+    async getOrgOffer(offerId: string) {
+      const [row] = await database
+        .select({
+          offerId: shiftOffers.id,
+          shiftId: shifts.id,
+          date: shifts.date,
+          label: shifts.label,
+          startTime: shifts.startTime,
+          endTime: shifts.endTime,
+          businessId: shiftOffers.businessId,
+          locationName: businesses.name,
+          status: shiftOffers.status,
+          offeredByStaffId: shiftOffers.offeredByStaffId,
+        })
+        .from(shiftOffers)
+        .innerJoin(shifts, eq(shiftOffers.shiftId, shifts.id))
+        .innerJoin(businesses, eq(shiftOffers.businessId, businesses.id))
+        .where(
+          and(
+            eq(shiftOffers.id, offerId),
+            eq(businesses.orgId, orgId),
+            eq(shiftOffers.scope, "org"),
+          ),
+        );
+      return row ?? null;
+    },
+
+    /**
+     * A staff member (authenticated at their OWN location) claims an org-scoped
+     * offer at ANOTHER location. Validates the offer is open + org-scoped + in
+     * this org, the claimer is org staff (N3), and the pure `claimEligibility`
+     * (not the releaser, not already on the shift). Sets the offer `claimed`;
+     * the owner still approves the handover, which grants the membership.
+     */
+    async claimOrgOffer(offerId: string, claimerStaffId: string) {
+      const [offer] = await database
+        .select({
+          id: shiftOffers.id,
+          shiftId: shiftOffers.shiftId,
+          status: shiftOffers.status,
+          businessId: shiftOffers.businessId,
+          offeredByStaffId: shiftOffers.offeredByStaffId,
+        })
+        .from(shiftOffers)
+        .innerJoin(businesses, eq(shiftOffers.businessId, businesses.id))
+        .where(
+          and(
+            eq(shiftOffers.id, offerId),
+            eq(businesses.orgId, orgId),
+            eq(shiftOffers.scope, "org"),
+          ),
+        );
+      if (!offer) {
+        return {
+          ok: false as const,
+          reason: "This shift isn't available to claim.",
+        };
+      }
+      // N3: the claimer must belong to this org.
+      const [claimer] = await database
+        .select({ id: staffMembers.id })
+        .from(staffMembers)
+        .where(
+          and(
+            eq(staffMembers.id, claimerStaffId),
+            eq(staffMembers.orgId, orgId),
+          ),
+        );
+      if (!claimer) {
+        return {
+          ok: false as const,
+          reason: "This shift isn't available to claim.",
+        };
+      }
+      // Already on this shift? (checked at the offer's own location)
+      const [assigned] = await database
+        .select({ id: rosterAssignments.id })
+        .from(rosterAssignments)
+        .where(
+          and(
+            eq(rosterAssignments.shiftId, offer.shiftId),
+            eq(rosterAssignments.staffMemberId, claimerStaffId),
+          ),
+        );
+      const elig = claimEligibility({
+        offerStatus: offer.status,
+        offeredByStaffId: offer.offeredByStaffId,
+        claimerStaffId,
+        alreadyAssignedToShift: Boolean(assigned),
+      });
+      if (!elig.ok) return { ok: false as const, reason: elig.reason };
+
+      const [updated] = await database
+        .update(shiftOffers)
+        .set({
+          status: "claimed",
+          claimedByStaffId: claimerStaffId,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(shiftOffers.id, offerId),
+            eq(shiftOffers.status, "open"),
+            eq(shiftOffers.scope, "org"),
+          ),
+        )
+        .returning();
+      if (!updated) {
+        return {
+          ok: false as const,
+          reason: "This shift was just taken by someone else.",
+        };
+      }
+      return {
+        ok: true as const,
+        offer: updated,
+        businessId: offer.businessId,
+        shiftId: offer.shiftId,
+      };
     },
   };
 }

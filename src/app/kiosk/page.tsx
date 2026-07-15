@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { createTenantRepo } from "@/lib/tenant/repository";
+import { createOrgRepo } from "@/lib/tenant/org-repository";
 import { resolveKioskBusiness } from "@/lib/tenant/kiosk-access";
+import { resolveOrgIdForBusiness } from "@/lib/tenant/org-access";
 import { KIOSK_COOKIE } from "@/lib/kiosk-cookie";
 import { Avatar } from "@/components/ui";
 import { KioskClockForm } from "@/components/KioskClockForm";
@@ -11,6 +13,7 @@ import { PinActionForm } from "@/components/PinActionForm";
 import {
   MyShiftsList,
   OpenShiftsList,
+  OtherLocationOffers,
   StaffShiftMenu,
   StaffShiftBackLinks,
 } from "@/components/StaffShiftLists";
@@ -18,6 +21,7 @@ import {
   kioskLeaveAction,
   kioskReleaseAction,
   kioskClaimAction,
+  kioskClaimOrgAction,
   kioskCancelOfferAction,
   kioskStockCheckAction,
 } from "@/app/kiosk/actions";
@@ -170,7 +174,16 @@ export default async function KioskPage({
     }
 
     if (mode === "open") {
-      const offers = await repo.listOpenOffers();
+      const orgId = await resolveOrgIdForBusiness(business.businessId);
+      const [offers, orgOffers] = await Promise.all([
+        repo.listOpenOffers(),
+        orgId
+          ? createOrgRepo(orgId).listOrgOpenOffers({
+              excludeBusinessId: business.businessId,
+              excludeStaffId: selected.id,
+            })
+          : Promise.resolve([]),
+      ]);
       return (
         <>
           <header className="mb-4 text-center">
@@ -183,6 +196,11 @@ export default async function KioskPage({
           </header>
           <OpenShiftsList
             offers={offers}
+            basePath="/kiosk"
+            staffId={selected.id}
+          />
+          <OtherLocationOffers
+            offers={orgOffers}
             basePath="/kiosk"
             staffId={selected.id}
           />
@@ -220,6 +238,31 @@ export default async function KioskPage({
             hiddenName="offerId"
             hiddenValue={offer.id}
             submitLabel="Claim it"
+            backHref={`/kiosk?staff=${selected.id}&mode=open`}
+          />
+        );
+      }
+    }
+
+    if (mode === "claimorg" && offerParam) {
+      const orgId = await resolveOrgIdForBusiness(business.businessId);
+      const offer = orgId
+        ? await createOrgRepo(orgId).getOrgOffer(offerParam)
+        : null;
+      if (offer && offer.status === "open") {
+        return (
+          <PinActionForm
+            action={kioskClaimOrgAction}
+            heading="Cover this shift?"
+            details={
+              <>
+                {shiftDetail(offer)}
+                <span className="mt-1 block">at {offer.locationName}</span>
+              </>
+            }
+            hiddenName="offerId"
+            hiddenValue={offer.offerId}
+            submitLabel="Offer to cover it"
             backHref={`/kiosk?staff=${selected.id}&mode=open`}
           />
         );

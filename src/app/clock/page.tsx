@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { createTenantRepo } from "@/lib/tenant/repository";
+import { createOrgRepo } from "@/lib/tenant/org-repository";
 import { resolvePersonalClockBusiness } from "@/lib/tenant/personal-clock-access";
+import { resolveOrgIdForBusiness } from "@/lib/tenant/org-access";
 import { PERSONAL_CLOCK_COOKIE } from "@/lib/kiosk-cookie";
 import { Avatar, Banner } from "@/components/ui";
 import { PersonalClockForm } from "@/components/PersonalClockForm";
@@ -11,6 +13,7 @@ import { PinActionForm } from "@/components/PinActionForm";
 import {
   MyShiftsList,
   OpenShiftsList,
+  OtherLocationOffers,
   StaffShiftMenu,
   StaffShiftBackLinks,
 } from "@/components/StaffShiftLists";
@@ -18,6 +21,7 @@ import {
   personalClockLeaveAction,
   personalClockReleaseAction,
   personalClockClaimAction,
+  personalClockClaimOrgAction,
   personalClockCancelOfferAction,
   personalClockStockCheckAction,
 } from "@/app/clock/actions";
@@ -129,7 +133,16 @@ export default async function PersonalClockPage({
     }
 
     if (mode === "open") {
-      const offers = await repo.listOpenOffers();
+      const orgId = await resolveOrgIdForBusiness(business.businessId);
+      const [offers, orgOffers] = await Promise.all([
+        repo.listOpenOffers(),
+        orgId
+          ? createOrgRepo(orgId).listOrgOpenOffers({
+              excludeBusinessId: business.businessId,
+              excludeStaffId: selected.id,
+            })
+          : Promise.resolve([]),
+      ]);
       return (
         <>
           <header className="mb-4 text-center">
@@ -142,6 +155,11 @@ export default async function PersonalClockPage({
           </header>
           <OpenShiftsList
             offers={offers}
+            basePath="/clock"
+            staffId={selected.id}
+          />
+          <OtherLocationOffers
+            offers={orgOffers}
             basePath="/clock"
             staffId={selected.id}
           />
@@ -179,6 +197,31 @@ export default async function PersonalClockPage({
             hiddenName="offerId"
             hiddenValue={offer.id}
             submitLabel="Claim it"
+            backHref={`/clock?staff=${selected.id}&mode=open`}
+          />
+        );
+      }
+    }
+
+    if (mode === "claimorg" && offerParam) {
+      const orgId = await resolveOrgIdForBusiness(business.businessId);
+      const offer = orgId
+        ? await createOrgRepo(orgId).getOrgOffer(offerParam)
+        : null;
+      if (offer && offer.status === "open") {
+        return (
+          <PinActionForm
+            action={personalClockClaimOrgAction}
+            heading="Cover this shift?"
+            details={
+              <>
+                {shiftDetail(offer)}
+                <span className="mt-1 block">at {offer.locationName}</span>
+              </>
+            }
+            hiddenName="offerId"
+            hiddenValue={offer.offerId}
+            submitLabel="Offer to cover it"
             backHref={`/clock?staff=${selected.id}&mode=open`}
           />
         );

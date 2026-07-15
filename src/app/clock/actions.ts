@@ -2,7 +2,9 @@
 
 import { cookies } from "next/headers";
 import { createTenantRepo } from "@/lib/tenant/repository";
+import { createOrgRepo } from "@/lib/tenant/org-repository";
 import { resolvePersonalClockBusiness } from "@/lib/tenant/personal-clock-access";
+import { resolveOrgIdForBusiness } from "@/lib/tenant/org-access";
 import { PERSONAL_CLOCK_COOKIE } from "@/lib/kiosk-cookie";
 import {
   verifyPin,
@@ -22,6 +24,7 @@ import {
 import {
   releaseShiftForStaff,
   claimShiftForStaff,
+  claimOrgOfferForStaff,
   withdrawOwnOffer,
   type ShiftActionResult,
 } from "@/lib/shift-offer-submission";
@@ -255,6 +258,24 @@ export async function personalClockCancelOfferAction(
   const repo = await personalClockRepo();
   if (!repo) return { status: "error", message: LINK_GONE };
   return withdrawOwnOffer(repo, formData);
+}
+
+/** Claim an org-scoped open shift from ANOTHER location (M29 Phase 3). */
+export async function personalClockClaimOrgAction(
+  _prev: ShiftActionResult,
+  formData: FormData,
+): Promise<ShiftActionResult> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(PERSONAL_CLOCK_COOKIE)?.value ?? "";
+  const business = await resolvePersonalClockBusiness(token);
+  if (!business) return { status: "error", message: LINK_GONE };
+  const orgId = await resolveOrgIdForBusiness(business.businessId);
+  if (!orgId) return { status: "error", message: LINK_GONE };
+  return claimOrgOfferForStaff(
+    createTenantRepo(business.businessId),
+    createOrgRepo(orgId),
+    formData,
+  );
 }
 
 /** Submit a stock check from a staff member's own phone (PIN, no geofence). */

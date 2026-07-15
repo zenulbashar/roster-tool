@@ -65,6 +65,7 @@ import {
   claimEligibility,
   ACTIVE_OFFER_STATUSES,
   type OfferStatus,
+  type OfferScope,
 } from "@/lib/shift-offer";
 import { alias } from "drizzle-orm/pg-core";
 import { photoRetentionCutoff } from "@/lib/retention";
@@ -1738,7 +1739,30 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
      * published period, they actually hold it, and there's no active offer
      * already. Returns the offer, or a typed failure.
      */
-    async releaseOwnShift(staffMemberId: string, shiftId: string) {
+    /**
+     * How many locations this location's organisation has (M29). Used to decide
+     * whether offering up a shift should be claimable org-wide: in a
+     * multi-location business it becomes `org`-scoped so staff at any location
+     * can cover it (the owner still approves).
+     */
+    async getOrgLocationCount(): Promise<number> {
+      const [self] = await database
+        .select({ orgId: businesses.orgId })
+        .from(businesses)
+        .where(eq(businesses.id, businessId));
+      if (!self?.orgId) return 1;
+      const rows = await database
+        .select({ id: businesses.id })
+        .from(businesses)
+        .where(eq(businesses.orgId, self.orgId));
+      return rows.length;
+    },
+
+    async releaseOwnShift(
+      staffMemberId: string,
+      shiftId: string,
+      scope: OfferScope = "location",
+    ) {
       const shift = await this.getPublishedShift(shiftId);
       if (!shift) {
         return {
@@ -1760,7 +1784,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       }
       const [row] = await database
         .insert(shiftOffers)
-        .values({ businessId, shiftId, offeredByStaffId: staffMemberId })
+        .values({ businessId, shiftId, offeredByStaffId: staffMemberId, scope })
         .returning();
       return { ok: true as const, offer: row! };
     },
@@ -1770,7 +1794,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
      * Guards: published, currently has no confirmed assignee, and no active
      * offer. Returns the offer, or a typed failure.
      */
-    async postOpenShift(shiftId: string) {
+    async postOpenShift(shiftId: string, scope: OfferScope = "location") {
       const shift = await this.getPublishedShift(shiftId);
       if (!shift) {
         return {
@@ -1804,7 +1828,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       }
       const [row] = await database
         .insert(shiftOffers)
-        .values({ businessId, shiftId, offeredByStaffId: null })
+        .values({ businessId, shiftId, offeredByStaffId: null, scope })
         .returning();
       return { ok: true as const, offer: row! };
     },
@@ -1928,6 +1952,30 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             ok: false as const,
             reason: "That roster is no longer published.",
           };
+        }
+
+        // M29: ensure the claimer is an active MEMBER of this location. A
+        // same-location claim makes this a no-op; a cross-location (org-scoped)
+        // claim grants the membership so the person shows on this location's
+        // roster/kiosk and can clock in here. org_id is derived from the
+        // business, never client input.
+        const [biz] = await tx
+          .select({ orgId: businesses.orgId })
+          .from(businesses)
+          .where(eq(businesses.id, businessId));
+        if (biz?.orgId) {
+          await tx
+            .insert(staffLocations)
+            .values({
+              orgId: biz.orgId,
+              businessId,
+              staffMemberId: offer.claimedByStaffId,
+              active: true,
+            })
+            .onConflictDoUpdate({
+              target: [staffLocations.businessId, staffLocations.staffMemberId],
+              set: { active: true },
+            });
         }
 
         // Assign the claimer (confirmed). Upsert in case a suggestion exists.

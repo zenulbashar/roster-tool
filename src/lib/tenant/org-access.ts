@@ -19,6 +19,22 @@ import { env } from "@/lib/env";
 /** Cookie holding the owner's currently-selected location id. */
 export const ACTIVE_LOCATION_COOKIE = "roster_active_location";
 
+/**
+ * The org id a location belongs to, or null. Used by the STAFF surfaces
+ * (kiosk/clock) to reach the org repo for cross-location shift cover — the
+ * business id itself comes from the flow's capability token, never client input.
+ */
+export async function resolveOrgIdForBusiness(
+  businessId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ orgId: businesses.orgId })
+    .from(businesses)
+    .where(eq(businesses.id, businessId))
+    .limit(1);
+  return row?.orgId ?? null;
+}
+
 /** The org a signed-in owner belongs to, or null if they have no membership. */
 export async function resolveOrgForUser(
   userId: string,

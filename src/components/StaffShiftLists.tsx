@@ -152,6 +152,58 @@ export function MyShiftsList({
   );
 }
 
+export type OrgOffer = ShiftLineInput & {
+  offerId: string;
+  locationName: string;
+};
+
+/**
+ * Open shifts at OTHER locations in the same business that this staff member can
+ * cover (M29 Phase 3). Shown below the local "Open shifts" list; claiming routes
+ * to the PIN-gated cross-location claim. The owner still approves the handover.
+ */
+export function OtherLocationOffers({
+  offers,
+  basePath,
+  staffId,
+}: {
+  offers: OrgOffer[];
+  basePath: string;
+  staffId: string;
+}) {
+  if (offers.length === 0) return null;
+  return (
+    <div className="mt-7">
+      <p className="mb-2.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#9CA3AF]">
+        Cover at another location
+      </p>
+      <ul className="space-y-2.5">
+        {offers.map((o) => (
+          <li key={o.offerId}>
+            <div className={rowCard}>
+              <div>
+                <p className="font-medium text-white">{shiftLine(o)}</p>
+                <p className="flex items-center gap-1 text-[13px] text-[#9CA3AF]">
+                  <span className="material-symbols-rounded text-[15px]">
+                    storefront
+                  </span>
+                  {o.locationName}
+                </p>
+              </div>
+              <Link
+                href={`${basePath}?staff=${staffId}&mode=claimorg&offer=${o.offerId}`}
+                className={kioskCls.link}
+              >
+                Claim
+              </Link>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export type OpenOffer = ShiftLineInput & {
   offerId: string;
   offeredByStaffId: string | null;
