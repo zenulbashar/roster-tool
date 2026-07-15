@@ -1,4 +1,5 @@
-import type { TenantRepo } from "@/lib/tenant/repository";
+import { createTenantRepo, type TenantRepo } from "@/lib/tenant/repository";
+import type { OrgRepo } from "@/lib/tenant/org-repository";
 import {
   verifyPin,
   isLockedOut,
@@ -93,14 +94,22 @@ export async function releaseShiftForStaff(
   if (typeof shiftId !== "string" || !shiftId) {
     return { status: "error", message: "Something went wrong. Try again." };
   }
-  const res = await repo.releaseOwnShift(auth.staff.id, shiftId);
+  // In a multi-location business the offer is claimable org-wide (staff at any
+  // location can cover it); a single-location business keeps the local scope.
+  // Either way the owner approves the handover.
+  const scope = (await repo.getOrgLocationCount()) > 1 ? "org" : "location";
+  const res = await repo.releaseOwnShift(auth.staff.id, shiftId, scope);
   if (!res.ok) return { status: "error", message: res.reason };
 
   // Best-effort owner notification; the owner manages offers on /app/shifts.
+  const reach =
+    scope === "org"
+      ? "Staff at any of your locations can now claim it, then you approve the handover."
+      : "Someone can now claim it, then you approve the handover.";
   await notifyOwner(repo, {
     type: "shift_offer_activity",
     title: `${auth.staff.name} offered up a shift`,
-    body: "Someone can now claim it, then you approve the handover.",
+    body: reach,
     linkPath: "/app/shifts",
   });
 
@@ -159,6 +168,53 @@ export async function claimShiftForStaff(
   return {
     status: "success",
     message: `Thanks ${auth.staff.name}, you've claimed this shift${when}. Your manager will confirm it.${heads}`,
+  };
+}
+
+/**
+ * A staff member (authenticated at their OWN location via `repo`) claims an
+ * ORG-scoped offer at ANOTHER location via `orgRepo` — the cross-location cover
+ * path (M29 Phase 3). The business is never client input: PIN auth uses the
+ * caller's own capability-token repo; the claim is org-scoped and validates the
+ * offer + claimer share the org. The owner still approves, which grants the
+ * claimer a membership at the shift's location.
+ */
+export async function claimOrgOfferForStaff(
+  repo: TenantRepo,
+  orgRepo: OrgRepo,
+  formData: FormData,
+  now: Date = new Date(),
+): Promise<ShiftActionResult> {
+  const auth = await authStaff(repo, formData, now);
+  if (!auth.ok) return { status: "error", message: auth.message };
+
+  const offerId = formData.get("offerId");
+  if (typeof offerId !== "string" || !offerId) {
+    return { status: "error", message: "Something went wrong. Try again." };
+  }
+  const res = await orgRepo.claimOrgOffer(offerId, auth.staff.id);
+  if (!res.ok) return { status: "error", message: res.reason };
+
+  // Shift detail + owner notification are at the SHIFT'S location (where the
+  // owner approves), resolved from the offer, never client input.
+  const offerRepo = createTenantRepo(res.businessId);
+  const shift = await offerRepo.getPublishedShift(res.shiftId);
+  const when = shift
+    ? ` for ${shift.label} on ${formatDateOnly(shift.date)} (${formatTimeOnly(shift.startTime)} – ${formatTimeOnly(shift.endTime)})`
+    : "";
+
+  await notifyOwner(offerRepo, {
+    type: "shift_offer_activity",
+    title: `${auth.staff.name} offered to cover a shift`,
+    body: when
+      ? `Claimed${when} from another location. Approve to confirm.`
+      : "A shift at this location was claimed from another location. Approve to confirm.",
+    linkPath: "/app/shifts",
+  });
+
+  return {
+    status: "success",
+    message: `Thanks ${auth.staff.name}, you've offered to cover this shift${when}. Your manager will confirm it.`,
   };
 }
 

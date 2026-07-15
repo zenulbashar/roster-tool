@@ -2,7 +2,9 @@
 
 import { cookies } from "next/headers";
 import { createTenantRepo } from "@/lib/tenant/repository";
+import { createOrgRepo } from "@/lib/tenant/org-repository";
 import { resolveKioskBusiness } from "@/lib/tenant/kiosk-access";
+import { resolveOrgIdForBusiness } from "@/lib/tenant/org-access";
 import { KIOSK_COOKIE } from "@/lib/kiosk-cookie";
 import {
   verifyPin,
@@ -21,6 +23,7 @@ import {
 import {
   releaseShiftForStaff,
   claimShiftForStaff,
+  claimOrgOfferForStaff,
   withdrawOwnOffer,
   type ShiftActionResult,
 } from "@/lib/shift-offer-submission";
@@ -221,6 +224,24 @@ export async function kioskCancelOfferAction(
   const repo = await kioskRepo();
   if (!repo) return { status: "error", message: KIOSK_LINK_GONE };
   return withdrawOwnOffer(repo, formData);
+}
+
+/** Claim an org-scoped open shift from ANOTHER location (M29 Phase 3). */
+export async function kioskClaimOrgAction(
+  _prev: ShiftActionResult,
+  formData: FormData,
+): Promise<ShiftActionResult> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(KIOSK_COOKIE)?.value ?? "";
+  const business = await resolveKioskBusiness(token);
+  if (!business) return { status: "error", message: KIOSK_LINK_GONE };
+  const orgId = await resolveOrgIdForBusiness(business.businessId);
+  if (!orgId) return { status: "error", message: KIOSK_LINK_GONE };
+  return claimOrgOfferForStaff(
+    createTenantRepo(business.businessId),
+    createOrgRepo(orgId),
+    formData,
+  );
 }
 
 /** Submit a stock check from the shared kiosk (PIN, no geofence). */
