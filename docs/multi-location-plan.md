@@ -1,7 +1,10 @@
 # Multi-location & cross-location staffing — plan of record
 
-**Status: IN BUILD (M29)** — research done, plan reviewed, **owner authorized
-the build (Strategy A — collapse; see §4)**. This is a deliberate,
+**Status: PHASES 0–2 BUILT (M29)** — research done, plan reviewed, **owner
+authorized the build (Strategy A — collapse; see §4)**. Phases 0, 1 and 2 are
+implemented, tested and green (multiple locations + shared org staff pool +
+owner-driven cross-location staffing). Phases 3–4 are documented follow-ups
+(§7). This is a deliberate,
 owner-requested **expansion of the MVP boundary**: CLAUDE.md today defines the
 product as _one owner = one business = one tenant_, and lists **cross-tenant**
 and **bilateral swaps** as out of scope. This feature knowingly crosses that
@@ -300,14 +303,23 @@ never client input") is preserved verbatim. New rules layered on top:
   owner pages against the new tenant. Purely additive to the existing nav.
 - **Onboarding.** First sign-in now creates `organisation` → first `business`
   (location) → `org_membership(owner)` in one transaction, then sets the active
-  location. `src/app/onboarding/page.tsx` updated; SSO provisioning
-  (`src/lib/sso/*`, `sso-session.ts`) updated to create/attach an org the same
-  way. Account-clarity copy (`AccountIdentity`) updated to show org + active
-  location.
+  location (`src/app/onboarding/page.tsx`). Inbound SSO provisioning still only
+  creates the `user` row, so an SSO-provisioned owner with no membership lands on
+  onboarding, which builds the org — no `sso-session.ts` change was needed.
+  (`AccountIdentity` copy was left as-is.)
 
 ## 7. Phasing (each phase independently shippable & green)
 
-**Phase 0 — Foundations, invisible (no behaviour change).**
+**Delivery status (this PR):** Phases **0, 1 and 2 are BUILT and tested** — an
+owner runs multiple locations, staff are one org-wide pool, and the owner can
+place/lend any person at any location (via the People page) so they appear in
+that location's roster builder, availability and kiosk. That satisfies the core
+request: _an owner adds multiple locations and moves/shares employees between
+them_. Phases **3 (staff-initiated cross-location shift cover) and 4
+(date-ranged loan records)** are the documented next follow-ups — the
+owner-driven cross-location assignment they build on is already live.
+
+**Phase 0 — Foundations, invisible (no behaviour change). — BUILT**
 Add `organisation`, `org_membership` (+ `org_role` enum), `staff_location`
 (all new); add `business.org_id` and `staff_member.org_id` (nullable). Backfill,
 idempotently: one org per existing business (reusing the business id as the org
@@ -318,37 +330,41 @@ this, every owner still has exactly one org + one location, staff scoping still
 runs entirely off `business_id`, and nobody sees a difference. Ships alone,
 behind no UI. Idempotent, reversible, dual-read safe (§9).
 
-**Phase 1 — Multiple locations.**
-Org-scoped guards (`requireOrg`, N2 active-location check), `createOrgRepo`,
-the header **location switcher**, "Add location" flow, per-location Settings
-still independent. Onboarding/SSO create an org. Delivers _"add multiple
-locations in their access."_ Staff still fully per-location (no pool yet).
+**Phase 1 — Multiple locations. — BUILT**
+Org-scoped resolution (`requireOwner` now returns org + a VALIDATED active
+location, N2), `createOrgRepo`/`ownerContext`/`orgRepo`, the header **location
+switcher**, `/app/locations` "Add location" + switch, per-location Settings
+still independent. Onboarding creates an org + first location + membership.
+Delivers _"add multiple locations in their access."_
 
-**Phase 2 — Collapse staff scoping to the org (the pool).**
-Move every staff-listing / staff-scoping surface off `business_id` and onto
-`org_id` + `staff_location` membership, one surface at a time (Staff page,
-availability recipient picker, roster builder's assignable-staff list, the
-clock/kiosk/notices staff lookups). Add an org **People** page (`/app/people`):
-list people org-wide, add a person, toggle which locations they're a member of
-(writes `staff_location`). A one-time **merge helper** dedupes existing
-same-email staff rows across the owner's locations into a single org
-`staff_member`, then the `(org_id, lower(email))` unique is enforced. Delivers
-the _manage-once shared pool_.
+**Phase 2 — Collapse staff scoping to the org (the pool). — BUILT**
+Staff scoping moved off `business_id` onto a **membership predicate** (home
+business OR active `staff_location`) across listStaff/getStaff/kiosk/PIN/edit/
+delete + the availability/leave/cert validation subqueries (backward compatible:
+home still resolves). `addStaff` creates the org-level staff row + a home
+membership. Org **People** page (`/app/people`): everyone org-wide with
+per-location membership chips (add/remove); placing a person at a location makes
+them appear in that location's roster builder/availability/kiosk. Delivers the
+_manage-once shared pool_ and owner-driven **cross-location staffing**. (A
+same-email merge helper + the `(org_id, lower(email))` unique are deferred with
+Phase 3; not needed for the built flow.)
 
-**Phase 3 — Cross-location single-shift cover (extend swaps).**
-`shift_offer.scope`; an owner (or, if enabled, staff) can post an open shift as
-**org-scoped**; eligible claimers include people at other org locations. Claim
-→ owner approve → `approveOrgOffer`: N3 check, **ensure the claimer's person has
-an active `staff_member` at the shift's location** (create-or-reuse a linked
-profile), then the existing atomic transfer. Notifications extended. Delivers
-_single-shift cross-location swap_.
+**Phase 3 — Staff-initiated cross-location shift cover (extend swaps). —
+FOLLOW-UP (not in this PR).**
+`shift_offer.scope`; a staff member at their own kiosk/clock could claim an
+**org-scoped** open shift posted by another location. Claim → owner approve →
+`approveOrgOffer`: N3 check, **ensure the claimer is an active member of the
+shift's location**, then the existing atomic transfer. Notifications extended.
+The owner-driven version of this (assign a cross-location member directly) is
+already live via Phase 2; this phase adds the STAFF-initiated path, which
+touches the location-scoped kiosk/clock surfaces and is deferred to keep this
+PR reviewable.
 
-**Phase 4 — Lending / owner-initiated move.**
-`staff_loan` + an owner action: pick a person, a target location, a date range →
-ensure membership/`staff_member` at target, create confirmed `roster_assignment`
-rows for matching shifts (or make the person assignable in that location's
-roster builder for the range). Roster builder shows "on loan from <location>".
-Delivers _lend/move for a period_.
+**Phase 4 — Date-ranged loan records. — FOLLOW-UP (not in this PR).**
+`staff_loan` + an owner action for a time-boxed lend (auto-add membership for
+the range, "on loan from <location>" markers, auto-expire). Today an owner
+lends by adding a membership on the People page (no end date); the dated loan
+record is the refinement.
 
 **Phase 5 — Cross-location polish.**
 Org-level read-only reporting (aggregate hours/labour-cost across locations —
