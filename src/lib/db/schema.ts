@@ -355,6 +355,10 @@ export const shiftTemplates = pgTable("shift_template", {
   endTime: time("end_time").notNull(),
   weekdays: integer("weekdays").array().notNull(),
   active: boolean("active").notNull().default(true),
+  // Owner-chosen accent colour (a bar hex from the fixed SHIFT_PALETTE). Null =
+  // no explicit choice, so the display falls back to the keyword-derived scheme
+  // (shiftColorScheme). Purely presentational; never enforced.
+  color: text("color"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

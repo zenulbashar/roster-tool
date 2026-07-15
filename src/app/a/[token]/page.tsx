@@ -6,7 +6,7 @@ import { businesses } from "@/lib/db/schema";
 import { findRequestByToken } from "@/lib/tenant/public-access";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { formatDateOnly, formatTimeOnly, formatDateTime } from "@/lib/time";
-import { shiftColorScheme } from "@/lib/shift-colors";
+import { resolveShiftColors } from "@/lib/shift-colors";
 import { notifyOwner } from "@/lib/notifications";
 import { Banner } from "@/components/ui";
 import { StaffHeader } from "@/components/StaffHeader";
@@ -49,21 +49,32 @@ export default async function AvailabilityPage({
   }
 
   const repo = createTenantRepo(request.businessId);
-  const [period, shifts, staff, existing, [business]] = await Promise.all([
-    repo.getPeriod(request.rosterPeriodId),
-    repo.listShifts(request.rosterPeriodId),
-    repo.getStaff(request.staffMemberId),
-    repo.responsesForRequest(request.id),
-    db
-      .select({ name: businesses.name, timezone: businesses.timezone })
-      .from(businesses)
-      .where(eq(businesses.id, request.businessId))
-      .limit(1),
-  ]);
+  const [period, shifts, staff, existing, templates, [business]] =
+    await Promise.all([
+      repo.getPeriod(request.rosterPeriodId),
+      repo.listShifts(request.rosterPeriodId),
+      repo.getStaff(request.staffMemberId),
+      repo.responsesForRequest(request.id),
+      repo.listTemplates(),
+      db
+        .select({ name: businesses.name, timezone: businesses.timezone })
+        .from(businesses)
+        .where(eq(businesses.id, request.businessId))
+        .limit(1),
+    ]);
 
   if (!period || !staff || !business) {
     return <LinkError />;
   }
+
+  // Each shift's colour comes from its type's chosen colour (by templateId),
+  // falling back to the keyword scheme from the label.
+  const colorByTemplateId = new Map(templates.map((t) => [t.id, t.color]));
+  const schemeForShift = (s: { templateId: string | null; label: string }) =>
+    resolveShiftColors(
+      s.templateId ? (colorByTemplateId.get(s.templateId) ?? null) : null,
+      s.label,
+    );
 
   // Prefill from any prior answers; default to "Available" to minimise taps.
   const priorById = new Map(existing.map((e) => [e.shiftId, e.available]));
@@ -142,7 +153,7 @@ export default async function AvailabilityPage({
               {dayShifts.map((s) => {
                 const prior = priorById.get(s.id);
                 const cantSelected = prior === false;
-                const scheme = shiftColorScheme(s.label);
+                const scheme = schemeForShift(s);
                 return (
                   <li
                     key={s.id}

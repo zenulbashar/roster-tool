@@ -97,8 +97,11 @@ owner approval, not payroll export.
 ## Key product decisions
 
 - **Shifts**: business defines reusable **shift templates** (label + start/end +
-  weekday flags). Creating a roster period expands templates into concrete
-  shifts per day.
+  weekday flags + an optional owner-chosen **colour**). Creating a roster period
+  expands templates into concrete shifts per day. Owners can **edit** a type
+  (name/times/days/colour) and **delete** one on `/app/templates`; deleting is
+  non-destructive to past rosters — `shift.template_id` is ON DELETE SET NULL,
+  so concrete shifts keep their label/time snapshot and just unlink.
 - **Availability**: per-shift yes/no (Available / Not available). 1:1 mapping to
   assignments.
 - **Owner auth**: email magic link. First sign-in creates the Business.
@@ -734,11 +737,16 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
   Shared primitives (`Button`/`Card`/`PageHeader`/`Banner`/`Badge`) are in
   `src/components/ui.tsx`. Three keyframes (`rosterFade`/`rosterPulse`/
   `rosterToast`) are used sparingly — dropdowns, the bell badge, and toasts only.
-- **Shift-type colours** are defined by a PURE helper,
-  `shiftColorScheme(name)` in `src/lib/shift-colors.ts` (keyword-matched
-  morning/arvo/close/split/default → `{bg,bar,text}`, unit-tested in
-  `tests/shift-colors.test.ts`). The roster builder colours its shift cards and
-  legend from it, so the mapping stays consistent and testable.
+- **Shift-type colours**: the owner can pick an explicit colour from a fixed,
+  accessible `SHIFT_PALETTE` (stored as the bar hex on `shift_template.color`);
+  the PURE `resolveShiftColors(color, label)` in `src/lib/shift-colors.ts` uses
+  it when set and otherwise falls back to the keyword-derived `shiftColorScheme(name)`
+  (morning/arvo/close/split/default → `{bg,bar,text}`), so existing types look
+  unchanged. Unit-tested in `tests/shift-colors.test.ts`. The chosen colour flows
+  everywhere a shift type shows — the Shift types page, the roster builder, the
+  public roster (`/r`, via `color` on `rosterRows`) and availability (`/a`) — by
+  resolving each concrete shift's colour from its originating template
+  (`templateId`), so a deleted type falls back to the keyword scheme.
 - **Owner-area header/nav** (`src/app/app/layout.tsx` + `src/components/OwnerNav.tsx`):
   a Zaleit-branded **dark header** (`--color-header-bg`, green `--color-accent`
   `#76b900` wordmark — header only, content stays white) with the nav grouped into

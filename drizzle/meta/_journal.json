@@ -155,6 +155,13 @@
       "when": 1783680722963,
       "tag": "0021_chief_slapstick",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1784105263280,
+      "tag": "0022_nosy_stark_industries",
+      "breakpoints": true
     }
   ]
 }

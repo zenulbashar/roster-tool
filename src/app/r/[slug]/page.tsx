@@ -4,7 +4,7 @@ import { businesses } from "@/lib/db/schema";
 import { findPublishedBySlug } from "@/lib/tenant/public-access";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { formatDateOnly, formatTimeOnly } from "@/lib/time";
-import { shiftColorScheme } from "@/lib/shift-colors";
+import { resolveShiftColors } from "@/lib/shift-colors";
 import { StaffHeader } from "@/components/StaffHeader";
 
 export const dynamic = "force-dynamic";
@@ -58,6 +58,7 @@ export default async function PublicRosterPage({
   type ShiftGroup = {
     shiftId: string;
     label: string;
+    color: string | null;
     timeText: string;
     names: string[];
   };
@@ -67,6 +68,7 @@ export default async function PublicRosterPage({
     const group = day.get(r.shiftId) ?? {
       shiftId: r.shiftId,
       label: r.label,
+      color: r.color,
       timeText: `${formatTimeOnly(r.startTime)} – ${formatTimeOnly(r.endTime)}`,
       names: [],
     };
@@ -100,7 +102,7 @@ export default async function PublicRosterPage({
             </div>
             <ul className="divide-y divide-[var(--color-border-subtle)]">
               {[...shiftsForDay.values()].map((g) => {
-                const scheme = shiftColorScheme(g.label);
+                const scheme = resolveShiftColors(g.color, g.label);
                 return (
                   <li key={g.shiftId} className="flex gap-3 px-4 py-3">
                     <span
