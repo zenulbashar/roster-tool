@@ -282,7 +282,11 @@ export function classifyEntries(input: {
   for (const entry of sorted) {
     const bucketDate = businessDateOf(entry.clockInAt, tz);
     const inPeriod = bucketDate >= periodStart && bucketDate <= periodEnd;
-    const hours2 = hoursWorked(entry.clockInAt, entry.clockOutAt);
+    const hours2 = hoursWorked(
+      entry.clockInAt,
+      entry.clockOutAt,
+      entry.breakMinutes ?? 0,
+    );
     if (hours2 === null) {
       if (inPeriod) skippedOpen++; // still clocked in — never guessed
       continue;
@@ -292,6 +296,15 @@ export function classifyEntries(input: {
     const inMs = entry.clockInAt.getTime();
     const outMs = entry.clockOutAt!.getTime();
     const exactHours = (outMs - inMs) / HOUR_MS;
+    // An unpaid break shrinks every worked sub-block proportionally, so the
+    // per-day lines (and the preview breakdown) net the break out while the
+    // split proportions between pay items are preserved. Threshold breakpoints
+    // and daily/weekly cumulation below stay on GROSS worked time (the clock
+    // span) — the break is unpaid time, not a change to when a shift crosses a
+    // daily/weekly hours threshold.
+    const breakHours = Math.max(0, entry.breakMinutes ?? 0) / 60;
+    const paidFactor =
+      exactHours > 0 ? Math.max(0, exactHours - breakHours) / exactHours : 0;
     const weekKey = mondayOfWeek(bucketDate);
     const dayStart = dayCum.get(bucketDate) ?? 0;
     const weekStart = weekCum.get(weekKey) ?? 0;
@@ -387,7 +400,7 @@ export function classifyEntries(input: {
         g.ordinal = sg.rule ? sg.rule.priority : -1;
         byRate.set(rateId, g);
       }
-      g.raw += (sg.e - sg.s) / HOUR_MS;
+      g.raw += ((sg.e - sg.s) / HOUR_MS) * paidFactor;
       if (sg.rule) {
         g.ruleNames.add(sg.rule.name);
         if (g.rateName === null) g.rateName = rateName;
@@ -398,7 +411,7 @@ export function classifyEntries(input: {
       segments.push({
         startUtc: new Date(sg.s),
         endUtc: new Date(sg.e),
-        hours: round2((sg.e - sg.s) / HOUR_MS),
+        hours: round2(((sg.e - sg.s) / HOUR_MS) * paidFactor),
         ruleId: sg.rule?.id ?? null,
         ruleName: sg.rule?.name ?? null,
         earningsRateId: rateId,

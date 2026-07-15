@@ -11,6 +11,7 @@ import {
   zonedDateTimeToUtc,
 } from "@/lib/time";
 import { entryDurationMs } from "@/lib/clock";
+import { breakMinutesSchema } from "@/lib/validation";
 import {
   Avatar,
   Badge,
@@ -156,7 +157,30 @@ export default async function TimesheetsPage({
         `${back}${week ? "&" : "?"}error=${encodeURIComponent("Clock-out must be after clock-in")}`,
       );
     }
-    await repo.updateEntry(id, { clockInAt: clockIn!, clockOutAt: clockOut });
+
+    // Unpaid break (None / 30 / 60) — deducted from worked hours. It can't be as
+    // long as the shift (that would zero out the entry).
+    const parsedBreak = breakMinutesSchema.safeParse(formData.get("break"));
+    if (!parsedBreak.success) {
+      redirect(
+        `${back}${week ? "&" : "?"}error=${encodeURIComponent("Pick a valid break")}`,
+      );
+    }
+    const breakMinutes = parsedBreak.data;
+    if (
+      clockOut &&
+      breakMinutes * 60_000 >= clockOut.getTime() - clockIn!.getTime()
+    ) {
+      redirect(
+        `${back}${week ? "&" : "?"}error=${encodeURIComponent("Break can't be as long as the shift")}`,
+      );
+    }
+
+    await repo.updateEntry(id, {
+      clockInAt: clockIn!,
+      clockOutAt: clockOut,
+      breakMinutes,
+    });
     revalidatePath(PATH);
     redirect(`${back}${week ? "&" : "?"}saved=1`);
   }
@@ -309,10 +333,11 @@ export default async function TimesheetsPage({
                   status === "no_clock_out"
                     ? "—"
                     : hoursLabel(
-                        entryDurationMs({
-                          clockInAt: e.clockInAt,
-                          clockOutAt: e.clockOutAt,
-                        }),
+                        entryDurationMs(
+                          { clockInAt: e.clockInAt, clockOutAt: e.clockOutAt },
+                          undefined,
+                          e.breakMinutes,
+                        ),
                       );
                 return (
                   <div
@@ -351,6 +376,11 @@ export default async function TimesheetsPage({
                       </span>
                       <span className="font-archivo font-bold tabular-nums text-[#111827]">
                         {hours}
+                        {e.breakMinutes > 0 && status !== "no_clock_out" ? (
+                          <span className="block text-[10px] font-normal text-[#9CA3AF]">
+                            &minus;{e.breakMinutes}m break
+                          </span>
+                        ) : null}
                       </span>
                       <span className="truncate text-[12px] text-[#6B7280]">
                         {e.shiftLabel ?? "—"}
@@ -420,6 +450,17 @@ export default async function TimesheetsPage({
                                   : ""
                               }
                             />
+                          </Field>
+                          <Field label="Break (unpaid)">
+                            <select
+                              name="break"
+                              defaultValue={String(e.breakMinutes ?? 0)}
+                              className="block w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-[14px] py-[11px] text-[14.5px] text-[var(--color-ink)] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.16)]"
+                            >
+                              <option value="0">None</option>
+                              <option value="30">30 min</option>
+                              <option value="60">1 hour</option>
+                            </select>
                           </Field>
                           <Button type="submit" variant="secondary">
                             Save

@@ -47,7 +47,11 @@ function rule(
 }
 
 function classify(
-  entries: { clockInAt: Date; clockOutAt: Date | null }[],
+  entries: {
+    clockInAt: Date;
+    clockOutAt: Date | null;
+    breakMinutes?: number;
+  }[],
   rules: ActivePayRule[],
   period: { start: string; end: string } = {
     start: "2026-07-06",
@@ -250,6 +254,79 @@ describe("classifyEntries — zero rules (backward compatibility)", () => {
         earningsRateName: null,
       },
     ]);
+  });
+});
+
+describe("classifyEntries — unpaid break", () => {
+  it("zero rules with a break stays identical to buildTimesheetLines (also netted)", () => {
+    const entries = [
+      // Mon 6 Jul 09:00–17:00 Sydney = 8h gross, 30-min break → 7.5h net
+      {
+        clockInAt: at("2026-07-05T23:00:00Z"),
+        clockOutAt: at("2026-07-06T07:00:00Z"),
+        breakMinutes: 30,
+      },
+    ];
+    const legacy = buildTimesheetLines({
+      entries,
+      timezone: TZ,
+      periodStart: "2026-07-06",
+      periodEnd: "2026-07-12",
+    });
+    const out = classify(entries, []);
+    expect(
+      out.lines.map((l) => ({ date: l.date, numberOfUnits: l.numberOfUnits })),
+    ).toEqual(legacy.lines);
+    expect(out.lines[0]!.numberOfUnits).toBe(7.5);
+    expect(out.totalHours).toBe(7.5);
+  });
+
+  it("splits the break proportionally across the day's pay items", () => {
+    // Fri 10 Jul 20:00 → Sat 02:00 Sydney = 6h gross (4h ordinary + 2h Saturday).
+    // A 60-min break → 5h net, split pro-rata: 4×5/6 = 3.33, 2×5/6 = 1.67.
+    const saturday = rule(
+      1,
+      { type: "day_of_week", days: [6] },
+      { id: "sat", name: "Saturday hours", earningsRateId: "rate-sat" },
+    );
+    const out = classify(
+      [
+        {
+          clockInAt: at("2026-07-10T10:00:00Z"),
+          clockOutAt: at("2026-07-10T16:00:00Z"),
+          breakMinutes: 60,
+        },
+      ],
+      [saturday],
+    );
+    expect(out.lines).toEqual([
+      expect.objectContaining({ earningsRateId: ORD, numberOfUnits: 3.33 }),
+      expect.objectContaining({
+        earningsRateId: "rate-sat",
+        numberOfUnits: 1.67,
+      }),
+    ]);
+    // Split lines still sum to the netted canonical day total (5h).
+    const sum = out.lines.reduce((s, l) => s + l.numberOfUnits, 0);
+    expect(Math.round(sum * 100) / 100).toBe(5);
+    expect(out.totalHours).toBe(5);
+  });
+
+  it("a break as long as the shift yields no line (nets to zero, skipped)", () => {
+    const out = classify(
+      [
+        // 20-minute shift, 30-min break → nets to 0 → skipped like an empty entry.
+        {
+          clockInAt: at("2026-07-06T00:00:00Z"),
+          clockOutAt: at("2026-07-06T00:20:00Z"),
+          breakMinutes: 30,
+        },
+      ],
+      [rule(1, { type: "day_of_week", days: [1] })],
+    );
+    expect(out.lines).toEqual([]);
+    expect(out.breakdown).toEqual([]);
+    expect(out.totalHours).toBe(0);
   });
 });
 

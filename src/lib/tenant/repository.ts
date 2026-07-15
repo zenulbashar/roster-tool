@@ -1088,6 +1088,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           staffName: staffMembers.name,
           clockInAt: timesheetEntries.clockInAt,
           clockOutAt: timesheetEntries.clockOutAt,
+          breakMinutes: timesheetEntries.breakMinutes,
           approved: timesheetEntries.approved,
           withinGeofence: timesheetEntries.withinGeofence,
           shiftId: timesheetEntries.shiftId,
@@ -1124,6 +1125,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           staffEmail: staffMembers.email,
           clockInAt: timesheetEntries.clockInAt,
           clockOutAt: timesheetEntries.clockOutAt,
+          breakMinutes: timesheetEntries.breakMinutes,
           withinGeofence: timesheetEntries.withinGeofence,
           payRateCents: staffMembers.payRateCents,
           rateType: staffMembers.rateType,
@@ -1162,6 +1164,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           rateLabel: staffMembers.rateLabel,
           clockInAt: timesheetEntries.clockInAt,
           clockOutAt: timesheetEntries.clockOutAt,
+          breakMinutes: timesheetEntries.breakMinutes,
           approved: timesheetEntries.approved,
         })
         .from(timesheetEntries)
@@ -1220,7 +1223,11 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
 
     async updateEntry(
       id: string,
-      input: { clockInAt: Date; clockOutAt: Date | null },
+      input: {
+        clockInAt: Date;
+        clockOutAt: Date | null;
+        breakMinutes?: number;
+      },
     ) {
       const [row] = await database
         .update(timesheetEntries)
@@ -4083,6 +4090,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           staffMemberId: timesheetEntries.staffMemberId,
           clockInAt: timesheetEntries.clockInAt,
           clockOutAt: timesheetEntries.clockOutAt,
+          breakMinutes: timesheetEntries.breakMinutes,
         })
         .from(timesheetEntries)
         .where(

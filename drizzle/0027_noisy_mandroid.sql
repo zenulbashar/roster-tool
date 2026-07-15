@@ -1,0 +1,1 @@
+ALTER TABLE "timesheet_entry" ADD COLUMN "break_minutes" integer DEFAULT 0 NOT NULL;

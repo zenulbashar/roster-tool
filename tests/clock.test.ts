@@ -38,6 +38,22 @@ describe("durations", () => {
     const now = new Date("2026-06-08T02:00:00Z");
     expect(entryDurationMs(open, now)).toBe(2 * 3_600_000);
   });
+
+  it("entryDurationMs subtracts an unpaid break, clamped at zero", () => {
+    const closed = {
+      clockInAt: start,
+      clockOutAt: new Date("2026-06-08T08:30:00Z"), // 8.5h gross
+    };
+    // 30-min break → 8h net; 60-min break → 7.5h net.
+    expect(entryDurationMs(closed, undefined, 30)).toBe(8 * 3_600_000);
+    expect(entryDurationMs(closed, undefined, 60)).toBe(7.5 * 3_600_000);
+    // A break longer than the span never goes negative.
+    const short = {
+      clockInAt: start,
+      clockOutAt: new Date("2026-06-08T00:20:00Z"), // 20 min gross
+    };
+    expect(entryDurationMs(short, undefined, 30)).toBe(0);
+  });
 });
 
 describe("formatElapsed", () => {

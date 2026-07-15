@@ -135,6 +135,15 @@ describe("labour-report: entryHours", () => {
       ),
     ).toBe(0);
   });
+
+  it("subtracts an unpaid break, clamped at zero", () => {
+    const inAt = new Date("2026-06-08T09:00:00Z");
+    const outAt = new Date("2026-06-08T17:00:00Z"); // 8h gross
+    expect(entryHours(inAt, outAt, 30)).toBe(7.5);
+    expect(entryHours(inAt, outAt, 60)).toBe(7);
+    // A break at/over the span never goes negative.
+    expect(entryHours(inAt, new Date("2026-06-08T09:20:00Z"), 30)).toBe(0);
+  });
 });
 
 /** Build a ReportEntry with sensible defaults. */
@@ -148,6 +157,7 @@ function entry(
     rateType: "flat",
     rateLabel: null,
     clockOutAt: null,
+    breakMinutes: 0,
     approved: true,
     ...over,
   };
@@ -176,6 +186,27 @@ describe("labour-report: aggregateLabour", () => {
     expect(ava.estCostCents).toBe(30600);
     expect(report.totals.estCostCents).toBe(30600);
     expect(report.totals.approvedHours).toBe(12);
+  });
+
+  it("nets unpaid breaks out of hours and cost", () => {
+    const entries = [
+      entry({
+        clockInAt: new Date("2026-06-08T00:00:00Z"),
+        clockOutAt: new Date("2026-06-08T08:00:00Z"), // 8h gross
+        breakMinutes: 60, // → 7h net
+      }),
+      entry({
+        clockInAt: new Date("2026-06-09T00:00:00Z"),
+        clockOutAt: new Date("2026-06-09T04:00:00Z"), // 4h gross
+        breakMinutes: 30, // → 3.5h net
+      }),
+    ];
+    const report = aggregateLabour(entries, window, TZ);
+    const ava = report.perStaff[0]!;
+    expect(ava.approvedHours).toBe(10.5); // 7 + 3.5
+    // 7h*2550 + 3.5h*2550 = 26775 cents.
+    expect(ava.estCostCents).toBe(26775);
+    expect(report.totals.approvedHours).toBe(10.5);
   });
 
   it("splits approved (costed) from pending (uncosted) hours", () => {
