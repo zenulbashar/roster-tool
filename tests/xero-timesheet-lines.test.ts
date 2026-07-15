@@ -93,6 +93,24 @@ describe("buildTimesheetLines", () => {
     expect(totalHours).toBe(2);
   });
 
+  it("nets an unpaid break out of the day's units", () => {
+    const { lines, totalHours } = buildTimesheetLines({
+      timezone: TZ,
+      periodStart: "2026-07-06",
+      periodEnd: "2026-07-06",
+      entries: [
+        // 09:00–17:00 Sydney = 8h gross, 30-min break → 7.5h net
+        {
+          clockInAt: at("2026-07-05T23:00:00Z"),
+          clockOutAt: at("2026-07-06T07:00:00Z"),
+          breakMinutes: 30,
+        },
+      ],
+    });
+    expect(lines).toEqual([{ date: "2026-07-06", numberOfUnits: 7.5 }]);
+    expect(totalHours).toBe(7.5);
+  });
+
   it("rounds to 2dp per day (matching the CSV/report)", () => {
     const { lines } = buildTimesheetLines({
       timezone: TZ,

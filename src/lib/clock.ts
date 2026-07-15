@@ -21,15 +21,19 @@ export function elapsedMs(clockInAt: Date, now: Date = new Date()): number {
 }
 
 /**
- * Worked duration of an entry in ms. For an open entry (no clock-out) we
- * measure up to `now` so the kiosk can show a live "so far" total.
+ * NET worked duration of an entry in ms. For an open entry (no clock-out) we
+ * measure up to `now` so the kiosk can show a live "so far" total. `breakMinutes`
+ * is an unpaid break subtracted from the span (clamped at zero); the kiosk live
+ * total passes the default 0 since a break isn't recorded until the owner edits.
  */
 export function entryDurationMs(
   entry: { clockInAt: Date; clockOutAt: Date | null },
   now: Date = new Date(),
+  breakMinutes = 0,
 ): number {
   const end = entry.clockOutAt ?? now;
-  return Math.max(0, end.getTime() - entry.clockInAt.getTime());
+  const grossMs = end.getTime() - entry.clockInAt.getTime();
+  return Math.max(0, grossMs - Math.max(0, breakMinutes) * 60_000);
 }
 
 /** Format a millisecond duration as "3h 12m" (or "0m"). */

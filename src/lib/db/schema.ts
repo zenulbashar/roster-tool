@@ -718,6 +718,10 @@ export const timesheetEntries = pgTable(
     clockInLat: doublePrecision("clock_in_lat"),
     clockInLng: doublePrecision("clock_in_lng"),
     withinGeofence: boolean("within_geofence"),
+    // Unpaid break (minutes) the owner records on the entry, subtracted from
+    // worked hours everywhere hours are shown/exported/reported. 0 = no break;
+    // the UI offers None / 30 / 60. Never a payroll calc — just net worked time.
+    breakMinutes: integer("break_minutes").notNull().default(0),
     approved: boolean("approved").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

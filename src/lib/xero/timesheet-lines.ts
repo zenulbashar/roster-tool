@@ -15,7 +15,12 @@ import { hoursWorked } from "@/lib/timesheet-export";
  *   guessed. One line per worked day; scalar `numberOfUnits` (2.0 shape).
  */
 
-export type PushEntry = { clockInAt: Date; clockOutAt: Date | null };
+export type PushEntry = {
+  clockInAt: Date;
+  clockOutAt: Date | null;
+  /** Unpaid break minutes, netted out of worked hours (default 0). */
+  breakMinutes?: number;
+};
 export type TimesheetDayLine = { date: string; numberOfUnits: number };
 
 export function buildTimesheetLines(input: {
@@ -29,7 +34,7 @@ export function buildTimesheetLines(input: {
   let skippedOpen = 0;
 
   for (const e of input.entries) {
-    const hours = hoursWorked(e.clockInAt, e.clockOutAt);
+    const hours = hoursWorked(e.clockInAt, e.clockOutAt, e.breakMinutes ?? 0);
     if (hours === null) {
       skippedOpen++; // still clocked in — no defined duration
       continue;

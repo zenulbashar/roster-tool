@@ -95,7 +95,7 @@ export default async function PeriodsPage({
               return (
                 <div
                   key={p.id}
-                  className="flex items-center gap-4 border-b border-[var(--color-border-subtle)] px-5 py-4"
+                  className="flex flex-wrap items-center gap-4 border-b border-[var(--color-border-subtle)] px-5 py-4"
                 >
                   <div
                     aria-hidden="true"
@@ -106,7 +106,7 @@ export default async function PeriodsPage({
                       className="text-[22px] text-[#5A7D17]"
                     />
                   </div>
-                  <div className="min-w-[150px]">
+                  <div className="min-w-0">
                     <div className="font-archivo text-[15.5px] font-bold text-[var(--color-text)]">
                       {formatDateOnly(p.startDate)} –{" "}
                       {formatDateOnly(p.endDate)}
@@ -121,6 +121,7 @@ export default async function PeriodsPage({
                   <ButtonLink
                     href={`${PATH}/${p.id}`}
                     variant={published ? "secondary" : "primary"}
+                    className="ml-auto flex-shrink-0"
                   >
                     {published ? (
                       "View"

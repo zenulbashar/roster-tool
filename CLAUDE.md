@@ -247,9 +247,12 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
   `pay_rate_cents` + `rate_type` (`flat`/`award`) + `rate_label`. This is a
   **stored number + label only** — the app does NOT interpret awards or
   calculate wages. The owner can export a week's **approved** hours as CSV
-  (`src/lib/timesheet-export.ts`): staff, date, in/out, hours, rate, an
-  `hours × rate` **estimate**, and a location-verified flag, in the business
-  timezone. The CSV and the UI both state prominently that this is NOT a payroll
+  (`src/lib/timesheet-export.ts`): staff, date, in/out, an unpaid-**break (min)**
+  column, NET hours (gross span − break), rate, an `hours × rate` **estimate**,
+  and a location-verified flag, in the business timezone. The single `hoursWorked`
+  helper takes the break and is the shared choke point for the CSV, the Xero
+  `buildTimesheetLines` and the pay-rules classifier, so all three net the break
+  identically. The CSV and the UI both state prominently that this is NOT a payroll
   calculation; penalty rates, overtime, super and final pay are the
   owner's/payroll system's job. No Xero/MYOB API — file export only.
   - **Shared CSV serializer** (`src/lib/timesheet-export.ts`): `csvCell`
@@ -274,8 +277,9 @@ csvCell(sanitizeCsvValue(v))` — guard the raw value first, THEN escape. ALL
     current week isn't misleadingly empty. **Open entries** (no clock-out) have
     no defined duration → excluded from hours/cost and surfaced as a note.
     **Staff with no rate set** contribute hours but a **null cost** (never $0)
-    and are flagged. Per-entry hours are rounded to **2dp before summing**
-    (matching the CSV) so the report and the export agree.
+    and are flagged. Per-entry hours are **net of the entry's unpaid break** and
+    rounded to **2dp before summing** (via `entryHours`, mirroring the CSV's
+    `hoursWorked`) so the report and the export agree.
   - **CRITICAL FRAMING — estimate only**: every cost figure is an ESTIMATE
     (hours × the entered rate). It is **NOT a payroll calculation** — no penalty
     rates, overtime, super, loadings or award interpretation (same wording as
@@ -684,7 +688,10 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
     (`timesheet-lines.ts`, pure) → per-business-local-day lines (2dp, matching the
     CSV/report) under a single ordinary rate; since M28 the push classifies via
     `pay-rules.ts` (below) — zero rules reproduces the single-rate output
-    line-for-line. Re-push on 2.0 = **delete-then-
+    line-for-line. An entry's **unpaid `break_minutes` is netted out** here too
+    (same `hoursWorked`): the classifier shrinks every worked sub-block
+    proportionally by the paid factor, so each day's split lines still reconcile
+    to the netted day total (thresholds/cumulation stay on gross clock time). Re-push on 2.0 = **delete-then-
     create** (no update verb), holding one INVARIANT: **`xero_timesheet_id` is
     non-null ⟺ a live Draft exists** — the id is set to NULL the instant a delete
     succeeds (before the recreate), so a failed/crashed recreate leaves a DISTINCT
@@ -975,8 +982,14 @@ staff_member_id)`. A person appears at a location when their home is there OR
   `approved` is the owner's payroll sign-off (and the filter for the CSV hours
   export). `clock_in_lat`/`clock_in_lng`/`within_geofence` are set only by
   personal-phone GPS clock-in (null for kiosk and owner-entered rows);
-  `within_geofence = true` means location-verified. Clock logic is pure in
-  `src/lib/clock.ts`; geofence maths in `src/lib/geo.ts`.
+  `within_geofence = true` means location-verified. `break_minutes` (NOT NULL
+  default 0; owner picks None/30/60 on the Timesheets edit form) is an **unpaid
+  break subtracted from worked hours** — netted everywhere hours are shown /
+  exported / reported (the Timesheets Hours column, the CSV export, the labour
+  report, and the Xero draft push), clamped at zero (a break ≥ the span → 0). It
+  refines NET worked time only; still not a payroll calculation. Clock logic is
+  pure in `src/lib/clock.ts` (`entryDurationMs` takes the break); geofence maths
+  in `src/lib/geo.ts`.
 - `clock_photo` — optional clock in/out still, stored inline as `bytea`, cascaded
   with its entry. Served only to the owner via `/app/timesheets/photo/[id]`. A
   daily pg-boss cron (03:00 UTC, registered in the worker boot path) sweeps every

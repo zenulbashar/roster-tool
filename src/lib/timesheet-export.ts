@@ -14,6 +14,8 @@ export type ExportRow = {
   staffEmail: string;
   clockInAt: Date;
   clockOutAt: Date | null;
+  /** Unpaid break minutes deducted from the total-hours column. */
+  breakMinutes: number;
   withinGeofence: boolean | null;
   payRateCents: number | null;
   rateType: "flat" | "award";
@@ -30,6 +32,7 @@ const HEADER = [
   "Date",
   "Clock in",
   "Clock out",
+  "Break (min)",
   "Total hours",
   "Rate type",
   "Hourly rate",
@@ -78,13 +81,20 @@ function timeInTz(instant: Date, timeZone: string): string {
   }).format(instant);
 }
 
-/** Worked hours (2dp) for a closed entry, or null while still open. */
+/**
+ * NET worked hours (2dp) for a closed entry, or null while still open.
+ * `breakMinutes` is an unpaid break subtracted from the gross clock in→out span,
+ * clamped at zero (a break ≥ the span yields 0, never negative). With the default
+ * `breakMinutes = 0` this is the original gross-hours behaviour.
+ */
 export function hoursWorked(
   clockInAt: Date,
   clockOutAt: Date | null,
+  breakMinutes = 0,
 ): number | null {
   if (!clockOutAt) return null;
-  const ms = clockOutAt.getTime() - clockInAt.getTime();
+  const grossMs = clockOutAt.getTime() - clockInAt.getTime();
+  const ms = grossMs - Math.max(0, breakMinutes) * 60_000;
   if (ms <= 0) return 0;
   return Math.round((ms / 3_600_000) * 100) / 100;
 }
@@ -105,7 +115,7 @@ export function buildApprovedHoursCsv(
   lines.push(csvRow([...HEADER]));
 
   for (const r of rows) {
-    const hours = hoursWorked(r.clockInAt, r.clockOutAt);
+    const hours = hoursWorked(r.clockInAt, r.clockOutAt, r.breakMinutes);
     const rate = r.payRateCents != null ? r.payRateCents / 100 : null;
     const estimate =
       hours != null && rate != null ? (hours * rate).toFixed(2) : "";
@@ -120,6 +130,7 @@ export function buildApprovedHoursCsv(
         formatDate(r.clockInAt, opts.timezone),
         timeInTz(r.clockInAt, opts.timezone),
         r.clockOutAt ? timeInTz(r.clockOutAt, opts.timezone) : "",
+        String(r.breakMinutes),
         hours != null ? hours.toFixed(2) : "",
         rateTypeCell,
         rate != null ? rate.toFixed(2) : "",

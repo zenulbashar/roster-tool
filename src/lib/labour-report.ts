@@ -37,6 +37,8 @@ export type ReportEntry = {
   rateLabel: string | null;
   clockInAt: Date;
   clockOutAt: Date | null;
+  /** Unpaid break minutes deducted from this entry's worked hours. */
+  breakMinutes: number;
   approved: boolean;
 };
 
@@ -199,13 +201,19 @@ export function resolveWindow(
   };
 }
 
-/** Worked hours (2dp) for a closed entry, or null while still open. */
+/**
+ * NET worked hours (2dp) for a closed entry, or null while still open. Mirrors
+ * `hoursWorked` in the CSV export: `breakMinutes` is an unpaid break subtracted
+ * from the gross span, clamped at zero. Default 0 → original gross behaviour.
+ */
 export function entryHours(
   clockInAt: Date,
   clockOutAt: Date | null,
+  breakMinutes = 0,
 ): number | null {
   if (!clockOutAt) return null;
-  const ms = clockOutAt.getTime() - clockInAt.getTime();
+  const grossMs = clockOutAt.getTime() - clockInAt.getTime();
+  const ms = grossMs - Math.max(0, breakMinutes) * 60_000;
   if (ms <= 0) return 0;
   return Math.round((ms / 3_600_000) * 100) / 100;
 }
@@ -257,7 +265,7 @@ export function aggregateLabour(
   let openEntryCount = 0;
 
   for (const e of entries) {
-    const hours = entryHours(e.clockInAt, e.clockOutAt);
+    const hours = entryHours(e.clockInAt, e.clockOutAt, e.breakMinutes);
     if (hours === null) {
       openEntryCount += 1;
       continue; // open entry — no defined duration, excluded from hours/cost

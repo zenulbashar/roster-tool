@@ -24,6 +24,21 @@ export const shiftColorSchema = z
     message: "Pick a colour from the palette",
   });
 
+/**
+ * Allowed unpaid-break lengths (minutes) an owner can record on a timesheet
+ * entry: none, 30 minutes, or 1 hour. Stored as integer minutes so a custom
+ * value could be added later without a migration. NOT a payroll calculation —
+ * the break just refines net worked hours.
+ */
+export const ALLOWED_BREAK_MINUTES = [0, 30, 60] as const;
+
+export const breakMinutesSchema = z.coerce
+  .number()
+  .int()
+  .refine((n) => (ALLOWED_BREAK_MINUTES as readonly number[]).includes(n), {
+    message: "Pick a break of none, 30 minutes, or 1 hour",
+  });
+
 /** One per-day time override: a start/end pair, end after start. */
 export const dayTimeOverrideSchema = z
   .object({ start: hhmm, end: hhmm })

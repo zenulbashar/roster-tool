@@ -17,6 +17,7 @@ function row(over: Partial<ExportRow> = {}): ExportRow {
     staffEmail: "ava@example.com",
     clockInAt: new Date("2026-06-08T23:00:00Z"), // 09:00 Sydney 09/06 (UTC+10)
     clockOutAt: new Date("2026-06-09T07:00:00Z"), // 17:00 Sydney 09/06
+    breakMinutes: 0,
     withinGeofence: null,
     payRateCents: 2850,
     rateType: "flat",
@@ -40,6 +41,15 @@ describe("hoursWorked", () => {
   it("clamps a non-positive span to 0", () => {
     const t = new Date("2026-06-09T23:00:00Z");
     expect(hoursWorked(t, t)).toBe(0);
+  });
+  it("subtracts an unpaid break, clamped at zero", () => {
+    const inAt = new Date("2026-06-09T23:00:00Z");
+    const outAt = new Date("2026-06-10T07:30:00Z"); // 8.5h gross
+    expect(hoursWorked(inAt, outAt, 30)).toBe(8);
+    expect(hoursWorked(inAt, outAt, 60)).toBe(7.5);
+    // Break at/over the span → 0, never negative.
+    const shortOut = new Date("2026-06-09T23:20:00Z"); // 20 min
+    expect(hoursWorked(inAt, shortOut, 30)).toBe(0);
   });
 });
 
@@ -83,6 +93,7 @@ describe("buildApprovedHoursCsv", () => {
     expect(lines[1]).toBe(csvCellOf(APPROVED_HOURS_DISCLAIMER));
     expect(lines[2]).toBe("");
     expect(lines[3]).toContain("Staff name,Staff email,Date,Clock in");
+    expect(lines[3]).toContain("Clock out,Break (min),Total hours");
     expect(lines[3]).toContain("Estimated amount,Location verified");
   });
 
@@ -93,7 +104,18 @@ describe("buildApprovedHoursCsv", () => {
     });
     const dataLine = csv.split("\r\n")[4]!;
     expect(dataLine).toBe(
-      "Ava Nguyen,ava@example.com,09/06/2026,09:00,17:00,8.00,flat,28.50,228.00,",
+      "Ava Nguyen,ava@example.com,09/06/2026,09:00,17:00,0,8.00,flat,28.50,228.00,",
+    );
+  });
+
+  it("records the break and nets the total-hours + estimate", () => {
+    const csv = buildApprovedHoursCsv([row({ breakMinutes: 30 })], {
+      timezone: TZ,
+      businessName: "Corner Cafe",
+    });
+    // 8h gross − 30m break = 7.5h net; 7.5 × 28.50 = 213.75.
+    expect(csv.split("\r\n")[4]!).toBe(
+      "Ava Nguyen,ava@example.com,09/06/2026,09:00,17:00,30,7.50,flat,28.50,213.75,",
     );
   });
 
@@ -111,9 +133,9 @@ describe("buildApprovedHoursCsv", () => {
       timezone: TZ,
       businessName: "Cafe",
     }).split("\r\n")[4]!;
-    // ...09:00,,,<rateType>,, , -> empty clock out, hours, rate, estimate.
+    // 09:00 then empty clock out, break 0, empty hours, flat, empty rate/estimate.
     expect(dataLine).toBe(
-      "Ava Nguyen,ava@example.com,09/06/2026,09:00,,,flat,,,",
+      "Ava Nguyen,ava@example.com,09/06/2026,09:00,,0,,flat,,,",
     );
   });
 
