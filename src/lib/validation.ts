@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SHIFT_COLOR_VALUES } from "@/lib/shift-colors";
 
 /** Shared input validation. Every server action validates with these. */
 
@@ -11,6 +12,18 @@ const hhmm = z
   .string()
   .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a time like 09:00");
 
+/**
+ * Optional shift-type colour: a bar hex from the fixed SHIFT_PALETTE, or null
+ * when the owner leaves it unset (→ keyword-derived fallback). An empty/absent
+ * value normalises to null; any other value must be a known palette colour.
+ */
+export const shiftColorSchema = z
+  .union([z.string(), z.undefined(), z.null()])
+  .transform((v) => (typeof v === "string" && v.length > 0 ? v : null))
+  .refine((v) => v === null || SHIFT_COLOR_VALUES.includes(v), {
+    message: "Pick a colour from the palette",
+  });
+
 export const templateSchema = z
   .object({
     label: z.string().trim().min(1, "Please enter a name").max(80),
@@ -19,6 +32,7 @@ export const templateSchema = z
     weekdays: z
       .array(z.number().int().min(1).max(7))
       .min(1, "Pick at least one day"),
+    color: shiftColorSchema,
   })
   .refine((t) => t.startTime < t.endTime, {
     message: "End time must be after start time",

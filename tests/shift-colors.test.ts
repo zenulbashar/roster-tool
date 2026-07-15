@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   shiftSchemeOf,
   shiftColorScheme,
+  resolveShiftColors,
+  SHIFT_PALETTE,
+  SHIFT_COLOR_VALUES,
   type ShiftScheme,
 } from "@/lib/shift-colors";
 
@@ -67,5 +70,38 @@ describe("shiftColorScheme", () => {
       bar: "#0EA5E9",
       text: "#075985",
     });
+  });
+});
+
+describe("resolveShiftColors", () => {
+  it("uses an explicit palette colour when set (wins over the name)", () => {
+    const purple = SHIFT_PALETTE.find((p) => p.name === "Purple")!;
+    // Name would map to "morning" (green), but the stored colour wins.
+    const resolved = resolveShiftColors(purple.bar, "Morning");
+    expect(resolved).toEqual({
+      bg: purple.bg,
+      bar: purple.bar,
+      text: purple.text,
+    });
+  });
+
+  it("is case-insensitive on the stored hex", () => {
+    const rose = SHIFT_PALETTE.find((p) => p.name === "Rose")!;
+    expect(resolveShiftColors(rose.bar.toUpperCase(), "Whatever").bar).toBe(
+      rose.bar,
+    );
+  });
+
+  it("falls back to the keyword scheme when colour is null/empty/unknown", () => {
+    const keyword = shiftColorScheme("Close");
+    expect(resolveShiftColors(null, "Close")).toEqual(keyword);
+    expect(resolveShiftColors("", "Close")).toEqual(keyword);
+    expect(resolveShiftColors("#123456", "Close")).toEqual(keyword);
+  });
+
+  it("exposes every palette bar hex as an accepted stored value", () => {
+    for (const p of SHIFT_PALETTE) {
+      expect(SHIFT_COLOR_VALUES).toContain(p.bar);
+    }
   });
 });

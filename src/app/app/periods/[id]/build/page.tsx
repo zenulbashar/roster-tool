@@ -13,7 +13,11 @@ import { periodStatusLabel, rosterBuildVerb } from "@/lib/labels";
 import { Badge, Banner, Button, Card } from "@/components/ui";
 import { CopyButton } from "@/components/CopyButton";
 import { Avatar } from "@/components/ui";
-import { shiftColorScheme } from "@/lib/shift-colors";
+import {
+  resolveShiftColors,
+  shiftColorScheme,
+  type ShiftColors,
+} from "@/lib/shift-colors";
 
 type Availability = "yes" | "no" | "unknown";
 
@@ -68,6 +72,7 @@ export default async function BuildRosterPage({
     published,
     leave,
     activeOffers,
+    templates,
   ] = await Promise.all([
     repo.listShifts(id),
     repo.listStaff({ activeOnly: true }),
@@ -77,7 +82,18 @@ export default async function BuildRosterPage({
     repo.getPublished(id),
     repo.listApprovedLeaveBetween(period.startDate, period.endDate),
     repo.listActiveOffersForPeriod(id),
+    repo.listTemplates(),
   ]);
+
+  // A shift's colours come from its originating type's chosen colour (keyed by
+  // templateId so a renamed type still matches), falling back to the keyword
+  // scheme from the label when there's no type or no explicit colour.
+  const colorByTemplateId = new Map(templates.map((t) => [t.id, t.color]));
+  const schemeForShift = (s: { templateId: string | null; label: string }) =>
+    resolveShiftColors(
+      s.templateId ? (colorByTemplateId.get(s.templateId) ?? null) : null,
+      s.label,
+    );
 
   // Is this staff member on approved leave on a given day? Used to flag (not
   // block) on-leave staff in the picker.
@@ -464,6 +480,7 @@ export default async function BuildRosterPage({
                 cellShifts={cellShifts.get(member.id) ?? new Map()}
                 onLeave={onLeave}
                 availabilityOf={availabilityOf}
+                schemeFor={schemeForShift}
               />
             ))}
 
@@ -494,7 +511,7 @@ export default async function BuildRosterPage({
                     <div className="min-h-[62px]" />
                   ) : (
                     open.map((s) => {
-                      const scheme = shiftColorScheme(s.label);
+                      const scheme = schemeForShift(s);
                       return (
                         <div
                           key={s.id}
@@ -576,7 +593,7 @@ export default async function BuildRosterPage({
                     return rank(a.id) - rank(b.id);
                   });
                   const offer = offerByShift.get(s.id);
-                  const scheme = shiftColorScheme(s.label);
+                  const scheme = schemeForShift(s);
                   return (
                     <li key={s.id}>
                       <div
@@ -769,6 +786,7 @@ function RosterRow({
   cellShifts,
   onLeave,
   availabilityOf,
+  schemeFor,
 }: {
   member: { id: string; name: string; rateLabel?: string | null };
   days: string[];
@@ -777,6 +795,7 @@ function RosterRow({
     {
       id: string;
       label: string;
+      templateId: string | null;
       startTime: string;
       endTime: string;
       date: string;
@@ -784,6 +803,7 @@ function RosterRow({
   >;
   onLeave: (staffId: string, date: string) => boolean;
   availabilityOf: (shiftId: string, staffId: string) => Availability;
+  schemeFor: (s: { templateId: string | null; label: string }) => ShiftColors;
 }) {
   const availDot: Record<Availability, string> = {
     yes: "#16A34A",
@@ -815,7 +835,7 @@ function RosterRow({
           >
             {shiftsHere.length > 0 ? (
               shiftsHere.map((s) => {
-                const scheme = shiftColorScheme(s.label);
+                const scheme = schemeFor(s);
                 const dot = availDot[availabilityOf(s.id, member.id)];
                 return (
                   <div

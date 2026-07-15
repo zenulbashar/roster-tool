@@ -1,0 +1,1 @@
+ALTER TABLE "shift_template" ADD COLUMN "color" text;

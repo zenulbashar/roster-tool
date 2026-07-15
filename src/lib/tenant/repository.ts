@@ -253,6 +253,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       startTime: string;
       endTime: string;
       weekdays: number[];
+      color?: string | null;
     }) {
       const [row] = await database
         .insert(shiftTemplates)
@@ -269,11 +270,32 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         endTime: string;
         weekdays: number[];
         active: boolean;
+        color: string | null;
       }>,
     ) {
       const [row] = await database
         .update(shiftTemplates)
         .set(input)
+        .where(
+          and(
+            eq(shiftTemplates.id, id),
+            eq(shiftTemplates.businessId, businessId),
+          ),
+        )
+        .returning();
+      return row ?? null;
+    },
+
+    /**
+     * Permanently delete a shift type (scoped to this business — a foreign id is
+     * an IDOR-safe no-op returning null). Past rosters keep their shifts: the
+     * `shift.template_id` FK is ON DELETE SET NULL, so concrete shifts simply
+     * unlink from the deleted type (their label/time snapshot stays). Returns
+     * the deleted row, or null if not this business's.
+     */
+    async deleteTemplate(id: string) {
+      const [row] = await database
+        .delete(shiftTemplates)
         .where(
           and(
             eq(shiftTemplates.id, id),
@@ -655,6 +677,9 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             endTime: shifts.endTime,
             staffMemberId: rosterAssignments.staffMemberId,
             staffName: staffMembers.name,
+            // The shift type's chosen colour (null once the type is deleted →
+            // the view falls back to the keyword scheme from the label).
+            color: shiftTemplates.color,
           })
           .from(shifts)
           // Only confirmed assignments are published — suggested (un-accepted)
@@ -671,6 +696,8 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             staffMembers,
             eq(staffMembers.id, rosterAssignments.staffMemberId),
           )
+          // The shift's originating type, for its colour (set-null when deleted).
+          .leftJoin(shiftTemplates, eq(shiftTemplates.id, shifts.templateId))
           .where(
             and(
               eq(shifts.rosterPeriodId, rosterPeriodId),

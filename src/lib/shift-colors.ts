@@ -63,3 +63,45 @@ export function shiftSchemeOf(name: string): ShiftScheme {
 export function shiftColorScheme(name: string): ShiftColors {
   return SCHEMES[shiftSchemeOf(name)];
 }
+
+/**
+ * The fixed palette an owner picks from when giving a shift type an explicit
+ * colour. Each option is a hand-tuned {bg, bar, text} triple (WCAG-AA text on
+ * bg), so any chosen colour stays accessible everywhere it's shown. The stored
+ * value on `shift_template.color` is the `bar` hex; the picker and the resolver
+ * key off it.
+ */
+export const SHIFT_PALETTE: (ShiftColors & { name: string })[] = [
+  { name: "Green", bar: "#76b900", bg: "#F4F8E9", text: "#3F6212" },
+  { name: "Purple", bar: "#7C5CBF", bg: "#F2EEFB", text: "#5B21B6" },
+  { name: "Slate", bar: "#1E293B", bg: "#EEF1F5", text: "#1E293B" },
+  { name: "Amber", bar: "#D97706", bg: "#FDF2E3", text: "#92400E" },
+  { name: "Sky", bar: "#0EA5E9", bg: "#F0F9FF", text: "#075985" },
+  { name: "Blue", bar: "#2563EB", bg: "#EFF4FF", text: "#1E40AF" },
+  { name: "Emerald", bar: "#16A34A", bg: "#ECFDF3", text: "#15803D" },
+  { name: "Rose", bar: "#E11D48", bg: "#FEF1F3", text: "#9F1239" },
+];
+
+/** Accepted stored colour values (the palette bar hexes), lower-cased. */
+export const SHIFT_COLOR_VALUES: string[] = SHIFT_PALETTE.map((p) => p.bar);
+
+const PALETTE_BY_BAR = new Map(
+  SHIFT_PALETTE.map((p) => [p.bar.toLowerCase(), p]),
+);
+
+/**
+ * Resolve the colours to render a shift type with. An explicit, palette-valid
+ * `color` (from the owner's picker) wins; otherwise we fall back to the
+ * keyword-derived scheme from the name, so existing types (and any type without
+ * a chosen colour) look exactly as they did before. Pure + deterministic.
+ */
+export function resolveShiftColors(
+  color: string | null | undefined,
+  label: string,
+): ShiftColors {
+  if (color) {
+    const p = PALETTE_BY_BAR.get(color.toLowerCase());
+    if (p) return { bg: p.bg, bar: p.bar, text: p.text };
+  }
+  return shiftColorScheme(label);
+}
