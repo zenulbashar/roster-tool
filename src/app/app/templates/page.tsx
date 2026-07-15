@@ -40,6 +40,95 @@ function timeInputValue(t: string): string {
   return t.slice(0, 5);
 }
 
+const ISO_WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
+const WEEKDAY_LABEL: Record<string, string> = Object.fromEntries(
+  WEEKDAYS.map((d) => [String(d.n), d.label]),
+);
+
+type DayTimes = Record<string, { start: string; end: string }>;
+
+/**
+ * Gather per-day time overrides from the form, only for the days the type
+ * actually runs (unselected days are ignored) and only where BOTH a start and
+ * end were entered. Returns null when there are none.
+ */
+function collectOverrides(
+  formData: FormData,
+  weekdays: number[],
+): DayTimes | null {
+  const wdSet = new Set(weekdays);
+  const out: DayTimes = {};
+  for (const wd of ISO_WEEKDAYS) {
+    if (!wdSet.has(wd)) continue;
+    const start = String(formData.get(`override_start_${wd}`) ?? "").trim();
+    const end = String(formData.get(`override_end_${wd}`) ?? "").trim();
+    if (start && end) out[String(wd)] = { start, end };
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** Drop overrides that match the default time (they'd resolve identically). */
+function pruneToDifferences(
+  overrides: DayTimes | null | undefined,
+  defStart: string,
+  defEnd: string,
+): DayTimes | null {
+  if (!overrides) return null;
+  const kept = Object.fromEntries(
+    Object.entries(overrides).filter(
+      ([, v]) => v.start !== defStart || v.end !== defEnd,
+    ),
+  );
+  return Object.keys(kept).length ? kept : null;
+}
+
+/**
+ * Optional per-day start/end inputs. Each day left blank uses the type's
+ * default time; only the days that differ are stored. Opens automatically when
+ * the type already has overrides (edit form).
+ */
+function DayTimeOverrides({ overrides }: { overrides?: DayTimes | null }) {
+  const has = overrides != null && Object.keys(overrides).length > 0;
+  return (
+    <details open={has} className="rounded-[9px] bg-[var(--color-bg)] p-3">
+      <summary className="cursor-pointer text-[13px] font-semibold text-[#4D7C0F]">
+        Different times on some days?
+      </summary>
+      <p className="mt-2 text-[12px] text-[var(--color-text-muted)]">
+        Leave a day blank to use the default time above. Only days this type
+        runs are used.
+      </p>
+      <div className="mt-2 space-y-1.5">
+        {WEEKDAYS.map((d) => {
+          const o = overrides?.[String(d.n)];
+          return (
+            <div key={d.n} className="flex items-center gap-2">
+              <span className="w-9 text-[12.5px] font-semibold text-[var(--color-text-secondary)]">
+                {d.label}
+              </span>
+              <input
+                type="time"
+                name={`override_start_${d.n}`}
+                defaultValue={o?.start ?? ""}
+                aria-label={`${d.label} start time`}
+                className="rounded-[8px] border border-[var(--color-line)] px-2 py-1.5 text-[13px]"
+              />
+              <span className="text-[var(--color-text-muted)]">–</span>
+              <input
+                type="time"
+                name={`override_end_${d.n}`}
+                defaultValue={o?.end ?? ""}
+                aria-label={`${d.label} end time`}
+                className="rounded-[8px] border border-[var(--color-line)] px-2 py-1.5 text-[13px]"
+              />
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
 /**
  * Palette radio picker used on the add + edit forms. "Auto" (empty value) keeps
  * the keyword-derived colour; any swatch stores that bar hex on the type.
@@ -113,12 +202,20 @@ export default async function TemplatesPage({
       endTime: formData.get("endTime"),
       weekdays,
       color: formData.get("color"),
+      dayTimeOverrides: collectOverrides(formData, weekdays),
     });
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Please check the form";
       redirect(`${PATH}?error=${encodeURIComponent(msg)}`);
     }
-    await repo.addTemplate(parsed.data);
+    await repo.addTemplate({
+      ...parsed.data,
+      dayTimeOverrides: pruneToDifferences(
+        parsed.data.dayTimeOverrides,
+        parsed.data.startTime,
+        parsed.data.endTime,
+      ),
+    });
     revalidatePath(PATH);
     redirect(`${PATH}?added=1`);
   }
@@ -134,12 +231,21 @@ export default async function TemplatesPage({
       endTime: formData.get("endTime"),
       weekdays,
       color: formData.get("color"),
+      dayTimeOverrides: collectOverrides(formData, weekdays),
     });
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Please check the form";
       redirect(`${PATH}?error=${encodeURIComponent(msg)}`);
     }
-    const updated = await repo.updateTemplate(id, parsed.data);
+    const updated = await repo.updateTemplate(id, {
+      ...parsed.data,
+      // Always write the (possibly null) map so removing overrides sticks.
+      dayTimeOverrides: pruneToDifferences(
+        parsed.data.dayTimeOverrides,
+        parsed.data.startTime,
+        parsed.data.endTime,
+      ),
+    });
     if (!updated)
       redirect(`${PATH}?error=${encodeURIComponent("Shift type not found")}`);
     revalidatePath(PATH);
@@ -301,6 +407,7 @@ export default async function TemplatesPage({
                         </div>
                       </fieldset>
                       <ColorPicker current={t.color} />
+                      <DayTimeOverrides overrides={t.dayTimeOverrides} />
                       <Button type="submit" variant="secondary">
                         Save changes
                       </Button>
@@ -348,6 +455,24 @@ export default async function TemplatesPage({
                 <div className="mt-3 text-[12px] text-[#9CA3AF]">
                   {summariseDays(t.weekdays)}
                 </div>
+
+                {t.dayTimeOverrides &&
+                Object.keys(t.dayTimeOverrides).length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {Object.entries(t.dayTimeOverrides)
+                      .sort(([a], [b]) => Number(a) - Number(b))
+                      .map(([wd, o]) => (
+                        <span
+                          key={wd}
+                          className="rounded bg-[var(--color-bg)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--color-text-secondary)]"
+                          title="Different time on this day"
+                        >
+                          {WEEKDAY_LABEL[wd] ?? wd} {formatTimeOnly(o.start)}–
+                          {formatTimeOnly(o.end)}
+                        </span>
+                      ))}
+                  </div>
+                ) : null}
               </div>
             </div>
           );
@@ -430,6 +555,7 @@ export default async function TemplatesPage({
             </div>
           </fieldset>
           <ColorPicker />
+          <DayTimeOverrides />
           <Button type="submit">Add shift type</Button>
         </form>
       </Card>

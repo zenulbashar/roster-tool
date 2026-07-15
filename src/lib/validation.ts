@@ -24,6 +24,29 @@ export const shiftColorSchema = z
     message: "Pick a colour from the palette",
   });
 
+/** One per-day time override: a start/end pair, end after start. */
+export const dayTimeOverrideSchema = z
+  .object({ start: hhmm, end: hhmm })
+  .refine((o) => o.start < o.end, {
+    message: "End time must be after start time",
+    path: ["end"],
+  });
+
+/**
+ * Optional per-weekday time overrides, keyed by ISO weekday ("1".."7"). Empty
+ * or absent normalises to null (every day uses the type's default time).
+ */
+export const dayTimeOverridesSchema = z
+  .union([
+    z.record(
+      z.enum(["1", "2", "3", "4", "5", "6", "7"]),
+      dayTimeOverrideSchema,
+    ),
+    z.null(),
+    z.undefined(),
+  ])
+  .transform((v) => (v && Object.keys(v).length > 0 ? v : null));
+
 export const templateSchema = z
   .object({
     label: z.string().trim().min(1, "Please enter a name").max(80),
@@ -33,6 +56,7 @@ export const templateSchema = z
       .array(z.number().int().min(1).max(7))
       .min(1, "Pick at least one day"),
     color: shiftColorSchema,
+    dayTimeOverrides: dayTimeOverridesSchema,
   })
   .refine((t) => t.startTime < t.endTime, {
     message: "End time must be after start time",

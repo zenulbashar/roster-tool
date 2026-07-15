@@ -55,4 +55,39 @@ describe("expandTemplatesToShifts", () => {
     );
     expect(shifts).toHaveLength(0);
   });
+
+  it("applies a per-day time override only on that weekday", () => {
+    // Morning 08:00 default, but 10:00 on Sunday (ISO 7).
+    const withOverride: TemplateLike = {
+      ...morning,
+      startTime: "08:00",
+      endTime: "14:00",
+      dayTimeOverrides: { "7": { start: "10:00", end: "14:00" } },
+    };
+    const shifts = expandTemplatesToShifts(
+      { startDate: "2025-06-09", endDate: "2025-06-15" }, // Mon..Sun
+      [withOverride],
+    );
+    const mon = shifts.find((s) => s.date === "2025-06-09")!;
+    const sun = shifts.find((s) => s.date === "2025-06-15")!;
+    expect(mon.startTime).toBe("08:00");
+    expect(mon.endTime).toBe("14:00");
+    // Sunday uses the override start, keeping the (same) end.
+    expect(sun.startTime).toBe("10:00");
+    expect(sun.endTime).toBe("14:00");
+  });
+
+  it("ignores an override for a weekday the type doesn't run", () => {
+    const withOverride: TemplateLike = {
+      ...weekendEvening, // Sat, Sun only
+      dayTimeOverrides: { "1": { start: "06:00", end: "10:00" } }, // Monday
+    };
+    const shifts = expandTemplatesToShifts(
+      { startDate: "2025-06-09", endDate: "2025-06-15" },
+      [withOverride],
+    );
+    // No Monday shift exists, so the override never applies.
+    expect(shifts.map((s) => s.date)).toEqual(["2025-06-14", "2025-06-15"]);
+    expect(shifts.every((s) => s.startTime === "17:00:00")).toBe(true);
+  });
 });
