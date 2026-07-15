@@ -93,10 +93,14 @@ export default async function StaffPage({
     s?: string;
     error?: string;
     added?: string;
+    saved?: string;
     pin?: string;
     rate?: string;
     uploaded?: string;
     docDeleted?: string;
+    staffDeleted?: string;
+    confirmDelete?: string;
+    count?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -166,6 +170,9 @@ export default async function StaffPage({
     staff[0] ??
     null;
 
+  // A delete awaiting confirmation (the person has recorded hours).
+  const pendingDelete = staff.find((s) => s.id === sp.confirmDelete) ?? null;
+
   async function addStaff(formData: FormData) {
     "use server";
     const repo = await ownerRepo();
@@ -189,6 +196,77 @@ export default async function StaffPage({
     }
     revalidatePath(PATH);
     redirect(`${PATH}?added=1`);
+  }
+
+  async function editStaff(formData: FormData) {
+    "use server";
+    const repo = await ownerRepo();
+    const id = String(formData.get("id"));
+    const parsed = staffSchema.safeParse({
+      name: formData.get("name"),
+      email: formData.get("email"),
+    });
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? "Please check the form";
+      redirect(`${PATH}?s=${id}&error=${encodeURIComponent(msg)}`);
+    }
+    let updated;
+    try {
+      updated = await repo.updateStaff(id, {
+        name: parsed.data.name,
+        email: parsed.data.email,
+      });
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        redirect(
+          `${PATH}?s=${id}&error=${encodeURIComponent("That email is already on your team")}`,
+        );
+      }
+      throw err;
+    }
+    if (!updated)
+      redirect(`${PATH}?error=${encodeURIComponent("Staff member not found")}`);
+    revalidatePath(PATH);
+    redirect(`${PATH}?s=${id}&saved=1`);
+  }
+
+  async function deleteStaff(formData: FormData) {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const id = String(formData.get("id"));
+    const confirmed = formData.get("confirmed") === "1";
+
+    const member = await repo.getStaff(id);
+    if (!member)
+      redirect(`${PATH}?error=${encodeURIComponent("Staff member not found")}`);
+
+    // Deleting is permanent and cascades away their timesheets, leave, certs
+    // and documents. If they have recorded hours, bounce to a count-aware
+    // confirmation instead of silently wiping the history.
+    if (!confirmed) {
+      const count = await repo.countTimesheetEntriesForStaff(id);
+      if (count > 0) redirect(`${PATH}?confirmDelete=${id}&count=${count}`);
+    }
+
+    // Best-effort: remove the files this app created in the owner's Drive before
+    // the DB cascade drops our references. A Drive error never blocks the delete.
+    const docs = await repo.listStaffDocuments(id);
+    for (const d of docs) {
+      try {
+        await deleteDocument({
+          repo,
+          client: googleDriveClient,
+          documentId: d.id,
+        });
+      } catch (err) {
+        logger.warn({ err }, "Drive file delete during staff removal failed");
+      }
+    }
+
+    await repo.deleteStaff(id);
+    revalidatePath(PATH);
+    redirect(`${PATH}?staffDeleted=1`);
   }
 
   async function toggleActive(formData: FormData) {
@@ -362,12 +440,47 @@ export default async function StaffPage({
 
       {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
       {sp.added ? <Banner tone="success">Staff member added.</Banner> : null}
+      {sp.saved ? <Banner tone="success">Details saved.</Banner> : null}
+      {sp.staffDeleted ? (
+        <Banner tone="success">Staff member deleted.</Banner>
+      ) : null}
       {sp.pin ? <Banner tone="success">PIN updated.</Banner> : null}
       {sp.rate ? <Banner tone="success">Pay rate saved.</Banner> : null}
       {sp.uploaded ? (
         <Banner tone="success">Document uploaded to your Drive.</Banner>
       ) : null}
       {sp.docDeleted ? <Banner tone="success">Document removed.</Banner> : null}
+
+      {/* Count-aware confirmation before a permanent delete. */}
+      {pendingDelete ? (
+        <Card className="mt-4 border-[var(--color-danger)]">
+          <h2 className="font-archivo text-[17px] font-bold text-[var(--color-ink)]">
+            Delete {pendingDelete.name}?
+          </h2>
+          <p className="mt-1 text-[13.5px] text-[var(--color-text-secondary)]">
+            {pendingDelete.name} has {sp.count} recorded timesheet
+            {sp.count === "1" ? " entry" : " entries"}. Deleting permanently
+            removes them and all their records — timesheets, leave,
+            certifications and documents. This can’t be undone. To keep their
+            history instead, use <strong>Deactivate</strong>.
+          </p>
+          <div className="mt-3 flex items-center gap-3">
+            <form action={deleteStaff}>
+              <input type="hidden" name="id" value={pendingDelete.id} />
+              <input type="hidden" name="confirmed" value="1" />
+              <Button type="submit" variant="danger">
+                Delete permanently
+              </Button>
+            </form>
+            <Link
+              href={`${PATH}?s=${pendingDelete.id}`}
+              className="text-[13px] font-semibold text-[var(--color-text-secondary)] hover:underline"
+            >
+              Cancel
+            </Link>
+          </div>
+        </Card>
+      ) : null}
 
       {/* Add-someone inline bar. */}
       <Card className="mt-4" padded={false}>
@@ -504,6 +617,70 @@ export default async function StaffPage({
                   </Button>
                 </form>
               </div>
+
+              {/* Edit details + remove */}
+              <details className="border-b border-[var(--color-border-subtle)] px-[22px] py-[14px]">
+                <summary className="inline-flex cursor-pointer items-center gap-1.5 text-[13px] font-semibold text-[#4D7C0F]">
+                  <span className="material-symbols-rounded text-[18px]">
+                    edit
+                  </span>
+                  Edit details
+                </summary>
+                <form
+                  action={editStaff}
+                  className="mt-3 flex flex-wrap items-end gap-2"
+                >
+                  <input type="hidden" name="id" value={selected.id} />
+                  <label className="block">
+                    <span className="mb-1 block text-[12px] font-semibold">
+                      Full name
+                    </span>
+                    <TextInput
+                      name="name"
+                      required
+                      maxLength={120}
+                      defaultValue={selected.name}
+                      aria-label="Full name"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-[12px] font-semibold">
+                      Email address
+                    </span>
+                    <TextInput
+                      type="email"
+                      name="email"
+                      required
+                      maxLength={200}
+                      defaultValue={selected.email}
+                      aria-label="Email address"
+                    />
+                  </label>
+                  <Button type="submit" variant="secondary">
+                    Save details
+                  </Button>
+                </form>
+
+                <div className="mt-4 border-t border-[var(--color-border-subtle)] pt-3">
+                  <Eyebrow className="mb-1 block text-[var(--color-danger)]">
+                    Danger zone
+                  </Eyebrow>
+                  <p className="mb-2 text-[12px] text-[var(--color-text-secondary)]">
+                    Deleting removes {selected.name} and all their records
+                    permanently. To keep their timesheets and history, use{" "}
+                    <strong>Deactivate</strong> instead.
+                  </p>
+                  <form action={deleteStaff}>
+                    <input type="hidden" name="id" value={selected.id} />
+                    <Button type="submit" variant="danger">
+                      <span className="material-symbols-rounded text-[17px]">
+                        delete
+                      </span>
+                      Delete permanently
+                    </Button>
+                  </form>
+                </div>
+              </details>
 
               {/* Pay rate + notices + PIN */}
               <div className="grid grid-cols-1 gap-[22px] p-[22px] sm:grid-cols-2">
