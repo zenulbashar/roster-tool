@@ -165,6 +165,13 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
   (name/times/days/colour) and **delete** one on `/app/templates`; deleting is
   non-destructive to past rosters — `shift.template_id` is ON DELETE SET NULL,
   so concrete shifts keep their label/time snapshot and just unlink.
+  - **Per-day time overrides**: a type carries a default start/end plus an
+    optional `day_time_overrides` (jsonb, ISO-weekday → `{start,end}`) for the
+    days that differ (e.g. Morning 08:00 but 10:00 on Sunday). Null/empty = every
+    day uses the default. Applied ONLY in `expandTemplatesToShifts`
+    (`src/lib/roster.ts`); each concrete shift still snapshots its own resolved
+    times, so nothing downstream changes. Overrides equal to the default are
+    pruned on save, and overrides for a weekday the type doesn't run are ignored.
 - **Availability**: per-shift yes/no (Available / Not available). 1:1 mapping to
   assignments.
 - **Owner auth**: email magic link. First sign-in creates the Business.

@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { businesses } from "@/lib/db/schema";
 import { createTenantRepo } from "@/lib/tenant/repository";
+import { expandTemplatesToShifts } from "@/lib/roster";
 
 /**
  * Integration coverage for shift-type (template) colour + edit + delete:
@@ -120,6 +121,37 @@ describe("shift type colour + edit + delete", () => {
     const still = await repo.getShift(shift!.id);
     expect(still?.id).toBe(shift!.id);
     expect(still?.templateId).toBeNull();
+  });
+
+  it("stores per-day time overrides and expands them onto the right day", async () => {
+    const repo = createTenantRepo(businessA);
+    const t = await repo.addTemplate({
+      label: "Morning",
+      startTime: "08:00",
+      endTime: "14:00",
+      weekdays: [1, 2, 3, 4, 5, 6, 7],
+      dayTimeOverrides: { "7": { start: "10:00", end: "14:00" } },
+    });
+    expect(t.dayTimeOverrides).toEqual({
+      "7": { start: "10:00", end: "14:00" },
+    });
+
+    // End-to-end: the expansion (fed the stored template) uses the override on
+    // Sunday and the default on weekdays.
+    const list = await repo.listTemplates();
+    const stored = list.find((x) => x.id === t.id)!;
+    const shifts = expandTemplatesToShifts(
+      { startDate: "2026-06-08", endDate: "2026-06-14" }, // Mon..Sun
+      [stored],
+    );
+    const mon = shifts.find((s) => s.date === "2026-06-08")!;
+    const sun = shifts.find((s) => s.date === "2026-06-14")!;
+    expect(mon.startTime).toBe("08:00:00");
+    expect(sun.startTime).toBe("10:00");
+
+    // Clearing back to null removes the overrides.
+    const cleared = await repo.updateTemplate(t.id, { dayTimeOverrides: null });
+    expect(cleared?.dayTimeOverrides).toBeNull();
   });
 
   it("cannot edit or delete another tenant's type", async () => {

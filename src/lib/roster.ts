@@ -6,6 +6,12 @@ export type TemplateLike = {
   startTime: string;
   endTime: string;
   weekdays: number[];
+  /**
+   * Optional per-weekday time overrides, keyed by ISO weekday ("1".."7"). A day
+   * present here uses its own start/end; any other day uses the default
+   * startTime/endTime above.
+   */
+  dayTimeOverrides?: Record<string, { start: string; end: string }> | null;
 };
 
 export type GeneratedShift = {
@@ -30,12 +36,16 @@ export function expandTemplatesToShifts(
     const wd = isoWeekday(date);
     return templates
       .filter((t) => t.weekdays.includes(wd))
-      .map((t) => ({
-        templateId: t.id,
-        date,
-        label: t.label,
-        startTime: t.startTime,
-        endTime: t.endTime,
-      }));
+      .map((t) => {
+        // Use this weekday's override if the type has one, else the default.
+        const override = t.dayTimeOverrides?.[String(wd)];
+        return {
+          templateId: t.id,
+          date,
+          label: t.label,
+          startTime: override?.start ?? t.startTime,
+          endTime: override?.end ?? t.endTime,
+        };
+      });
   });
 }

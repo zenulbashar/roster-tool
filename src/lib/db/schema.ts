@@ -527,6 +527,15 @@ export const shiftTemplates = pgTable("shift_template", {
   // no explicit choice, so the display falls back to the keyword-derived scheme
   // (shiftColorScheme). Purely presentational; never enforced.
   color: text("color"),
+  // Optional per-weekday time overrides, keyed by ISO weekday ("1".."7") →
+  // { start, end } ("HH:MM"). A day with no entry uses the default start/end
+  // above. Null/empty = every day uses the default (the original behaviour).
+  // Applied only at expansion (expandTemplatesToShifts); concrete shifts still
+  // snapshot their own resolved times, so nothing downstream changes.
+  dayTimeOverrides:
+    jsonb("day_time_overrides").$type<
+      Record<string, { start: string; end: string }>
+    >(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
