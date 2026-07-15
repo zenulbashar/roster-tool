@@ -1,6 +1,11 @@
 import { and, asc, eq } from "drizzle-orm";
 import { db as defaultDb, type Db } from "@/lib/db";
-import { businesses, organisations } from "@/lib/db/schema";
+import {
+  businesses,
+  organisations,
+  staffMembers,
+  staffLocations,
+} from "@/lib/db/schema";
 
 /**
  * Organisation-scoped data access for the multi-location feature (M29). Mirrors
@@ -74,6 +79,132 @@ export function createOrgRepo(orgId: string, database: Db = defaultDb) {
         .from(businesses)
         .where(eq(businesses.orgId, orgId));
       return rows.length;
+    },
+
+    /* ----- People (the shared org-wide staff pool) ----- */
+
+    /**
+     * Everyone in the org, each with the locations they're an active member of.
+     * The person's HOME location is always included (it's an implicit
+     * membership — see the tenant repo's `memberHere`). One query per table,
+     * grouped in memory (org staffing is small).
+     */
+    async listPeople() {
+      const people = await database
+        .select({
+          id: staffMembers.id,
+          name: staffMembers.name,
+          email: staffMembers.email,
+          active: staffMembers.active,
+          homeBusinessId: staffMembers.businessId,
+        })
+        .from(staffMembers)
+        .where(eq(staffMembers.orgId, orgId))
+        .orderBy(asc(staffMembers.name));
+
+      const memberships = await database
+        .select({
+          staffMemberId: staffLocations.staffMemberId,
+          businessId: staffLocations.businessId,
+          active: staffLocations.active,
+        })
+        .from(staffLocations)
+        .where(eq(staffLocations.orgId, orgId));
+
+      return people.map((p) => {
+        const locationIds = new Set(
+          memberships
+            .filter((m) => m.staffMemberId === p.id && m.active)
+            .map((m) => m.businessId),
+        );
+        // The home location is always an implicit membership.
+        locationIds.add(p.homeBusinessId);
+        return { ...p, locationIds: [...locationIds] };
+      });
+    },
+
+    /** A person, only if they belong to THIS org (IDOR-safe; null otherwise). */
+    async getPersonInOrg(staffMemberId: string) {
+      const [row] = await database
+        .select()
+        .from(staffMembers)
+        .where(
+          and(
+            eq(staffMembers.id, staffMemberId),
+            eq(staffMembers.orgId, orgId),
+          ),
+        );
+      return row ?? null;
+    },
+
+    /**
+     * Add a person as an active member of a location — the org-level "put this
+     * employee at that venue" action. BOTH the person and the location must
+     * belong to this org (N3): a foreign id is refused, so a location can never
+     * borrow another org's staff. Idempotent (re-activates a soft-removed
+     * membership).
+     */
+    async addPersonToLocation(
+      staffMemberId: string,
+      businessId: string,
+    ): Promise<{ ok: boolean }> {
+      const [person] = await database
+        .select({ id: staffMembers.id })
+        .from(staffMembers)
+        .where(
+          and(
+            eq(staffMembers.id, staffMemberId),
+            eq(staffMembers.orgId, orgId),
+          ),
+        );
+      const [biz] = await database
+        .select({ id: businesses.id })
+        .from(businesses)
+        .where(and(eq(businesses.id, businessId), eq(businesses.orgId, orgId)));
+      if (!person || !biz) return { ok: false };
+
+      await database
+        .insert(staffLocations)
+        .values({ orgId, businessId, staffMemberId, active: true })
+        .onConflictDoUpdate({
+          target: [staffLocations.businessId, staffLocations.staffMemberId],
+          set: { active: true },
+        });
+      return { ok: true };
+    },
+
+    /**
+     * Remove a person's membership at a location. Refused for the person's HOME
+     * location (that's their base — the home disjunct keeps them visible there
+     * regardless, so removing the row would be misleading). Org-scoped.
+     */
+    async removePersonFromLocation(
+      staffMemberId: string,
+      businessId: string,
+    ): Promise<{ ok: boolean; reason?: string }> {
+      const [person] = await database
+        .select({ homeBusinessId: staffMembers.businessId })
+        .from(staffMembers)
+        .where(
+          and(
+            eq(staffMembers.id, staffMemberId),
+            eq(staffMembers.orgId, orgId),
+          ),
+        );
+      if (!person) return { ok: false };
+      if (person.homeBusinessId === businessId) {
+        return { ok: false, reason: "home" };
+      }
+      await database
+        .delete(staffLocations)
+        .where(
+          and(
+            eq(staffLocations.orgId, orgId),
+            eq(staffLocations.businessId, businessId),
+            eq(staffLocations.staffMemberId, staffMemberId),
+          ),
+        );
+      return { ok: true };
     },
   };
 }

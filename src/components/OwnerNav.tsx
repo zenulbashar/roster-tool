@@ -33,6 +33,11 @@ const GROUPS: NavGroup[] = [
     label: "Team",
     items: [
       { label: "Staff", href: "/app/staff", icon: "group" },
+      {
+        label: "People (all locations)",
+        href: "/app/people",
+        icon: "diversity_3",
+      },
       { label: "Leave", href: "/app/leave", icon: "beach_access" },
       {
         label: "Certifications",

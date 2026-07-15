@@ -18,6 +18,7 @@ import { db as defaultDb, type Db } from "@/lib/db";
 import {
   businesses,
   staffMembers,
+  staffLocations,
   shiftTemplates,
   rosterPeriods,
   shifts,
@@ -80,17 +81,24 @@ import { photoRetentionCutoff } from "@/lib/retention";
  * validated scoped token), never from request input.
  */
 export function createTenantRepo(businessId: string, database: Db = defaultDb) {
+  /**
+   * M29 (Strategy A): staff are ORG-level records reached per location through
+   * `staff_location`. A person is visible/actionable at THIS location when their
+   * HOME is here OR they hold an ACTIVE membership here — extending the pre-M29
+   * `staff_member.business_id == this location` check (kept as the home disjunct)
+   * with cross-location membership. Correlated on `staff_member.id`, so it drops
+   * into any staff-scoped read/update/validation WHERE.
+   */
+  const memberHere = sql`(${staffMembers.businessId} = ${businessId} or exists (select 1 from ${staffLocations} where ${staffLocations.staffMemberId} = ${staffMembers.id} and ${staffLocations.businessId} = ${businessId} and ${staffLocations.active} = true))`;
+
   return {
     businessId,
 
     /* ----- Staff ----- */
     listStaff({ activeOnly = false } = {}) {
       const where = activeOnly
-        ? and(
-            eq(staffMembers.businessId, businessId),
-            eq(staffMembers.active, true),
-          )
-        : eq(staffMembers.businessId, businessId);
+        ? and(memberHere, eq(staffMembers.active, true))
+        : memberHere;
       return database
         .select()
         .from(staffMembers)
@@ -103,21 +111,36 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         database
           .select()
           .from(staffMembers)
-          .where(
-            and(
-              eq(staffMembers.id, id),
-              eq(staffMembers.businessId, businessId),
-            ),
-          ),
+          .where(and(eq(staffMembers.id, id), memberHere)),
       );
     },
 
+    /**
+     * Add a person to THIS location (M29). Creates the org-level
+     * `staff_member` (org derived from the location, never client input) and an
+     * active `staff_location` membership, atomically. A person who should work
+     * several locations is instead added once and given memberships via the org
+     * People page.
+     */
     async addStaff(input: { name: string; email: string }) {
-      const [row] = await database
-        .insert(staffMembers)
-        .values({ ...input, businessId })
-        .returning();
-      return row!;
+      const [biz] = await database
+        .select({ orgId: businesses.orgId })
+        .from(businesses)
+        .where(eq(businesses.id, businessId));
+      const orgId = biz?.orgId ?? null;
+      return database.transaction(async (tx) => {
+        const [row] = await tx
+          .insert(staffMembers)
+          .values({ ...input, businessId, orgId })
+          .returning();
+        if (orgId) {
+          await tx
+            .insert(staffLocations)
+            .values({ orgId, businessId, staffMemberId: row!.id, active: true })
+            .onConflictDoNothing();
+        }
+        return row!;
+      });
     },
 
     async updateStaff(
@@ -135,9 +158,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       const [row] = await database
         .update(staffMembers)
         .set(input)
-        .where(
-          and(eq(staffMembers.id, id), eq(staffMembers.businessId, businessId)),
-        )
+        .where(and(eq(staffMembers.id, id), memberHere))
         .returning();
       return row ?? null;
     },
@@ -147,12 +168,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       return database
         .select({ id: staffMembers.id, name: staffMembers.name })
         .from(staffMembers)
-        .where(
-          and(
-            eq(staffMembers.businessId, businessId),
-            eq(staffMembers.active, true),
-          ),
-        )
+        .where(and(memberHere, eq(staffMembers.active, true)))
         .orderBy(asc(staffMembers.name));
     },
 
@@ -161,9 +177,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       const [row] = await database
         .update(staffMembers)
         .set({ pinHash, failedPinAttempts: 0, pinLockedUntil: null })
-        .where(
-          and(eq(staffMembers.id, id), eq(staffMembers.businessId, businessId)),
-        )
+        .where(and(eq(staffMembers.id, id), memberHere))
         .returning();
       return row ?? null;
     },
@@ -176,9 +190,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       const [row] = await database
         .update(staffMembers)
         .set({ noticesTokenHash })
-        .where(
-          and(eq(staffMembers.id, id), eq(staffMembers.businessId, businessId)),
-        )
+        .where(and(eq(staffMembers.id, id), memberHere))
         .returning();
       return row ?? null;
     },
@@ -191,9 +203,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       await database
         .update(staffMembers)
         .set(state)
-        .where(
-          and(eq(staffMembers.id, id), eq(staffMembers.businessId, businessId)),
-        );
+        .where(and(eq(staffMembers.id, id), memberHere));
     },
 
     /**
@@ -226,9 +236,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     async deleteStaff(id: string) {
       const [row] = await database
         .delete(staffMembers)
-        .where(
-          and(eq(staffMembers.id, id), eq(staffMembers.businessId, businessId)),
-        )
+        .where(and(eq(staffMembers.id, id), memberHere))
         .returning();
       return row ?? null;
     },
@@ -522,12 +530,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           database
             .select({ id: staffMembers.id })
             .from(staffMembers)
-            .where(
-              and(
-                eq(staffMembers.id, staffMemberId),
-                eq(staffMembers.businessId, businessId),
-              ),
-            ),
+            .where(and(eq(staffMembers.id, staffMemberId), memberHere)),
         ),
         first(
           database
@@ -1309,12 +1312,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         database
           .select({ id: staffMembers.id })
           .from(staffMembers)
-          .where(
-            and(
-              eq(staffMembers.id, input.staffMemberId),
-              eq(staffMembers.businessId, businessId),
-            ),
-          ),
+          .where(and(eq(staffMembers.id, input.staffMemberId), memberHere)),
       );
       if (!member) return null;
       const [row] = await database
@@ -1543,12 +1541,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         database
           .select({ id: staffMembers.id })
           .from(staffMembers)
-          .where(
-            and(
-              eq(staffMembers.id, input.staffMemberId),
-              eq(staffMembers.businessId, businessId),
-            ),
-          ),
+          .where(and(eq(staffMembers.id, input.staffMemberId), memberHere)),
       );
       if (!member) return null;
       const [row] = await database
