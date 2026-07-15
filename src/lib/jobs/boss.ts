@@ -12,6 +12,7 @@ import {
   type CertReminderJob,
   type OrderReminderJob,
   type StaffShiftReminderJob,
+  type StaffLoanExpiryJob,
 } from "./queues";
 import {
   handleAvailabilityRequest,
@@ -23,6 +24,7 @@ import {
   handleCertificationReminders,
   handleOrderReminders,
   handleStaffShiftReminders,
+  handleStaffLoanExpiry,
 } from "./handlers";
 
 /** Cron for the daily clock-in photo retention sweep: 03:00 UTC every day. */
@@ -39,6 +41,9 @@ const ORDER_REMINDER_CRON = "0 6 * * *";
  * 07:00 UTC ≈ 5–6 pm in Australia/Sydney — the evening before the shift.
  */
 const STAFF_SHIFT_REMINDER_CRON = "0 7 * * *";
+
+/** Cron for the daily staff-loan expiry sweep: 01:00 UTC every day. */
+const STAFF_LOAN_EXPIRY_CRON = "0 1 * * *";
 
 /**
  * pg-boss singleton. One instance per process (Next dev hot-reload safe via
@@ -210,6 +215,15 @@ export async function registerWorkers(): Promise<void> {
     },
   );
 
+  await boss.work<StaffLoanExpiryJob>(
+    QUEUES.staffLoanExpiry,
+    async (jobs: Job<StaffLoanExpiryJob>[]) => {
+      for (const _job of jobs) {
+        await handleStaffLoanExpiry();
+      }
+    },
+  );
+
   // Daily cron sweep of expired clock-in photos. Re-scheduling with the same
   // queue name is idempotent (pg-boss upserts the schedule), so booting the
   // worker repeatedly is safe. singletonKey collapses any overlapping runs.
@@ -243,6 +257,15 @@ export async function registerWorkers(): Promise<void> {
     STAFF_SHIFT_REMINDER_CRON,
     {},
     { ...RETRY, tz: "UTC", singletonKey: QUEUES.staffShiftReminder },
+  );
+
+  // Daily staff-loan expiry (01:00 UTC). Idempotent reschedule; the handler
+  // only acts on still-active loans past their end date.
+  await boss.schedule(
+    QUEUES.staffLoanExpiry,
+    STAFF_LOAN_EXPIRY_CRON,
+    {},
+    { ...RETRY, tz: "UTC", singletonKey: QUEUES.staffLoanExpiry },
   );
 
   logger.info("Workers registered");

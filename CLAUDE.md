@@ -147,9 +147,18 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
     the shift's location (a no-op same-location; a granted `staff_location`
     cross-location) so they show on that location's roster/kiosk and can clock in.
     Same atomic transfer + one-active-offer guard.
-  - **Follow-ups (NOT built)**: date-ranged `staff_loan` records (a time-boxed
-    lend; today an owner lends by adding a People membership, no end date). See
-    the plan doc §7.
+  - **Date-ranged loans (Phase 4, built)**: `staff_loan` (org, person,
+    from/to location, inclusive `start_date`/`end_date`, note, `active`) records
+    a time-boxed lend. The owner lends on `/app/people` ("Lend someone for a date
+    range"); `createLoan` ensures an active `staff_location` at the target
+    **tagged with the loan id** so the person is rosterable there. Ending a loan
+    (owner "End", or the daily `staff-loan-expiry` job once `end_date` passes)
+    deactivates ONLY the loan-created membership (`staff_location.loan_id` NOT
+    NULL) and never a permanent one — and skips it if another active loan still
+    covers the same person+location. `/app/people` shows an "On loan to X" marker
+    and a current/upcoming loans list. Pure status logic in `src/lib/staff-loan.ts`.
+  - **Follow-ups (NOT built)**: cross-**org** anything; multi-owner org
+    governance beyond a single `owner` role. See the plan doc §7.
 - **Shifts**: business defines reusable **shift templates** (label + start/end +
   weekday flags + an optional owner-chosen **colour**). Creating a roster period
   expands templates into concrete shifts per day. Owners can **edit** a type
@@ -875,19 +884,21 @@ connection, the worker uses the direct connection (pg-boss needs session mode).
 
 `organisation` (M29 account boundary), `org_membership` (owner↔org),
 `business` (= a location, carries `org_id`), `staff_location` (M29 org
-staff↔location membership), `user` (owner) + Auth.js tables, `staff_member`
-(org-level since M29, carries `org_id`), `shift_template`,
-`roster_period`, `shift`, `availability_request`, `availability_response`,
-`roster_assignment`, `published_roster`, `timesheet_entry`, `clock_photo`,
-`leave_request`, `shift_offer`, `staff_certification`, `supplier`, `item`,
-`stock_check_entry`, `notification`, `staff_notification`, `form`, `form_field`,
-`google_drive_connection`, `staff_document`, `xero_connection`,
-`xero_employee_map`, `xero_timesheet_push`, `xero_connect_invite`, `pay_rule`.
-Work-record domain tables are business-scoped; `staff_member` is org-scoped
-(reached per location via `staff_location`); `organisation`/`org_membership`/
-`staff_location` are org-scoped. Plus one non-tenant infrastructure table:
-`sso_consumed_tokens` (the inbound prompt2eat SSO replay guard — no `business_id`,
-like the Auth.js `session`/`verificationToken` tables).
+staff↔location membership), `staff_loan` (M29 date-ranged lend), `user` (owner)
+
+- Auth.js tables, `staff_member`
+  (org-level since M29, carries `org_id`), `shift_template`,
+  `roster_period`, `shift`, `availability_request`, `availability_response`,
+  `roster_assignment`, `published_roster`, `timesheet_entry`, `clock_photo`,
+  `leave_request`, `shift_offer`, `staff_certification`, `supplier`, `item`,
+  `stock_check_entry`, `notification`, `staff_notification`, `form`, `form_field`,
+  `google_drive_connection`, `staff_document`, `xero_connection`,
+  `xero_employee_map`, `xero_timesheet_push`, `xero_connect_invite`, `pay_rule`.
+  Work-record domain tables are business-scoped; `staff_member` is org-scoped
+  (reached per location via `staff_location`); `organisation`/`org_membership`/
+  `staff_location` are org-scoped. Plus one non-tenant infrastructure table:
+  `sso_consumed_tokens` (the inbound prompt2eat SSO replay guard — no `business_id`,
+  like the Auth.js `session`/`verificationToken` tables).
 
 Notable columns / conventions:
 
@@ -912,11 +923,24 @@ Notable columns / conventions:
   live on this one org-level row (**one PIN, one rate, org-wide**).
 - `staff_location` (M29) — org staff↔location membership. `org_id` (cascade),
   `business_id` → `business` (cascade), `staff_member_id` → `staff_member`
-  (cascade), `active`, unique `(business_id, staff_member_id)`. A person appears
-  at a location when their home is there OR they hold an active row here (the
-  `memberHere` predicate in `createTenantRepo`). Written by `addStaff` (home) and
-  the org People page (`addPersonToLocation`/`removePersonFromLocation`, which
-  guard the home location and verify both ids share the org — N3).
+  (cascade), `active`, `loan_id` (nullable → `staff_loan`, set null; marks a
+  membership as loan-created so the expiry/end path removes only these — a
+  permanent membership has `loan_id` NULL), unique `(business_id,
+staff_member_id)`. A person appears at a location when their home is there OR
+  they hold an active row here (the `memberHere` predicate in `createTenantRepo`).
+  Written by `addStaff` (home), the org People page
+  (`addPersonToLocation`/`removePersonFromLocation`, which guard the home location
+  and verify both ids share the org — N3), and `createLoan` (loan-tagged).
+- `staff_loan` (M29 Phase 4) — a time-boxed lend of an org staff member to
+  another location. `org_id`/`staff_member_id`/`from_business_id`/`to_business_id`
+  (all cascade), inclusive `start_date`/`end_date` (calendar dates), nullable
+  `note`, `active` (NOT NULL default true — flipped false on end/expiry). Indexed
+  on `org_id`, `staff_member_id`, `to_business_id`, `active`. `createLoan` records
+  it + ensures a loan-tagged `staff_location` at the target; `endLoan` and the
+  daily `staff-loan-expiry` job deactivate the loan-created membership (unless
+  another active loan covers it). Pure date logic in `src/lib/staff-loan.ts`;
+  org CRUD on `createOrgRepo`; owner UI on `/app/people`. **Record + membership
+  driver only — the owner still rosters; no cross-org lend.**
 - `staff_member.notify_by_default` — pre-checks this person when the owner asks
   for availability. Owners override per-send on the recipient-selection step.
 - `staff_member.pin_hash` — salted scrypt hash of the kiosk PIN (`scrypt$salt$hash`).
@@ -1285,4 +1309,4 @@ charset=utf-8` + attachment with a slugified filename. **Buffered, newest-10k
 - [x] M26 — High-fidelity redesign to the "Roster" design handoff (`design/`, plan in `docs/design-implementation-plan.md`): a **presentation-only** overhaul — no schema, server-action, validation or tenancy changes. Widened the owner area to the design's 1340px layout with a single-row dark top bar + ROSTER wordmark; expanded `src/components/ui.tsx` into the full kit (Button variants, Card/SectionCard/Eyebrow, KpiTile, Avatar, Switch, Toast, refined Badge/Banner/Field/TextInput/PageHeader) plus `src/lib/avatar.ts` (deterministic initials+colour). Restyled every screen to its screenshot: dashboard, roster periods, shift types, the roster builder (staff×day matrix grid + preserved assignment editor), timesheets, reports, staff (two-pane list+detail), leave, certs, stock, items, suppliers, settings, notifications, and the bare/staff surfaces (marketing landing, sign-in/check-email/onboarding on the green wash, and the dark kiosk + personal-phone clock-in). Design elements without backing data (item Category/Reorder, supplier Category, staff role) are shown as clearly-labelled placeholders and tracked in the plan doc. Follow-up: designed the four staff phone surfaces the handoff left visually undefined — /me notices (per-type icon chips + branded PIN gate), /r public roster (per-day cards with shift-colour dots), /a availability (colour dots + I-can-work/Can't toggles) via a shared StaffHeader — and gave the kiosk/personal-phone sub-flows (leave/stock/shift-swap forms + shift lists) a coherent dark treatment (shared KioskForm module).
 - [x] M27 — Xero Payroll AU integration: owners connect their Xero org (owner OAuth **or** a delegated single-use bookkeeper invite consumed atomically in the callback), confirm the org name (a push is refused until `active`), map staff→Xero employees with an auto-resolved + owner-editable ordinary earnings rate, and push **approved, closed** hours as **DRAFT** timesheets per employee's Xero pay period (dates read straight from Xero — no local period math). **HARD BOUNDARY: draft timesheets only.** The narrow raw-`fetch` client (NOT `xero-node`) has NO pay-run, NO approve/revert, NO employee-write method (a guard test pins the exact method set), and never requests `payroll.payruns`. Payroll **2.0** wire shapes (ISO dates, `payrollCalendarID`, per-day scalar `numberOfUnits`, title-case `Draft`, `{timesheet}` envelope, real DELETE) source-verified from Xero's generated 2.0 SDK models; the **base-path + scope are isolated in `src/lib/xero/tokens.ts` for a first-live-AU-connect verify** (README checklist). Re-push = delete-then-create with the invariant `xero_timesheet_id` non-null ⟺ a live Draft (id nulled the instant delete succeeds → a distinct "no draft exists" failure state) and a **per-attempt idempotency key** (`base + ":attempt=" + attempt`) so a post-delete replay can't return Xero's cached deleted-timesheet response; cancel guards still-Draft (typed `XeroTimesheetAlreadyActioned`). Tokens AES-256-GCM encrypted (shared `TOKEN_ENCRYPTION_KEY`, fail-closed; Xero rotates refresh tokens → both persisted on refresh). Additive migrations `0019` (4 tables) + `0020` (`attempt`). Full plan + decision history (incl. the corrected 1.0→2.0 reversal): `docs/xero-payroll-integration-plan.md`.
 - [x] M28 — Owner-configured pay-classification rules: mechanical, owner-authored rules (`/app/xero/rules`) that sort pushed hours onto the owner's OWN Xero pay items, splitting shifts into multiple per-line-`earningsRateID` draft-timesheet lines (additive on the M27 push — the client method set is untouched and everything stays a Draft). **HARD BOUNDARY: ZERO built-in award rules / default percentages / award names anywhere; the `pay_rule` table ships EMPTY and stores NO dollar figure and NO multiplier** — only condition + pay-item reference; guard-tested (exact column set, INSERT-free migration, vocabulary scan: `tests/pay-rules-boundary.test.ts`). Pure deterministic classifier (`src/lib/xero/pay-rules.ts`): sub-block splitting at midnights/time cutoffs/threshold crossings, first-match-wins by the owner's reorderable list, moment-local wall-clock conditions, Monday-start weekly cumulation with context fetch, per-day 2dp reconciliation — zero rules ⇒ output identical to `buildTimesheetLines`. Rule edits re-push via the payload hash (existing delete-then-create); stale pay items block the push by name; the pre-push preview shows every shift's split. Additive migration `0021`. Plan: `docs/pay-rules-plan.md`.
-- [~] M29 — Multi-location & shared staff pool (Strategy A; **Phases 0–3 built**): one owner runs several **locations** under one **organisation** with a shared org-wide staff pool that can be placed/lent across locations, and cross-location shift cover. Phase 0 — additive `organisation`/`org_membership`/`staff_location` + `business.org_id`/`staff_member.org_id`, idempotent backfill (one org per business, id-reused 1:1; mirrored+tested `backfillOrgs`; migration `0023`). Phase 1 — `requireOwner` resolves org (membership) + a VALIDATED active location (N2), `createOrgRepo`/`ownerContext`, header **location switcher**, `/app/locations`, org-aware onboarding. Phase 2 — staff collapse: tenant-repo staff scoping becomes membership-based (`memberHere` = home OR active `staff_location`, backward compatible), `addStaff` creates the org row + home membership, org **People** page (`/app/people`) with per-location membership chips → cross-location staffing. Phase 3 — cross-location shift cover: `shift_offer.scope` (`location`|`org`, migration `0024`); offering up in a multi-location business goes org-scoped, shows in other locations' kiosk "Open shifts", claimable by any org member (`claimOrgOffer`, N3); `approveOffer` grants the claimer a membership at the shift's location before the atomic transfer. Org invariants N1–N5 (see Non-negotiable conventions → Multi-tenancy). Tests: `tests/org-backfill-flow`, `org-repository-flow`, `org-people-flow`, `cross-location-swap-flow`. **Follow-up (not built):** date-ranged `staff_loan`. Plan: `docs/multi-location-plan.md`.
+- [x] M29 — Multi-location & shared staff pool (Strategy A; **Phases 0–4 built**): one owner runs several **locations** under one **organisation** with a shared org-wide staff pool that can be placed/lent across locations, cross-location shift cover, and date-ranged loans. Phase 0 — additive `organisation`/`org_membership`/`staff_location` + `business.org_id`/`staff_member.org_id`, idempotent backfill (one org per business, id-reused 1:1; mirrored+tested `backfillOrgs`; migration `0023`). Phase 1 — `requireOwner` resolves org (membership) + a VALIDATED active location (N2), `createOrgRepo`/`ownerContext`, header **location switcher**, `/app/locations`, org-aware onboarding. Phase 2 — staff collapse: tenant-repo staff scoping becomes membership-based (`memberHere` = home OR active `staff_location`, backward compatible), `addStaff` creates the org row + home membership, org **People** page (`/app/people`) with per-location membership chips → cross-location staffing. Phase 3 — cross-location shift cover: `shift_offer.scope` (`location`|`org`, migration `0024`); offering up in a multi-location business goes org-scoped, shows in other locations' kiosk "Open shifts", claimable by any org member (`claimOrgOffer`, N3); `approveOffer` grants the claimer a membership at the shift's location before the atomic transfer. Phase 4 — date-ranged loans: `staff_loan` + `staff_location.loan_id` (migration `0025`); the owner lends a person to a location for a range on `/app/people`, `createLoan` ensures a loan-tagged membership, and `endLoan` / the daily `staff-loan-expiry` job remove only loan-created memberships (never permanent ones). Org invariants N1–N5 (see Non-negotiable conventions → Multi-tenancy). Tests: `tests/org-backfill-flow`, `org-repository-flow`, `org-people-flow`, `cross-location-swap-flow`, `staff-loan(-flow)`. Plan: `docs/multi-location-plan.md`.

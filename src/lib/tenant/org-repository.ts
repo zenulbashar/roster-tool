@@ -1,10 +1,12 @@
-import { and, asc, eq, ne } from "drizzle-orm";
+import { and, asc, eq, ne, isNotNull } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { db as defaultDb, type Db } from "@/lib/db";
 import {
   businesses,
   organisations,
   staffMembers,
   staffLocations,
+  staffLoans,
   shiftOffers,
   shifts,
   rosterAssignments,
@@ -167,12 +169,14 @@ export function createOrgRepo(orgId: string, database: Db = defaultDb) {
         .where(and(eq(businesses.id, businessId), eq(businesses.orgId, orgId)));
       if (!person || !biz) return { ok: false };
 
+      // A manual add is a PERMANENT membership: activate it and clear any
+      // `loan_id` from a prior loan so the expiry job never removes it.
       await database
         .insert(staffLocations)
         .values({ orgId, businessId, staffMemberId, active: true })
         .onConflictDoUpdate({
           target: [staffLocations.businessId, staffLocations.staffMemberId],
-          set: { active: true },
+          set: { active: true, loanId: null },
         });
       return { ok: true };
     },
@@ -378,6 +382,186 @@ export function createOrgRepo(orgId: string, database: Db = defaultDb) {
         businessId: offer.businessId,
         shiftId: offer.shiftId,
       };
+    },
+
+    /* ----- Staff loans (M29 Phase 4 — date-ranged lend) ----- */
+
+    /**
+     * Lend a person to a location for a date range: records the loan AND ensures
+     * an active `staff_location` at the target so they're rosterable there for
+     * the window. N3: person + target must belong to this org, and you can't
+     * lend someone to their own home. A freshly-created (or re-activated)
+     * membership is tagged with the loan id so the expiry job / end action only
+     * ever removes loan-created memberships — a permanent one is left alone.
+     */
+    async createLoan(input: {
+      staffMemberId: string;
+      toBusinessId: string;
+      startDate: string;
+      endDate: string;
+      note?: string | null;
+    }): Promise<{ ok: boolean; reason?: string }> {
+      if (input.endDate < input.startDate) {
+        return { ok: false, reason: "dates" };
+      }
+      const [person] = await database
+        .select({ homeBusinessId: staffMembers.businessId })
+        .from(staffMembers)
+        .where(
+          and(
+            eq(staffMembers.id, input.staffMemberId),
+            eq(staffMembers.orgId, orgId),
+          ),
+        );
+      const [biz] = await database
+        .select({ id: businesses.id })
+        .from(businesses)
+        .where(
+          and(
+            eq(businesses.id, input.toBusinessId),
+            eq(businesses.orgId, orgId),
+          ),
+        );
+      if (!person || !biz) return { ok: false, reason: "not_found" };
+      if (person.homeBusinessId === input.toBusinessId) {
+        return { ok: false, reason: "home" };
+      }
+
+      return database.transaction(async (tx) => {
+        const [loan] = await tx
+          .insert(staffLoans)
+          .values({
+            orgId,
+            staffMemberId: input.staffMemberId,
+            fromBusinessId: person.homeBusinessId,
+            toBusinessId: input.toBusinessId,
+            startDate: input.startDate,
+            endDate: input.endDate,
+            note: input.note ?? null,
+          })
+          .returning({ id: staffLoans.id });
+
+        const [existing] = await tx
+          .select({ id: staffLocations.id, active: staffLocations.active })
+          .from(staffLocations)
+          .where(
+            and(
+              eq(staffLocations.businessId, input.toBusinessId),
+              eq(staffLocations.staffMemberId, input.staffMemberId),
+            ),
+          );
+        if (!existing) {
+          // No membership yet → create one, tagged with the loan.
+          await tx.insert(staffLocations).values({
+            orgId,
+            businessId: input.toBusinessId,
+            staffMemberId: input.staffMemberId,
+            active: true,
+            loanId: loan!.id,
+          });
+        } else if (!existing.active) {
+          // Re-activate an inactive membership and mark it loan-created.
+          await tx
+            .update(staffLocations)
+            .set({ active: true, loanId: loan!.id })
+            .where(eq(staffLocations.id, existing.id));
+        }
+        // An already-active membership is left untouched (permanent or covered
+        // by another loan) — the loan is still recorded.
+        return { ok: true };
+      });
+    },
+
+    /**
+     * Active (not-yet-ended) loans — upcoming or in-window — with the person's
+     * name and the from/to location names, soonest start first. Ended loans are
+     * flipped to `active = false` by the expiry job, so this is the live list.
+     */
+    async listLoans() {
+      const fromBiz = alias(businesses, "from_biz");
+      const toBiz = alias(businesses, "to_biz");
+      return database
+        .select({
+          id: staffLoans.id,
+          staffMemberId: staffLoans.staffMemberId,
+          staffName: staffMembers.name,
+          fromBusinessId: staffLoans.fromBusinessId,
+          fromName: fromBiz.name,
+          toBusinessId: staffLoans.toBusinessId,
+          toName: toBiz.name,
+          startDate: staffLoans.startDate,
+          endDate: staffLoans.endDate,
+          note: staffLoans.note,
+        })
+        .from(staffLoans)
+        .innerJoin(staffMembers, eq(staffMembers.id, staffLoans.staffMemberId))
+        .innerJoin(fromBiz, eq(fromBiz.id, staffLoans.fromBusinessId))
+        .innerJoin(toBiz, eq(toBiz.id, staffLoans.toBusinessId))
+        .where(and(eq(staffLoans.orgId, orgId), eq(staffLoans.active, true)))
+        .orderBy(asc(staffLoans.startDate));
+    },
+
+    /**
+     * Which of a set of people are currently on an active loan somewhere, and to
+     * where — for "on loan" markers on the People page. Keyed by staff id.
+     */
+    async loansForMarkers() {
+      const toBiz = alias(businesses, "to_biz");
+      return database
+        .select({
+          staffMemberId: staffLoans.staffMemberId,
+          toName: toBiz.name,
+          startDate: staffLoans.startDate,
+          endDate: staffLoans.endDate,
+        })
+        .from(staffLoans)
+        .innerJoin(toBiz, eq(toBiz.id, staffLoans.toBusinessId))
+        .where(and(eq(staffLoans.orgId, orgId), eq(staffLoans.active, true)));
+    },
+
+    /**
+     * End a loan now: flips it inactive and — unless another active loan still
+     * covers the same person at the same location — deactivates the loan-created
+     * membership (never a permanent one, guarded by `loan_id IS NOT NULL`).
+     */
+    async endLoan(loanId: string): Promise<{ ok: boolean }> {
+      return database.transaction(async (tx) => {
+        const [loan] = await tx
+          .select()
+          .from(staffLoans)
+          .where(and(eq(staffLoans.id, loanId), eq(staffLoans.orgId, orgId)));
+        if (!loan) return { ok: false };
+
+        const [otherActive] = await tx
+          .select({ id: staffLoans.id })
+          .from(staffLoans)
+          .where(
+            and(
+              eq(staffLoans.orgId, orgId),
+              eq(staffLoans.staffMemberId, loan.staffMemberId),
+              eq(staffLoans.toBusinessId, loan.toBusinessId),
+              eq(staffLoans.active, true),
+              ne(staffLoans.id, loanId),
+            ),
+          );
+        if (!otherActive) {
+          await tx
+            .update(staffLocations)
+            .set({ active: false })
+            .where(
+              and(
+                eq(staffLocations.businessId, loan.toBusinessId),
+                eq(staffLocations.staffMemberId, loan.staffMemberId),
+                isNotNull(staffLocations.loanId),
+              ),
+            );
+        }
+        await tx
+          .update(staffLoans)
+          .set({ active: false })
+          .where(eq(staffLoans.id, loanId));
+        return { ok: true };
+      });
     },
   };
 }
