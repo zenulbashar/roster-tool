@@ -1,10 +1,10 @@
 # Multi-location & cross-location staffing — plan of record
 
-**Status: PHASES 0–2 BUILT (M29)** — research done, plan reviewed, **owner
-authorized the build (Strategy A — collapse; see §4)**. Phases 0, 1 and 2 are
+**Status: PHASES 0–3 BUILT (M29)** — research done, plan reviewed, **owner
+authorized the build (Strategy A — collapse; see §4)**. Phases 0–3 are
 implemented, tested and green (multiple locations + shared org staff pool +
-owner-driven cross-location staffing). Phases 3–4 are documented follow-ups
-(§7). This is a deliberate,
+owner-driven cross-location staffing + staff-initiated cross-location shift
+cover). Phase 4 (date-ranged loan records) is a documented follow-up (§7). This is a deliberate,
 owner-requested **expansion of the MVP boundary**: CLAUDE.md today defines the
 product as _one owner = one business = one tenant_, and lists **cross-tenant**
 and **bilateral swaps** as out of scope. This feature knowingly crosses that
@@ -310,14 +310,14 @@ never client input") is preserved verbatim. New rules layered on top:
 
 ## 7. Phasing (each phase independently shippable & green)
 
-**Delivery status (this PR):** Phases **0, 1 and 2 are BUILT and tested** — an
-owner runs multiple locations, staff are one org-wide pool, and the owner can
-place/lend any person at any location (via the People page) so they appear in
-that location's roster builder, availability and kiosk. That satisfies the core
-request: _an owner adds multiple locations and moves/shares employees between
-them_. Phases **3 (staff-initiated cross-location shift cover) and 4
-(date-ranged loan records)** are the documented next follow-ups — the
-owner-driven cross-location assignment they build on is already live.
+**Delivery status:** Phases **0, 1, 2 and 3 are BUILT and tested** — an owner
+runs multiple locations, staff are one org-wide pool, the owner can place/lend
+any person at any location (via the People page), and a shift at one location can
+be **covered by staff from another location** (offer org-wide → claim from
+another kiosk → owner approves → membership + transfer). That satisfies the core
+request: _an owner adds multiple locations and swaps/shares employees between
+them_. Phase **4 (date-ranged loan records)** is the documented follow-up — the
+membership-based lend it refines is already live.
 
 **Phase 0 — Foundations, invisible (no behaviour change). — BUILT**
 Add `organisation`, `org_membership` (+ `org_role` enum), `staff_location`
@@ -349,16 +349,18 @@ _manage-once shared pool_ and owner-driven **cross-location staffing**. (A
 same-email merge helper + the `(org_id, lower(email))` unique are deferred with
 Phase 3; not needed for the built flow.)
 
-**Phase 3 — Staff-initiated cross-location shift cover (extend swaps). —
-FOLLOW-UP (not in this PR).**
-`shift_offer.scope`; a staff member at their own kiosk/clock could claim an
-**org-scoped** open shift posted by another location. Claim → owner approve →
-`approveOrgOffer`: N3 check, **ensure the claimer is an active member of the
-shift's location**, then the existing atomic transfer. Notifications extended.
-The owner-driven version of this (assign a cross-location member directly) is
-already live via Phase 2; this phase adds the STAFF-initiated path, which
-touches the location-scoped kiosk/clock surfaces and is deferred to keep this
-PR reviewable.
+**Phase 3 — Staff-initiated cross-location shift cover (extend swaps). — BUILT**
+`shift_offer.scope` (`location`|`org`, migration `0024`). Offering up a shift in
+a MULTI-location business goes `org`-scoped (single-location unchanged); the
+owner can also post an open shift as org-scoped. Org-scoped open offers appear in
+the "Cover at another location" section of every OTHER location's kiosk/clock
+"Open shifts" (`createOrgRepo.listOrgOpenOffers`), and a staff member claims one
+from their own PIN-gated surface (`claimOrgOfferForStaff` → `claimOrgOffer`; N3:
+claimer + offer share the org, can't claim your own). The owner approves on
+`/app/shifts` as before; `approveOffer` now also ensures the claimer holds an
+active `staff_location` at the shift's location (no-op same-location; a granted
+membership cross-location) before the existing atomic transfer + one-active-offer
+guard. Tested end-to-end in `tests/cross-location-swap-flow.test.ts`.
 
 **Phase 4 — Date-ranged loan records. — FOLLOW-UP (not in this PR).**
 `staff_loan` + an owner action for a time-boxed lend (auto-add membership for

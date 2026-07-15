@@ -136,10 +136,20 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
   - **Owner surfaces**: `/app/locations` (list/switch/add locations, org-scoped)
     and `/app/people` (the shared pool — everyone org-wide + per-location
     membership chips). New people are still added on a location's `/app/staff`.
-  - **Follow-ups (NOT built)**: staff-INITIATED cross-location shift cover
-    (org-scoped `shift_offer` claimable from another location's kiosk — the
-    owner-driven version already works via People + the roster builder) and
-    date-ranged `staff_loan` records. See the plan doc §7.
+  - **Cross-location shift cover (Phase 3, built)**: `shift_offer.scope`
+    (`location`|`org`). Offering up a shift in a MULTI-location business makes it
+    `org`-scoped (the owner can also post an open shift as org-scoped on
+    `/app/shifts`); it then shows in the "Cover at another location" section of
+    every OTHER location's kiosk/clock "Open shifts" and is claimable there by
+    any org member (PIN-gated; `createOrgRepo.claimOrgOffer`, N3: claimer + offer
+    must share the org, can't claim your own). The owner approves on `/app/shifts`
+    as usual; `approveOffer` now also ensures the claimer is an active MEMBER of
+    the shift's location (a no-op same-location; a granted `staff_location`
+    cross-location) so they show on that location's roster/kiosk and can clock in.
+    Same atomic transfer + one-active-offer guard.
+  - **Follow-ups (NOT built)**: date-ranged `staff_loan` records (a time-boxed
+    lend; today an owner lends by adding a People membership, no end date). See
+    the plan doc §7.
 - **Shifts**: business defines reusable **shift templates** (label + start/end +
   weekday flags + an optional owner-chosen **colour**). Creating a roster period
   expands templates into concrete shifts per day. Owners can **edit** a type
@@ -972,16 +982,21 @@ Notable columns / conventions:
   lifecycle. `status` (`open`/`claimed`/`approved`/`denied`/`withdrawn`, NOT
   NULL default `open`); `offered_by_staff_id` (nullable — the releaser, NULL
   when the owner posted an open shift); `claimed_by_staff_id` (nullable);
-  `decided_at`; `decision_notified_at` (approval-email idempotency). Indexed on
+  `decided_at`; `decision_notified_at` (approval-email idempotency); `scope`
+  (`shift_offer_scope`: `location`|`org`, NOT NULL default `location` — M29
+  Phase 3; `org` = claimable by any org member from another location). Indexed on
   `business_id`, `shift_id`, `status`, with a **partial unique index on
   `shift_id WHERE status IN ('open','claimed')`** so a shift has at most one
   active offer. Releasing never alters the releaser's `roster_assignment`;
   `approveOffer` transfers atomically (assign claimer confirmed, remove the
-  releaser). Transition + eligibility logic is pure in `src/lib/shift-offer.ts`;
-  staff PIN-gated release/claim/cancel cores are in
-  `src/lib/shift-offer-submission.ts`; the owner manages it on `/app/shifts`.
-  **One-directional only — no bilateral A↔B swaps, no auto-approval, published
-  rosters only.**
+  releaser) and — M29 — ensures the claimer holds an active `staff_location` at
+  the shift's location. Transition + eligibility logic is pure in
+  `src/lib/shift-offer.ts`; staff PIN-gated release/claim/cancel cores (incl. the
+  cross-location `claimOrgOfferForStaff`) are in
+  `src/lib/shift-offer-submission.ts`; org-scoped list/claim live on
+  `createOrgRepo`; the owner manages it on `/app/shifts`. **One-directional only
+  — no bilateral A↔B swaps, no auto-approval, published rosters only. The owner
+  always approves the handover, cross-location included.**
 - `staff_certification` — a qualification tracked for expiry. `cert_type`
   (`rsa`/`rsg`/`food_safety`/`first_aid`/`wwcc`/`other`); nullable `cert_label`
   (required by the UI for `other`) and `reference_number`; NOT-NULL
@@ -1270,4 +1285,4 @@ charset=utf-8` + attachment with a slugified filename. **Buffered, newest-10k
 - [x] M26 — High-fidelity redesign to the "Roster" design handoff (`design/`, plan in `docs/design-implementation-plan.md`): a **presentation-only** overhaul — no schema, server-action, validation or tenancy changes. Widened the owner area to the design's 1340px layout with a single-row dark top bar + ROSTER wordmark; expanded `src/components/ui.tsx` into the full kit (Button variants, Card/SectionCard/Eyebrow, KpiTile, Avatar, Switch, Toast, refined Badge/Banner/Field/TextInput/PageHeader) plus `src/lib/avatar.ts` (deterministic initials+colour). Restyled every screen to its screenshot: dashboard, roster periods, shift types, the roster builder (staff×day matrix grid + preserved assignment editor), timesheets, reports, staff (two-pane list+detail), leave, certs, stock, items, suppliers, settings, notifications, and the bare/staff surfaces (marketing landing, sign-in/check-email/onboarding on the green wash, and the dark kiosk + personal-phone clock-in). Design elements without backing data (item Category/Reorder, supplier Category, staff role) are shown as clearly-labelled placeholders and tracked in the plan doc. Follow-up: designed the four staff phone surfaces the handoff left visually undefined — /me notices (per-type icon chips + branded PIN gate), /r public roster (per-day cards with shift-colour dots), /a availability (colour dots + I-can-work/Can't toggles) via a shared StaffHeader — and gave the kiosk/personal-phone sub-flows (leave/stock/shift-swap forms + shift lists) a coherent dark treatment (shared KioskForm module).
 - [x] M27 — Xero Payroll AU integration: owners connect their Xero org (owner OAuth **or** a delegated single-use bookkeeper invite consumed atomically in the callback), confirm the org name (a push is refused until `active`), map staff→Xero employees with an auto-resolved + owner-editable ordinary earnings rate, and push **approved, closed** hours as **DRAFT** timesheets per employee's Xero pay period (dates read straight from Xero — no local period math). **HARD BOUNDARY: draft timesheets only.** The narrow raw-`fetch` client (NOT `xero-node`) has NO pay-run, NO approve/revert, NO employee-write method (a guard test pins the exact method set), and never requests `payroll.payruns`. Payroll **2.0** wire shapes (ISO dates, `payrollCalendarID`, per-day scalar `numberOfUnits`, title-case `Draft`, `{timesheet}` envelope, real DELETE) source-verified from Xero's generated 2.0 SDK models; the **base-path + scope are isolated in `src/lib/xero/tokens.ts` for a first-live-AU-connect verify** (README checklist). Re-push = delete-then-create with the invariant `xero_timesheet_id` non-null ⟺ a live Draft (id nulled the instant delete succeeds → a distinct "no draft exists" failure state) and a **per-attempt idempotency key** (`base + ":attempt=" + attempt`) so a post-delete replay can't return Xero's cached deleted-timesheet response; cancel guards still-Draft (typed `XeroTimesheetAlreadyActioned`). Tokens AES-256-GCM encrypted (shared `TOKEN_ENCRYPTION_KEY`, fail-closed; Xero rotates refresh tokens → both persisted on refresh). Additive migrations `0019` (4 tables) + `0020` (`attempt`). Full plan + decision history (incl. the corrected 1.0→2.0 reversal): `docs/xero-payroll-integration-plan.md`.
 - [x] M28 — Owner-configured pay-classification rules: mechanical, owner-authored rules (`/app/xero/rules`) that sort pushed hours onto the owner's OWN Xero pay items, splitting shifts into multiple per-line-`earningsRateID` draft-timesheet lines (additive on the M27 push — the client method set is untouched and everything stays a Draft). **HARD BOUNDARY: ZERO built-in award rules / default percentages / award names anywhere; the `pay_rule` table ships EMPTY and stores NO dollar figure and NO multiplier** — only condition + pay-item reference; guard-tested (exact column set, INSERT-free migration, vocabulary scan: `tests/pay-rules-boundary.test.ts`). Pure deterministic classifier (`src/lib/xero/pay-rules.ts`): sub-block splitting at midnights/time cutoffs/threshold crossings, first-match-wins by the owner's reorderable list, moment-local wall-clock conditions, Monday-start weekly cumulation with context fetch, per-day 2dp reconciliation — zero rules ⇒ output identical to `buildTimesheetLines`. Rule edits re-push via the payload hash (existing delete-then-create); stale pay items block the push by name; the pre-push preview shows every shift's split. Additive migration `0021`. Plan: `docs/pay-rules-plan.md`.
-- [~] M29 — Multi-location & shared staff pool (Strategy A; **Phases 0–2 built**): one owner runs several **locations** under one **organisation** with a shared org-wide staff pool that can be placed/lent across locations. Phase 0 — additive `organisation`/`org_membership`/`staff_location` + `business.org_id`/`staff_member.org_id`, idempotent backfill (one org per business, id-reused 1:1; mirrored+tested `backfillOrgs`; migration `0023`). Phase 1 — `requireOwner` resolves org (membership) + a VALIDATED active location (N2), `createOrgRepo`/`ownerContext`, header **location switcher**, `/app/locations`, org-aware onboarding. Phase 2 — staff collapse: tenant-repo staff scoping becomes membership-based (`memberHere` = home OR active `staff_location`, backward compatible), `addStaff` creates the org row + home membership, org **People** page (`/app/people`) with per-location membership chips → cross-location staffing. Org invariants N1–N5 (see Non-negotiable conventions → Multi-tenancy). Tests: `tests/org-backfill-flow`, `org-repository-flow`, `org-people-flow`. **Follow-ups (not built):** staff-initiated cross-location shift cover (`shift_offer.scope`) + date-ranged `staff_loan`. Plan: `docs/multi-location-plan.md`.
+- [~] M29 — Multi-location & shared staff pool (Strategy A; **Phases 0–3 built**): one owner runs several **locations** under one **organisation** with a shared org-wide staff pool that can be placed/lent across locations, and cross-location shift cover. Phase 0 — additive `organisation`/`org_membership`/`staff_location` + `business.org_id`/`staff_member.org_id`, idempotent backfill (one org per business, id-reused 1:1; mirrored+tested `backfillOrgs`; migration `0023`). Phase 1 — `requireOwner` resolves org (membership) + a VALIDATED active location (N2), `createOrgRepo`/`ownerContext`, header **location switcher**, `/app/locations`, org-aware onboarding. Phase 2 — staff collapse: tenant-repo staff scoping becomes membership-based (`memberHere` = home OR active `staff_location`, backward compatible), `addStaff` creates the org row + home membership, org **People** page (`/app/people`) with per-location membership chips → cross-location staffing. Phase 3 — cross-location shift cover: `shift_offer.scope` (`location`|`org`, migration `0024`); offering up in a multi-location business goes org-scoped, shows in other locations' kiosk "Open shifts", claimable by any org member (`claimOrgOffer`, N3); `approveOffer` grants the claimer a membership at the shift's location before the atomic transfer. Org invariants N1–N5 (see Non-negotiable conventions → Multi-tenancy). Tests: `tests/org-backfill-flow`, `org-repository-flow`, `org-people-flow`, `cross-location-swap-flow`. **Follow-up (not built):** date-ranged `staff_loan`. Plan: `docs/multi-location-plan.md`.
