@@ -664,6 +664,17 @@ export const rosterAssignments = pgTable(
       .notNull()
       .references(() => staffMembers.id, { onDelete: "cascade" }),
     status: assignmentStatus("status").notNull().default("confirmed"),
+    // Optional PER-PERSON schedule override (drag-drop timeline builder). Null
+    // start/end = this person works the shift's own nominal times (the original
+    // behaviour, and what every pre-existing row keeps). When set, this staff
+    // member's block on that shift is [startTime, endTime) instead — so two
+    // people on the same shift can work different spans. Stored as wall-clock
+    // "HH:MM:SS" like the shift. `breakMinutes` is an UNPAID break the owner
+    // drops into the block; a PLANNING AID only, netted out of the block's shown
+    // span, NEVER a payroll calculation and never enforced against clock-in.
+    startTime: time("start_time"),
+    endTime: time("end_time"),
+    breakMinutes: integer("break_minutes").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

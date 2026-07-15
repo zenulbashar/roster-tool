@@ -656,6 +656,10 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           shiftId: rosterAssignments.shiftId,
           staffMemberId: rosterAssignments.staffMemberId,
           status: rosterAssignments.status,
+          // Per-person schedule override (null = works the shift's own times).
+          startTime: rosterAssignments.startTime,
+          endTime: rosterAssignments.endTime,
+          breakMinutes: rosterAssignments.breakMinutes,
         })
         .from(rosterAssignments)
         .innerJoin(shifts, eq(rosterAssignments.shiftId, shifts.id))
@@ -683,6 +687,12 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             endTime: shifts.endTime,
             staffMemberId: rosterAssignments.staffMemberId,
             staffName: staffMembers.name,
+            // This person's own schedule override (null = the shift's times).
+            // Consumers resolve via resolveSchedule so the published roster and
+            // emails show each person's actual span + break.
+            assignmentStartTime: rosterAssignments.startTime,
+            assignmentEndTime: rosterAssignments.endTime,
+            assignmentBreakMinutes: rosterAssignments.breakMinutes,
             // The shift type's chosen colour (null once the type is deleted →
             // the view falls back to the keyword scheme from the label).
             color: shiftTemplates.color,
@@ -737,6 +747,121 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             eq(rosterAssignments.businessId, businessId),
           ),
         );
+    },
+
+    /**
+     * Move a staff member's assignment from one shift to another ATOMICALLY
+     * (drag a chip across the calendar). The per-person schedule override
+     * (start/end/break) travels with them, and the result is always a CONFIRMED
+     * assignment on the target — so a dragged suggestion becomes confirmed, just
+     * like tapping to accept. Both shifts are re-validated to belong to this
+     * business inside the transaction. A no-op when source == target.
+     */
+    async moveAssignment(input: {
+      fromShiftId: string;
+      toShiftId: string;
+      staffMemberId: string;
+    }) {
+      const { fromShiftId, toShiftId, staffMemberId } = input;
+      if (fromShiftId === toShiftId) return null;
+      return database.transaction(async (tx) => {
+        const shiftRows = await tx
+          .select({ id: shifts.id })
+          .from(shifts)
+          .where(
+            and(
+              inArray(shifts.id, [fromShiftId, toShiftId]),
+              eq(shifts.businessId, businessId),
+            ),
+          );
+        const owned = new Set(shiftRows.map((r) => r.id));
+        if (!owned.has(fromShiftId) || !owned.has(toShiftId)) return null;
+
+        const [existing] = await tx
+          .select({
+            startTime: rosterAssignments.startTime,
+            endTime: rosterAssignments.endTime,
+            breakMinutes: rosterAssignments.breakMinutes,
+          })
+          .from(rosterAssignments)
+          .where(
+            and(
+              eq(rosterAssignments.shiftId, fromShiftId),
+              eq(rosterAssignments.staffMemberId, staffMemberId),
+              eq(rosterAssignments.businessId, businessId),
+            ),
+          );
+        if (!existing) return null;
+
+        await tx
+          .delete(rosterAssignments)
+          .where(
+            and(
+              eq(rosterAssignments.shiftId, fromShiftId),
+              eq(rosterAssignments.staffMemberId, staffMemberId),
+              eq(rosterAssignments.businessId, businessId),
+            ),
+          );
+
+        const [row] = await tx
+          .insert(rosterAssignments)
+          .values({
+            shiftId: toShiftId,
+            staffMemberId,
+            businessId,
+            status: "confirmed",
+            startTime: existing.startTime,
+            endTime: existing.endTime,
+            breakMinutes: existing.breakMinutes,
+          })
+          // Landing on a shift they already hold (or a leftover suggestion):
+          // keep the moved schedule and confirm it.
+          .onConflictDoUpdate({
+            target: [
+              rosterAssignments.shiftId,
+              rosterAssignments.staffMemberId,
+            ],
+            set: {
+              status: "confirmed",
+              startTime: existing.startTime,
+              endTime: existing.endTime,
+              breakMinutes: existing.breakMinutes,
+            },
+          })
+          .returning();
+        return row ?? null;
+      });
+    },
+
+    /**
+     * Set (or clear) a confirmed assignment's per-person schedule from the
+     * timeline editor. Passing null start/end reverts the person to the shift's
+     * nominal times. Break is stored as given (the caller validates + clamps via
+     * roster-schedule). Scoped to this business; a foreign pair no-ops.
+     */
+    async setAssignmentSchedule(input: {
+      shiftId: string;
+      staffMemberId: string;
+      startTime: string | null;
+      endTime: string | null;
+      breakMinutes: number;
+    }) {
+      const [row] = await database
+        .update(rosterAssignments)
+        .set({
+          startTime: input.startTime,
+          endTime: input.endTime,
+          breakMinutes: input.breakMinutes,
+        })
+        .where(
+          and(
+            eq(rosterAssignments.shiftId, input.shiftId),
+            eq(rosterAssignments.staffMemberId, input.staffMemberId),
+            eq(rosterAssignments.businessId, businessId),
+          ),
+        )
+        .returning();
+      return row ?? null;
     },
 
     /**
@@ -862,6 +987,11 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           startTime: shifts.startTime,
           endTime: shifts.endTime,
           date: shifts.date,
+          // The person's own schedule last week, so "Draft from last week" can
+          // reproduce a shaped shift (custom span + break), not just the slot.
+          assignmentStartTime: rosterAssignments.startTime,
+          assignmentEndTime: rosterAssignments.endTime,
+          assignmentBreakMinutes: rosterAssignments.breakMinutes,
         })
         .from(rosterAssignments)
         .innerJoin(shifts, eq(rosterAssignments.shiftId, shifts.id))
