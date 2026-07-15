@@ -35,8 +35,34 @@ const bytea = customType<{ data: Buffer; default: false }>({
 /* Tenancy root                                                               */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The account boundary for the multi-location feature (M29). One owner's set of
+ * locations belongs to one organisation; each `business` (= a location) carries
+ * `org_id`. Staff collapse to the org (Strategy A): a `staff_member` belongs to
+ * the org and reaches a location through `staff_location`. Introduced additively
+ * — pre-M29 every business gets its own org 1:1 at migration time, so existing
+ * single-location owners see no change. See docs/multi-location-plan.md.
+ */
+export const organisations = pgTable("organisation", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  // Seeds a new location's timezone; each location still owns its own tz.
+  defaultTimezone: text("default_timezone")
+    .notNull()
+    .default("Australia/Sydney"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export const businesses = pgTable("business", {
   id: uuid("id").primaryKey().defaultRandom(),
+  // The organisation this location belongs to (M29). Nullable during the
+  // additive rollout; backfilled 1:1 (org id = business id at migration time)
+  // and treated as required by the app once every row is populated.
+  orgId: uuid("org_id").references(() => organisations.id, {
+    onDelete: "cascade",
+  }),
   name: text("name").notNull(),
   timezone: text("timezone").notNull().default("Australia/Sydney"),
   // When on, the kiosk captures a still photo on each clock in/out. Off by
@@ -172,6 +198,40 @@ export const verificationTokens = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
+/* Organisation membership (which owners can reach which org — M29)            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * An owner's role in an organisation. v1 ships a single role (`owner`); the
+ * column exists so later manager/viewer roles are additive. This is the source
+ * of "what can this signed-in owner reach", replacing the single
+ * `user.businessId` pointer over the M29 rollout.
+ */
+export const orgRole = pgEnum("org_role", ["owner"]);
+
+export const orgMemberships = pgTable(
+  "org_membership",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: orgRole("role").notNull().default("owner"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("org_membership_org_user_unique").on(t.orgId, t.userId),
+    index("org_membership_user_idx").on(t.userId),
+    index("org_membership_org_idx").on(t.orgId),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
 /* Cross-app SSO (inbound handoff from prompt2eat)                             */
 /* -------------------------------------------------------------------------- */
 
@@ -302,6 +362,17 @@ export const staffMembers = pgTable(
   "staff_member",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    // The organisation this person belongs to (M29, Strategy A — staff collapse
+    // to the org). Nullable during the additive rollout; backfilled from the
+    // home business's org. Staff scoping migrates from `business_id` to this
+    // `org_id` + `staff_location` one surface at a time.
+    orgId: uuid("org_id").references(() => organisations.id, {
+      onDelete: "cascade",
+    }),
+    // The person's HOME location. Retained through the M29 transition (every
+    // staff query still uses it) and retired only once all staff scoping runs
+    // off `org_id` + `staff_location`. A person works additional locations via
+    // `staff_location` memberships.
     businessId: uuid("business_id")
       .notNull()
       .references(() => businesses.id, { onDelete: "cascade" }),
@@ -337,6 +408,44 @@ export const staffMembers = pgTable(
   },
   (t) => [
     unique("staff_member_business_email_unique").on(t.businessId, t.email),
+    index("staff_member_org_idx").on(t.orgId),
+  ],
+);
+
+/**
+ * Which locations an org-level `staff_member` can work at (M29). A person
+ * appears in a location's roster / availability / kiosk ONLY through an active
+ * membership here — the org collapse must never make one location's kiosk show
+ * the whole org's people. Backfilled 1:1 from each staff member's home
+ * `business_id`; a cross-location loan/claim first ensures a membership at the
+ * target location.
+ */
+export const staffLocations = pgTable(
+  "staff_location",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "cascade" }),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    staffMemberId: uuid("staff_member_id")
+      .notNull()
+      .references(() => staffMembers.id, { onDelete: "cascade" }),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("staff_location_business_staff_unique").on(
+      t.businessId,
+      t.staffMemberId,
+    ),
+    index("staff_location_business_idx").on(t.businessId),
+    index("staff_location_staff_idx").on(t.staffMemberId),
+    index("staff_location_org_idx").on(t.orgId),
   ],
 );
 
