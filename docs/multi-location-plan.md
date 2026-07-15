@@ -1,10 +1,10 @@
 # Multi-location & cross-location staffing — plan of record
 
-**Status: PHASES 0–3 BUILT (M29)** — research done, plan reviewed, **owner
-authorized the build (Strategy A — collapse; see §4)**. Phases 0–3 are
-implemented, tested and green (multiple locations + shared org staff pool +
+**Status: BUILT (M29, Phases 0–4)** — research done, plan reviewed, **owner
+authorized the build (Strategy A — collapse; see §4)**. All planned phases are
+implemented, tested and green: multiple locations + shared org staff pool +
 owner-driven cross-location staffing + staff-initiated cross-location shift
-cover). Phase 4 (date-ranged loan records) is a documented follow-up (§7). This is a deliberate,
+cover + date-ranged loan records. This is a deliberate,
 owner-requested **expansion of the MVP boundary**: CLAUDE.md today defines the
 product as _one owner = one business = one tenant_, and lists **cross-tenant**
 and **bilateral swaps** as out of scope. This feature knowingly crosses that
@@ -310,14 +310,13 @@ never client input") is preserved verbatim. New rules layered on top:
 
 ## 7. Phasing (each phase independently shippable & green)
 
-**Delivery status:** Phases **0, 1, 2 and 3 are BUILT and tested** — an owner
-runs multiple locations, staff are one org-wide pool, the owner can place/lend
-any person at any location (via the People page), and a shift at one location can
-be **covered by staff from another location** (offer org-wide → claim from
-another kiosk → owner approves → membership + transfer). That satisfies the core
-request: _an owner adds multiple locations and swaps/shares employees between
-them_. Phase **4 (date-ranged loan records)** is the documented follow-up — the
-membership-based lend it refines is already live.
+**Delivery status:** **all phases (0–4) are BUILT and tested** — an owner runs
+multiple locations, staff are one org-wide pool, the owner can place/lend any
+person at any location (via the People page), a shift at one location can be
+**covered by staff from another location** (offer org-wide → claim from another
+kiosk → owner approves → membership + transfer), and a person can be **lent for a
+date range** (auto-expiring). That satisfies the request: _an owner adds multiple
+locations and swaps/shares employees between them_.
 
 **Phase 0 — Foundations, invisible (no behaviour change). — BUILT**
 Add `organisation`, `org_membership` (+ `org_role` enum), `staff_location`
@@ -362,11 +361,18 @@ active `staff_location` at the shift's location (no-op same-location; a granted
 membership cross-location) before the existing atomic transfer + one-active-offer
 guard. Tested end-to-end in `tests/cross-location-swap-flow.test.ts`.
 
-**Phase 4 — Date-ranged loan records. — FOLLOW-UP (not in this PR).**
-`staff_loan` + an owner action for a time-boxed lend (auto-add membership for
-the range, "on loan from <location>" markers, auto-expire). Today an owner
-lends by adding a membership on the People page (no end date); the dated loan
-record is the refinement.
+**Phase 4 — Date-ranged loan records. — BUILT**
+`staff_loan` + `staff_location.loan_id` (migration `0025`). The owner lends a
+person to a location for a date range on `/app/people` ("Lend someone for a date
+range"); `createLoan` records the loan AND ensures an active, loan-tagged
+`staff_location` at the target so they're rosterable there (N3: person + target
+share the org; can't lend to home). `endLoan` (owner "End") and the daily
+`staff-loan-expiry` job (`handleStaffLoanExpiry`, 01:00 UTC) deactivate ONLY the
+loan-created membership — never a permanent one (`loan_id IS NULL`), and only
+when no other active loan still covers the same person+location. The People page
+shows an "On loan to <location>" marker + a current/upcoming loans list with an
+End action. Pure date logic in `src/lib/staff-loan.ts`; tested in
+`tests/staff-loan.test.ts` + `tests/staff-loan-flow.test.ts`.
 
 **Phase 5 — Cross-location polish.**
 Org-level read-only reporting (aggregate hours/labour-cost across locations —

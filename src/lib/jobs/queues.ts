@@ -10,6 +10,7 @@ export const QUEUES = {
   certReminder: "cert-reminder",
   orderReminder: "order-reminder",
   staffShiftReminder: "staff-shift-reminder",
+  staffLoanExpiry: "staff-loan-expiry",
 } as const;
 
 /** Sends one staff member their availability magic link. */
@@ -81,3 +82,11 @@ export type OrderReminderJob = Record<string, never>;
  * `staff_notification.dedupe_key`.
  */
 export type StaffShiftReminderJob = Record<string, never>;
+
+/**
+ * Daily sweep that ends staff loans whose `end_date` has passed (per the target
+ * location's local date), deactivating the loan-created `staff_location`
+ * membership unless another active loan still covers it. Cron-scheduled (no
+ * payload); idempotent (only acts on `active` loans, flipping them inactive).
+ */
+export type StaffLoanExpiryJob = Record<string, never>;

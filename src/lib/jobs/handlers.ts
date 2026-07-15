@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, and, lt, ne, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db";
 import {
@@ -10,6 +10,8 @@ import {
   shiftOffers,
   shifts,
   users,
+  staffLoans,
+  staffLocations,
 } from "@/lib/db/schema";
 import {
   sendEmail,
@@ -663,4 +665,72 @@ export async function handleStaffShiftReminders(
     "Staff shift reminder sweep complete",
   );
   return created;
+}
+
+/**
+ * Daily sweep that ends staff loans past their `end_date` (M29 Phase 4). "Today"
+ * is each target location's business-local date. For each expired-but-still-
+ * `active` loan it deactivates the loan-created `staff_location` membership —
+ * unless another active loan still covers the same person at the same location —
+ * then flips the loan inactive. Idempotent: a re-run skips already-inactive
+ * loans. A permanent membership (`loan_id IS NULL`) is never touched.
+ */
+export async function handleStaffLoanExpiry(
+  now: Date = new Date(),
+): Promise<number> {
+  const bizRows = await db
+    .select({ id: businesses.id, timezone: businesses.timezone })
+    .from(businesses);
+
+  let ended = 0;
+  for (const biz of bizRows) {
+    const today = businessDateOf(now, biz.timezone);
+    const expired = await db
+      .select()
+      .from(staffLoans)
+      .where(
+        and(
+          eq(staffLoans.toBusinessId, biz.id),
+          eq(staffLoans.active, true),
+          lt(staffLoans.endDate, today),
+        ),
+      );
+    for (const loan of expired) {
+      await db.transaction(async (tx) => {
+        const [other] = await tx
+          .select({ id: staffLoans.id })
+          .from(staffLoans)
+          .where(
+            and(
+              eq(staffLoans.staffMemberId, loan.staffMemberId),
+              eq(staffLoans.toBusinessId, loan.toBusinessId),
+              eq(staffLoans.active, true),
+              ne(staffLoans.id, loan.id),
+            ),
+          );
+        if (!other) {
+          await tx
+            .update(staffLocations)
+            .set({ active: false })
+            .where(
+              and(
+                eq(staffLocations.businessId, loan.toBusinessId),
+                eq(staffLocations.staffMemberId, loan.staffMemberId),
+                isNotNull(staffLocations.loanId),
+              ),
+            );
+        }
+        await tx
+          .update(staffLoans)
+          .set({ active: false })
+          .where(eq(staffLoans.id, loan.id));
+      });
+      ended++;
+    }
+  }
+  logger.info(
+    { businesses: bizRows.length, loansEnded: ended },
+    "Staff loan expiry sweep complete",
+  );
+  return ended;
 }

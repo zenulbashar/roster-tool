@@ -442,6 +442,13 @@ export const staffLocations = pgTable(
       .notNull()
       .references(() => staffMembers.id, { onDelete: "cascade" }),
     active: boolean("active").notNull().default(true),
+    // When this membership was created by a date-ranged loan (M29 Phase 4), the
+    // loan that created it. NULL = a permanent membership (home or owner-added on
+    // the People page). The loan-expiry job only ever deactivates memberships
+    // with a loan_id, so a permanent membership is never removed.
+    loanId: uuid("loan_id").references(() => staffLoans.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -454,6 +461,50 @@ export const staffLocations = pgTable(
     index("staff_location_business_idx").on(t.businessId),
     index("staff_location_staff_idx").on(t.staffMemberId),
     index("staff_location_org_idx").on(t.orgId),
+  ],
+);
+
+/**
+ * A time-boxed lend of an org staff member to another location (M29 Phase 4) —
+ * the dated refinement of the People-page membership lend. Creating a loan
+ * records it AND ensures an active `staff_location` at `to_business_id` (tagged
+ * with this loan's id) so the person is rosterable there for the range. When the
+ * loan ends (owner-ended or the daily expiry job past `end_date`) that
+ * loan-created membership is deactivated — a permanent membership is never
+ * touched. `active` flips false on end/expiry; `from_business_id` is the
+ * person's home at loan time (display only).
+ */
+export const staffLoans = pgTable(
+  "staff_loan",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "cascade" }),
+    staffMemberId: uuid("staff_member_id")
+      .notNull()
+      .references(() => staffMembers.id, { onDelete: "cascade" }),
+    fromBusinessId: uuid("from_business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    toBusinessId: uuid("to_business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    // Inclusive calendar dates ("YYYY-MM-DD"), like shift/leave dates.
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    note: text("note"),
+    // False once the loan has been ended by the owner or expired past end_date.
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("staff_loan_org_idx").on(t.orgId),
+    index("staff_loan_staff_idx").on(t.staffMemberId),
+    index("staff_loan_to_business_idx").on(t.toBusinessId),
+    index("staff_loan_active_idx").on(t.active),
   ],
 );
 
