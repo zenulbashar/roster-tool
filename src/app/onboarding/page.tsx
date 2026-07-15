@@ -5,22 +5,19 @@ import { z } from "zod";
 import { signOut } from "@/lib/auth";
 import { requireSession } from "@/lib/auth/context";
 import { db } from "@/lib/db";
-import { businesses, users } from "@/lib/db/schema";
+import {
+  businesses,
+  users,
+  organisations,
+  orgMemberships,
+} from "@/lib/db/schema";
+import { setActiveLocationCookie } from "@/lib/tenant/org-access";
 import { AccountIdentity } from "@/components/AccountIdentity";
-
-const AU_TIMEZONES = [
-  "Australia/Sydney",
-  "Australia/Melbourne",
-  "Australia/Brisbane",
-  "Australia/Adelaide",
-  "Australia/Perth",
-  "Australia/Hobart",
-  "Australia/Darwin",
-];
+import { AU_TIMEZONES } from "@/lib/timezones";
 
 const onboardingSchema = z.object({
   name: z.string().trim().min(1, "Please enter your business name").max(120),
-  timezone: z.enum(AU_TIMEZONES as [string, ...string[]]),
+  timezone: z.enum(AU_TIMEZONES),
 });
 
 export default async function OnboardingPage() {
@@ -41,16 +38,39 @@ export default async function OnboardingPage() {
       redirect("/onboarding?error=1");
     }
 
-    const [business] = await db
-      .insert(businesses)
-      .values({ name: parsed.data.name, timezone: parsed.data.timezone })
-      .returning();
+    // Create the organisation, its first location, and the owner's membership
+    // atomically (M29). The business name seeds both; the owner can rename the
+    // org and add more locations later. `user.businessId` records the home
+    // location (used as the active-location fallback).
+    const businessId = await db.transaction(async (tx) => {
+      const [org] = await tx
+        .insert(organisations)
+        .values({
+          name: parsed.data.name,
+          defaultTimezone: parsed.data.timezone,
+        })
+        .returning();
+      const [business] = await tx
+        .insert(businesses)
+        .values({
+          name: parsed.data.name,
+          timezone: parsed.data.timezone,
+          orgId: org!.id,
+        })
+        .returning();
+      await tx.insert(orgMemberships).values({
+        orgId: org!.id,
+        userId: current.user.id,
+        role: "owner",
+      });
+      await tx
+        .update(users)
+        .set({ businessId: business!.id })
+        .where(eq(users.id, current.user.id));
+      return business!.id;
+    });
 
-    await db
-      .update(users)
-      .set({ businessId: business!.id })
-      .where(eq(users.id, current.user.id));
-
+    await setActiveLocationCookie(businessId);
     redirect("/app");
   }
 

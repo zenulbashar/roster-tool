@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { ownerRepo } from "@/lib/auth/context";
+import { ownerContext } from "@/lib/auth/context";
 import { signOut } from "@/lib/auth";
 import { OwnerNav } from "@/components/OwnerNav";
+import { LocationSwitcher } from "@/components/LocationSwitcher";
 import { NotificationBell } from "@/components/NotificationBell";
 import { relativeTime } from "@/lib/notifications";
 
@@ -12,11 +13,12 @@ export default async function OwnerLayout({
 }) {
   // Tenant-scoped via the session. The unread count + recent list are read per
   // request (owner pages are dynamic), so they refresh on navigation/refresh.
-  const repo = await ownerRepo();
-  const [unreadCount, recent, business] = await Promise.all([
+  // The org's locations feed the header location switcher (M29).
+  const { repo, org, businessId } = await ownerContext();
+  const [unreadCount, recent, locations] = await Promise.all([
     repo.countUnreadNotifications(),
     repo.listRecentNotifications(10),
-    repo.getBusiness(),
+    org.listLocations(),
   ]);
   const now = new Date();
   const bellItems = recent.map((n) => ({
@@ -56,11 +58,10 @@ export default async function OwnerLayout({
               ROSTER
             </span>
           </Link>
-          {business?.name ? (
-            <span className="ml-[7px] hidden border-l border-[#374151] pl-[13px] text-[12.5px] text-[var(--color-text-muted)] sm:inline">
-              {business.name}
-            </span>
-          ) : null}
+          <LocationSwitcher
+            activeId={businessId}
+            locations={locations.map((l) => ({ id: l.id, name: l.name }))}
+          />
 
           <OwnerNav />
 
