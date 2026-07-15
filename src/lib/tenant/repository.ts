@@ -196,6 +196,43 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         );
     },
 
+    /**
+     * How many timesheet entries a staff member has — their recorded work
+     * history. Used to warn (and ask for confirmation) before a permanent
+     * delete, since deleting cascades those records away.
+     */
+    async countTimesheetEntriesForStaff(id: string) {
+      const [row] = await database
+        .select({ count: sql<number>`count(*)::int` })
+        .from(timesheetEntries)
+        .where(
+          and(
+            eq(timesheetEntries.staffMemberId, id),
+            eq(timesheetEntries.businessId, businessId),
+          ),
+        );
+      return row?.count ?? 0;
+    },
+
+    /**
+     * Permanently delete a staff member (scoped to this business — a foreign id
+     * is an IDOR-safe no-op returning null). DB cascades remove their
+     * availability, roster assignments, timesheets (+ photos), leave,
+     * certifications, in-app notices and document references; their shift-offer,
+     * stock-check and form-response links are nulled out. Prefer deactivating
+     * (`active: false`) when the person's history should be kept; this is the
+     * hard remove. Returns the deleted row, or null if not this business's.
+     */
+    async deleteStaff(id: string) {
+      const [row] = await database
+        .delete(staffMembers)
+        .where(
+          and(eq(staffMembers.id, id), eq(staffMembers.businessId, businessId)),
+        )
+        .returning();
+      return row ?? null;
+    },
+
     /* ----- Shift templates ----- */
     listTemplates({ activeOnly = false } = {}) {
       const where = activeOnly
