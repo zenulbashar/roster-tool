@@ -39,6 +39,58 @@ export const breakMinutesSchema = z.coerce
     message: "Pick a break of none, 30 minutes, or 1 hour",
   });
 
+/**
+ * A per-assignment schedule from the roster builder's editor: same-day times
+ * plus an optional unpaid break. Shape only — the deep rules (span length,
+ * break fits inside the times) live in the pure validateSchedule
+ * (src/lib/assignment-schedule.ts), which the server action runs after this.
+ */
+export const assignmentScheduleSchema = z.object({
+  shiftId: z.string().uuid(),
+  staffMemberId: z.string().uuid(),
+  startTime: hhmm,
+  endTime: hhmm,
+  breakMinutes: z.coerce.number().int().min(0).max(240),
+  breakStart: z
+    .union([hhmm, z.literal(""), z.null(), z.undefined()])
+    .transform((v) => (v ? v : null)),
+});
+
+/**
+ * A drag-and-drop move from the roster board. The target is either an exact
+ * shift (dropped on an existing block) or a (staff, date) cell — the action
+ * resolves the cell to a matching shift, cloning the source block onto the
+ * date when none exists.
+ */
+export const assignmentMoveSchema = z.object({
+  fromShiftId: z.string().uuid(),
+  staffMemberId: z.string().uuid(),
+  toStaffMemberId: z.string().uuid().nullable().optional(),
+  toShiftId: z.string().uuid().nullable().optional(),
+  toDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .optional(),
+});
+
+/** A (shift, staff) pair from the roster board (unassign, accept, clear). */
+export const assignmentPairSchema = z.object({
+  shiftId: z.string().uuid(),
+  staffMemberId: z.string().uuid(),
+});
+
+/** An open-shift drop from the roster board: assign, optionally to a day. */
+export const openShiftAssignSchema = z.object({
+  shiftId: z.string().uuid(),
+  staffMemberId: z.string().uuid(),
+  toDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .optional(),
+});
+
 /** One per-day time override: a start/end pair, end after start. */
 export const dayTimeOverrideSchema = z
   .object({ start: hhmm, end: hhmm })

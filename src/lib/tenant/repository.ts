@@ -15,6 +15,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { db as defaultDb, type Db } from "@/lib/db";
+import { carrySchedule } from "@/lib/assignment-schedule";
 import {
   businesses,
   staffMembers,
@@ -656,6 +657,12 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           shiftId: rosterAssignments.shiftId,
           staffMemberId: rosterAssignments.staffMemberId,
           status: rosterAssignments.status,
+          // Per-assignment schedule override (null start/end = the shift's
+          // own times) + unpaid break, for the drag-and-drop builder.
+          startTime: rosterAssignments.startTime,
+          endTime: rosterAssignments.endTime,
+          breakMinutes: rosterAssignments.breakMinutes,
+          breakStart: rosterAssignments.breakStart,
         })
         .from(rosterAssignments)
         .innerJoin(shifts, eq(rosterAssignments.shiftId, shifts.id))
@@ -683,6 +690,12 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             endTime: shifts.endTime,
             staffMemberId: rosterAssignments.staffMemberId,
             staffName: staffMembers.name,
+            // This person's schedule override (null = they work the shift's
+            // own times) + unpaid break, so the public roster and emails can
+            // show each person's effective hours.
+            assignmentStartTime: rosterAssignments.startTime,
+            assignmentEndTime: rosterAssignments.endTime,
+            assignmentBreakMinutes: rosterAssignments.breakMinutes,
             // The shift type's chosen colour (null once the type is deleted →
             // the view falls back to the keyword scheme from the label).
             color: shiftTemplates.color,
@@ -737,6 +750,146 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             eq(rosterAssignments.businessId, businessId),
           ),
         );
+    },
+
+    /**
+     * Move one assignment to another shift and/or person in ONE transaction —
+     * the drag-and-drop builder's core write. Both shifts must belong to this
+     * business and the SAME roster period (a drag can't leave the board). The
+     * schedule override + break travel with the person only when the target
+     * block runs the same base times (carrySchedule); the status is kept. If
+     * the target person is already on the target shift the rows merge (the
+     * source row is removed; a confirmed source upgrades a suggested target).
+     * Returns the resulting assignment, or null when anything didn't line up.
+     */
+    async moveAssignment(input: {
+      fromShiftId: string;
+      staffMemberId: string;
+      toShiftId: string;
+      toStaffMemberId?: string;
+    }) {
+      const toStaffId = input.toStaffMemberId ?? input.staffMemberId;
+      return database.transaction(async (tx) => {
+        const [source] = await tx
+          .select()
+          .from(rosterAssignments)
+          .where(
+            and(
+              eq(rosterAssignments.shiftId, input.fromShiftId),
+              eq(rosterAssignments.staffMemberId, input.staffMemberId),
+              eq(rosterAssignments.businessId, businessId),
+            ),
+          )
+          .for("update");
+        if (!source) return null;
+
+        const [fromShift] = await tx
+          .select()
+          .from(shifts)
+          .where(
+            and(
+              eq(shifts.id, input.fromShiftId),
+              eq(shifts.businessId, businessId),
+            ),
+          );
+        const [toShift] = await tx
+          .select()
+          .from(shifts)
+          .where(
+            and(
+              eq(shifts.id, input.toShiftId),
+              eq(shifts.businessId, businessId),
+            ),
+          );
+        if (!fromShift || !toShift) return null;
+        if (fromShift.rosterPeriodId !== toShift.rosterPeriodId) return null;
+
+        // No-op drop back onto the same cell.
+        if (
+          input.fromShiftId === input.toShiftId &&
+          input.staffMemberId === toStaffId
+        ) {
+          return source;
+        }
+
+        const carried = carrySchedule(source, fromShift, toShift);
+
+        await tx
+          .delete(rosterAssignments)
+          .where(
+            and(
+              eq(rosterAssignments.id, source.id),
+              eq(rosterAssignments.businessId, businessId),
+            ),
+          );
+
+        const [moved] = await tx
+          .insert(rosterAssignments)
+          .values({
+            businessId,
+            shiftId: input.toShiftId,
+            staffMemberId: toStaffId,
+            status: source.status,
+            ...carried,
+          })
+          // The person is already on the target shift: keep that row, but a
+          // confirmed source must not silently downgrade to a suggestion.
+          .onConflictDoUpdate({
+            target: [
+              rosterAssignments.shiftId,
+              rosterAssignments.staffMemberId,
+            ],
+            set: {
+              status:
+                source.status === "confirmed"
+                  ? ("confirmed" as const)
+                  : sql`${rosterAssignments.status}`,
+            },
+          })
+          .returning();
+        return moved ?? null;
+      });
+    },
+
+    /**
+     * Set or clear one person's schedule override + break on a shift (the
+     * builder's resize/break editor). Null schedule = back to the shift's own
+     * times. Validation (times, break fit) happens in the pure
+     * validateSchedule before this is called; here we only scope and write.
+     */
+    async setAssignmentSchedule(
+      shiftId: string,
+      staffMemberId: string,
+      schedule: {
+        // Null times with a non-zero break = "the shift's own times, plus a
+        // break" (a break-only assignment, no time override).
+        startTime: string | null;
+        endTime: string | null;
+        breakMinutes: number;
+        breakStart: string | null;
+      } | null,
+    ) {
+      const [row] = await database
+        .update(rosterAssignments)
+        .set(
+          schedule === null
+            ? {
+                startTime: null,
+                endTime: null,
+                breakMinutes: 0,
+                breakStart: null,
+              }
+            : schedule,
+        )
+        .where(
+          and(
+            eq(rosterAssignments.shiftId, shiftId),
+            eq(rosterAssignments.staffMemberId, staffMemberId),
+            eq(rosterAssignments.businessId, businessId),
+          ),
+        )
+        .returning();
+      return row ?? null;
     },
 
     /**

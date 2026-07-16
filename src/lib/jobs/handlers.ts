@@ -35,6 +35,7 @@ import {
   businessDateOf,
 } from "@/lib/time";
 import { leaveTypeLabel, certDisplayLabel } from "@/lib/labels";
+import { resolveSchedule } from "@/lib/assignment-schedule";
 import { dueReminderStage, daysUntil, expiryPhrase } from "@/lib/certification";
 import {
   selectOrderReminders,
@@ -235,11 +236,25 @@ export async function handlePublishedRoster(
   const rows = await repo.rosterRows(payload.rosterPeriodId);
   const mine = rows
     .filter((r) => r.staffMemberId === payload.staffMemberId)
-    .map((r) => ({
-      dayText: formatDateOnly(r.date),
-      label: r.label,
-      timeText: `${formatTimeOnly(r.startTime)} – ${formatTimeOnly(r.endTime)}`,
-    }));
+    .map((r) => {
+      // The person's own times when the builder overrode them, else the
+      // shift's; an unpaid break is spelled out so no one is surprised.
+      const schedule = resolveSchedule(r, {
+        startTime: r.assignmentStartTime,
+        endTime: r.assignmentEndTime,
+        breakMinutes: r.assignmentBreakMinutes ?? 0,
+        breakStart: null,
+      });
+      const breakText =
+        schedule.breakMinutes > 0
+          ? ` (${schedule.breakMinutes} min unpaid break)`
+          : "";
+      return {
+        dayText: formatDateOnly(r.date),
+        label: r.label,
+        timeText: `${formatTimeOnly(schedule.startTime)} – ${formatTimeOnly(schedule.endTime)}${breakText}`,
+      };
+    });
 
   const email = publishedRosterEmail({
     businessName: period.businessName,

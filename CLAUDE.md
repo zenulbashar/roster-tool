@@ -174,6 +174,35 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
     pruned on save, and overrides for a weekday the type doesn't run are ignored.
 - **Availability**: per-shift yes/no (Available / Not available). 1:1 mapping to
   assignments.
+- **Drag-and-drop roster board (M30)**: the builder's weekly grid
+  (`/app/periods/[id]/build`) is an interactive client island
+  (`src/components/RosterBoard.tsx`, @dnd-kit/core). The owner drags a chip to
+  another day/person (same-day = the same shift changes hands; another day =
+  that day's matching block by template-then-label+times, **cloned onto the day
+  when none exists** — a drag never deletes a shift, vacated blocks surface in
+  the Open row), drags open blocks onto people, drags to the Open row to
+  unassign, and clicks a chip to open a **schedule editor** (24 h timeline with
+  drag handles + ±15 min steppers) that resizes that PERSON's times and drops
+  in an unpaid **break** (None/30/60, position draggable). **Colour-by-employee
+  is the default** (stable `avatarColor` washed across a proportional day bar,
+  break = gap) with a by-shift-type toggle. Data model: nullable
+  `roster_assignment.start_time/end_time` (an override — **null = the shift's
+  own times**, so pre-existing rows are unchanged) + `break_minutes`/
+  `break_start`. The shift block stays the slot's source of truth (availability
+  is still per-shift; draft matching unchanged); the override follows the
+  person wherever their hours show — the builder, the public roster and the
+  published email (via `rosterRows`). **Overrides travel on a move only when
+  the target block runs the same base times** (else reset; break kept if it
+  fits — `carrySchedule`), and **roster breaks/overrides never feed timesheets,
+  the CSV export, the labour report or Xero** (those read `timesheet_entry`
+  only). Pure maths in `src/lib/assignment-schedule.ts`; transactional
+  `moveAssignment`/`setAssignmentSchedule` on the tenant repo; zod-validated
+  board actions in the build page re-derive every id server-side. The
+  tap-a-name editor below the board is unchanged (the fully
+  keyboard-accessible path). Plan + invariants:
+  `docs/drag-drop-roster-plan.md`. NOT built (flag first): overnight
+  per-person times, carrying overrides across weeks in drafts, multiple/custom
+  breaks, drag on staff surfaces.
 - **Owner auth**: email magic link. First sign-in creates the Business.
 - **Inbound SSO from prompt2eat** (`POST /api/sso/prompt2eat`): a sister app
   (prompt2eat) hands the owner a signed, single-use token so they open Roster
@@ -1007,6 +1036,17 @@ staff_member_id)`. A person appears at a location when their home is there OR
   last week") or `'confirmed'`. **Only confirmed assignments are published**
   (`rosterRows` filters to confirmed), so un-accepted suggestions never leak
   into the public roster or staff emails.
+- `roster_assignment.start_time`/`end_time` (nullable, M30) — a per-person
+  schedule OVERRIDE from the drag-and-drop board ("this person works different
+  hours on this block"); **null = the shift's own times** (the original
+  behaviour). Always both-or-neither; times equal to the block's own collapse
+  back to null on save. `break_minutes` (NOT NULL default 0; allowed 0/30/60,
+  mirroring the timesheet options) + `break_start` (nullable; set iff
+  `break_minutes` > 0) are an unpaid break drawn as a gap in the person's bar
+  — **roster display/plan only, never a payroll/timesheet input**. Pure maths
+  in `src/lib/assignment-schedule.ts` (`resolveSchedule`/`carrySchedule`/
+  `validateSchedule`); writes via transactional `moveAssignment` /
+  `setAssignmentSchedule`.
 - Draft suggestion logic lives in `src/lib/draft.ts` (pure, deterministic — no
   LLM/external calls). It matches by shift type (template, or label+times if the
   template was deleted) **and** weekday, suggesting only available staff who are
@@ -1330,3 +1370,4 @@ charset=utf-8` + attachment with a slugified filename. **Buffered, newest-10k
 - [x] M27 — Xero Payroll AU integration: owners connect their Xero org (owner OAuth **or** a delegated single-use bookkeeper invite consumed atomically in the callback), confirm the org name (a push is refused until `active`), map staff→Xero employees with an auto-resolved + owner-editable ordinary earnings rate, and push **approved, closed** hours as **DRAFT** timesheets per employee's Xero pay period (dates read straight from Xero — no local period math). **HARD BOUNDARY: draft timesheets only.** The narrow raw-`fetch` client (NOT `xero-node`) has NO pay-run, NO approve/revert, NO employee-write method (a guard test pins the exact method set), and never requests `payroll.payruns`. Payroll **2.0** wire shapes (ISO dates, `payrollCalendarID`, per-day scalar `numberOfUnits`, title-case `Draft`, `{timesheet}` envelope, real DELETE) source-verified from Xero's generated 2.0 SDK models; the **base-path + scope are isolated in `src/lib/xero/tokens.ts` for a first-live-AU-connect verify** (README checklist). Re-push = delete-then-create with the invariant `xero_timesheet_id` non-null ⟺ a live Draft (id nulled the instant delete succeeds → a distinct "no draft exists" failure state) and a **per-attempt idempotency key** (`base + ":attempt=" + attempt`) so a post-delete replay can't return Xero's cached deleted-timesheet response; cancel guards still-Draft (typed `XeroTimesheetAlreadyActioned`). Tokens AES-256-GCM encrypted (shared `TOKEN_ENCRYPTION_KEY`, fail-closed; Xero rotates refresh tokens → both persisted on refresh). Additive migrations `0019` (4 tables) + `0020` (`attempt`). Full plan + decision history (incl. the corrected 1.0→2.0 reversal): `docs/xero-payroll-integration-plan.md`.
 - [x] M28 — Owner-configured pay-classification rules: mechanical, owner-authored rules (`/app/xero/rules`) that sort pushed hours onto the owner's OWN Xero pay items, splitting shifts into multiple per-line-`earningsRateID` draft-timesheet lines (additive on the M27 push — the client method set is untouched and everything stays a Draft). **HARD BOUNDARY: ZERO built-in award rules / default percentages / award names anywhere; the `pay_rule` table ships EMPTY and stores NO dollar figure and NO multiplier** — only condition + pay-item reference; guard-tested (exact column set, INSERT-free migration, vocabulary scan: `tests/pay-rules-boundary.test.ts`). Pure deterministic classifier (`src/lib/xero/pay-rules.ts`): sub-block splitting at midnights/time cutoffs/threshold crossings, first-match-wins by the owner's reorderable list, moment-local wall-clock conditions, Monday-start weekly cumulation with context fetch, per-day 2dp reconciliation — zero rules ⇒ output identical to `buildTimesheetLines`. Rule edits re-push via the payload hash (existing delete-then-create); stale pay items block the push by name; the pre-push preview shows every shift's split. Additive migration `0021`. Plan: `docs/pay-rules-plan.md`.
 - [x] M29 — Multi-location & shared staff pool (Strategy A; **Phases 0–4 built**): one owner runs several **locations** under one **organisation** with a shared org-wide staff pool that can be placed/lent across locations, cross-location shift cover, and date-ranged loans. Phase 0 — additive `organisation`/`org_membership`/`staff_location` + `business.org_id`/`staff_member.org_id`, idempotent backfill (one org per business, id-reused 1:1; mirrored+tested `backfillOrgs`; migration `0023`). Phase 1 — `requireOwner` resolves org (membership) + a VALIDATED active location (N2), `createOrgRepo`/`ownerContext`, header **location switcher**, `/app/locations`, org-aware onboarding. Phase 2 — staff collapse: tenant-repo staff scoping becomes membership-based (`memberHere` = home OR active `staff_location`, backward compatible), `addStaff` creates the org row + home membership, org **People** page (`/app/people`) with per-location membership chips → cross-location staffing. Phase 3 — cross-location shift cover: `shift_offer.scope` (`location`|`org`, migration `0024`); offering up in a multi-location business goes org-scoped, shows in other locations' kiosk "Open shifts", claimable by any org member (`claimOrgOffer`, N3); `approveOffer` grants the claimer a membership at the shift's location before the atomic transfer. Phase 4 — date-ranged loans: `staff_loan` + `staff_location.loan_id` (migration `0025`); the owner lends a person to a location for a range on `/app/people`, `createLoan` ensures a loan-tagged membership, and `endLoan` / the daily `staff-loan-expiry` job remove only loan-created memberships (never permanent ones). Org invariants N1–N5 (see Non-negotiable conventions → Multi-tenancy). Tests: `tests/org-backfill-flow`, `org-repository-flow`, `org-people-flow`, `cross-location-swap-flow`, `staff-loan(-flow)`. Plan: `docs/multi-location-plan.md`.
+- [x] M30 — Drag-and-drop roster board: the builder's weekly grid becomes an interactive client island (`src/components/RosterBoard.tsx`, @dnd-kit/core) — drag a chip to another day/person (same-day = the same shift changes hands; other days resolve to the matching block, cloned when the day has none — a drag never deletes a shift), drag open blocks onto people, drag to the Open row to unassign, click a chip for a schedule editor (24 h timeline with drag handles + ±15 min steppers) that resizes that person's times and drops in a None/30/60 unpaid break (position draggable). Colour-by-employee default (stable avatarColor across a proportional day bar, break = gap) with a by-shift-type toggle. Data: nullable per-assignment `start_time`/`end_time` override + `break_minutes`/`break_start` (additive migration `0028`; null = the shift's own times, pre-existing rosters unchanged); overrides follow the person to the public roster + published email; moves carry the override only onto same-base-times blocks (`carrySchedule`); roster breaks/overrides never feed timesheets/CSV/report/Xero. Pure maths `src/lib/assignment-schedule.ts` (unit-tested); transactional `moveAssignment`/`setAssignmentSchedule` (flow-tested); zod-validated board actions re-derive everything server-side; the tap editor below stays as the keyboard path. Plan: `docs/drag-drop-roster-plan.md`.

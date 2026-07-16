@@ -12,16 +12,60 @@ import { formatDateOnly, formatTimeOnly } from "@/lib/time";
 import { periodStatusLabel, rosterBuildVerb } from "@/lib/labels";
 import { Badge, Banner, Button, Card } from "@/components/ui";
 import { CopyButton } from "@/components/CopyButton";
-import { Avatar } from "@/components/ui";
+import { resolveShiftColors } from "@/lib/shift-colors";
 import {
-  resolveShiftColors,
-  shiftColorScheme,
-  type ShiftColors,
-} from "@/lib/shift-colors";
+  findMatchingShiftOnDate,
+  normalizeTime,
+  sameShiftTimes,
+  validateSchedule,
+} from "@/lib/assignment-schedule";
+import {
+  assignmentMoveSchema,
+  assignmentPairSchema,
+  assignmentScheduleSchema,
+  openShiftAssignSchema,
+} from "@/lib/validation";
+import { RosterBoard, type BoardActionResult } from "@/components/RosterBoard";
 
 type Availability = "yes" | "no" | "unknown";
 
-const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/**
+ * The shift a board drop lands on for a given day: the source shift itself
+ * (same-day person change), the day's matching block (same type), or a clone
+ * of the source block created on that day. Null = a date outside the period.
+ * Module-scope (not a closure) so the server actions can share it.
+ */
+async function resolveShiftForDate(
+  repo: ReturnType<typeof createTenantRepo>,
+  periodId: string,
+  period: { startDate: string; endDate: string },
+  sourceShift: {
+    id: string;
+    templateId: string | null;
+    label: string;
+    startTime: string;
+    endTime: string;
+    date: string;
+  },
+  toDate: string,
+): Promise<string | null> {
+  if (toDate < period.startDate || toDate > period.endDate) return null;
+  if (toDate === sourceShift.date) return sourceShift.id;
+  const all = await repo.listShifts(periodId);
+  const match = findMatchingShiftOnDate(all, sourceShift, toDate);
+  if (match) return match.id;
+  const [clone] = await repo.createShifts([
+    {
+      rosterPeriodId: periodId,
+      templateId: sourceShift.templateId,
+      date: toDate,
+      label: sourceShift.label,
+      startTime: normalizeTime(sourceShift.startTime),
+      endTime: normalizeTime(sourceShift.endTime),
+    },
+  ]);
+  return clone?.id ?? null;
+}
 
 /** Inclusive list of `YYYY-MM-DD` dates from start to end (UTC-safe). */
 function eachDate(start: string, end: string): string[] {
@@ -32,15 +76,6 @@ function eachDate(start: string, end: string): string[] {
     out.push(t.toISOString().slice(0, 10));
   }
   return out;
-}
-
-/** "Mon 23" style day header from a `YYYY-MM-DD` string. */
-function dayHeader(date: string): { name: string; date: string } {
-  const d = new Date(`${date}T00:00:00Z`);
-  return {
-    name: WEEKDAY_SHORT[d.getUTCDay()] ?? "",
-    date: String(d.getUTCDate()),
-  };
 }
 
 export default async function BuildRosterPage({
@@ -249,6 +284,197 @@ export default async function BuildRosterPage({
     revalidatePath(`/app/periods/${id}/build`);
   }
 
+  /* ----- Roster board actions (drag-and-drop) -----------------------------
+   * Each takes a JSON payload from the client board, zod-validates it, and
+   * re-derives every id through the tenant repo — the client can only point
+   * at things; the server decides. All return { ok } | { ok, error } so the
+   * board can toast failures without crashing.
+   */
+
+  async function moveAssignmentAction(
+    raw: unknown,
+  ): Promise<BoardActionResult> {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const parsed = assignmentMoveSchema.safeParse(raw);
+    if (!parsed.success)
+      return { ok: false, error: "That move didn't make sense — try again." };
+    const input = parsed.data;
+
+    const [period, fromShift, member] = await Promise.all([
+      repo.getPeriod(id),
+      repo.getShift(input.fromShiftId),
+      repo.getStaff(input.toStaffMemberId ?? input.staffMemberId),
+    ]);
+    if (!period || !fromShift || fromShift.rosterPeriodId !== id)
+      return { ok: false, error: "That shift isn't part of this roster." };
+    if (!member) return { ok: false, error: "That staff member wasn't found." };
+
+    let toShiftId = input.toShiftId ?? null;
+    if (toShiftId) {
+      const target = await repo.getShift(toShiftId);
+      if (!target || target.rosterPeriodId !== id)
+        return { ok: false, error: "That shift isn't part of this roster." };
+    } else if (input.toDate) {
+      toShiftId = await resolveShiftForDate(
+        repo,
+        id,
+        period,
+        fromShift,
+        input.toDate,
+      );
+      if (!toShiftId)
+        return { ok: false, error: "That day isn't part of this roster." };
+    } else {
+      return { ok: false, error: "Nowhere to move that shift to." };
+    }
+
+    const moved = await repo.moveAssignment({
+      fromShiftId: input.fromShiftId,
+      staffMemberId: input.staffMemberId,
+      toShiftId,
+      toStaffMemberId: input.toStaffMemberId ?? undefined,
+    });
+    if (!moved)
+      return {
+        ok: false,
+        error:
+          "Couldn't move that shift — it may have just changed. Refresh and try again.",
+      };
+    revalidatePath(`/app/periods/${id}/build`);
+    return { ok: true };
+  }
+
+  async function assignOpenShiftAction(
+    raw: unknown,
+  ): Promise<BoardActionResult> {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const parsed = openShiftAssignSchema.safeParse(raw);
+    if (!parsed.success)
+      return { ok: false, error: "That drop didn't make sense — try again." };
+    const input = parsed.data;
+
+    const [period, shift, member] = await Promise.all([
+      repo.getPeriod(id),
+      repo.getShift(input.shiftId),
+      repo.getStaff(input.staffMemberId),
+    ]);
+    if (!period || !shift || shift.rosterPeriodId !== id)
+      return { ok: false, error: "That shift isn't part of this roster." };
+    if (!member) return { ok: false, error: "That staff member wasn't found." };
+
+    let targetId: string | null = shift.id;
+    if (input.toDate && input.toDate !== shift.date) {
+      targetId = await resolveShiftForDate(
+        repo,
+        id,
+        period,
+        shift,
+        input.toDate,
+      );
+      if (!targetId)
+        return { ok: false, error: "That day isn't part of this roster." };
+    }
+    await repo.assign(targetId, input.staffMemberId);
+    revalidatePath(`/app/periods/${id}/build`);
+    return { ok: true };
+  }
+
+  async function unassignAction(raw: unknown): Promise<BoardActionResult> {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const parsed = assignmentPairSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: "Try again." };
+    const shift = await repo.getShift(parsed.data.shiftId);
+    if (!shift || shift.rosterPeriodId !== id)
+      return { ok: false, error: "That shift isn't part of this roster." };
+    await repo.unassign(parsed.data.shiftId, parsed.data.staffMemberId);
+    revalidatePath(`/app/periods/${id}/build`);
+    return { ok: true };
+  }
+
+  async function setScheduleAction(raw: unknown): Promise<BoardActionResult> {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const parsed = assignmentScheduleSchema.safeParse(raw);
+    if (!parsed.success)
+      return { ok: false, error: "Those times didn't make sense — try again." };
+    const input = parsed.data;
+    const check = validateSchedule({
+      startTime: input.startTime,
+      endTime: input.endTime,
+      breakMinutes: input.breakMinutes,
+      breakStart: input.breakMinutes > 0 ? input.breakStart : null,
+    });
+    if (!check.ok) return { ok: false, error: check.error };
+
+    const shift = await repo.getShift(input.shiftId);
+    if (!shift || shift.rosterPeriodId !== id)
+      return { ok: false, error: "That shift isn't part of this roster." };
+
+    // Times equal to the shift's own collapse back to "no override" so the
+    // chip doesn't show a misleading Custom badge; a break can ride alone.
+    const timesMatch = sameShiftTimes(shift, {
+      startTime: input.startTime,
+      endTime: input.endTime,
+    });
+    const stored =
+      timesMatch && input.breakMinutes === 0
+        ? null
+        : {
+            startTime: timesMatch ? null : input.startTime,
+            endTime: timesMatch ? null : input.endTime,
+            breakMinutes: input.breakMinutes,
+            breakStart: input.breakMinutes > 0 ? input.breakStart : null,
+          };
+    const row = await repo.setAssignmentSchedule(
+      input.shiftId,
+      input.staffMemberId,
+      stored,
+    );
+    if (!row)
+      return { ok: false, error: "That person is no longer on this shift." };
+    revalidatePath(`/app/periods/${id}/build`);
+    return { ok: true };
+  }
+
+  async function acceptSuggestionBoardAction(
+    raw: unknown,
+  ): Promise<BoardActionResult> {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const parsed = assignmentPairSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: "Try again." };
+    const shift = await repo.getShift(parsed.data.shiftId);
+    if (!shift || shift.rosterPeriodId !== id)
+      return { ok: false, error: "That shift isn't part of this roster." };
+    await repo.acceptSuggestion(parsed.data.shiftId, parsed.data.staffMemberId);
+    revalidatePath(`/app/periods/${id}/build`);
+    return { ok: true };
+  }
+
+  async function clearSuggestionBoardAction(
+    raw: unknown,
+  ): Promise<BoardActionResult> {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const parsed = assignmentPairSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: "Try again." };
+    const shift = await repo.getShift(parsed.data.shiftId);
+    if (!shift || shift.rosterPeriodId !== id)
+      return { ok: false, error: "That shift isn't part of this roster." };
+    await repo.clearSuggestion(parsed.data.shiftId, parsed.data.staffMemberId);
+    revalidatePath(`/app/periods/${id}/build`);
+    return { ok: true };
+  }
+
   async function publish() {
     "use server";
     const { businessId } = await requireOwner();
@@ -315,34 +541,44 @@ export default async function BuildRosterPage({
         })
       : null;
 
-  // --- Weekly matrix (the design's hero grid) ---------------------------------
+  // --- Roster board (drag-and-drop weekly grid) -----------------------------
   const days = eachDate(period.startDate, period.endDate);
-  // cellShifts[staffId][date] = confirmed shifts that staff member holds that day
-  const cellShifts = new Map<string, Map<string, typeof shifts>>();
-  // openByDate[date] = shifts with no confirmed staff that day
-  const openByDate = new Map<string, typeof shifts>();
+  const boardShifts = shifts.map((s) => ({
+    id: s.id,
+    date: s.date,
+    label: s.label,
+    templateId: s.templateId,
+    startTime: normalizeTime(s.startTime),
+    endTime: normalizeTime(s.endTime),
+    scheme: schemeForShift(s),
+    offer: offerByShift.get(s.id) ?? null,
+  }));
+  const boardStaff = staff.map((m) => ({
+    id: m.id,
+    name: m.name,
+    rateLabel: m.rateLabel ?? null,
+  }));
+  const boardAssignments = assignments.map((a) => ({
+    shiftId: a.shiftId,
+    staffMemberId: a.staffMemberId,
+    status: a.status,
+    startTime: a.startTime ? normalizeTime(a.startTime) : null,
+    endTime: a.endTime ? normalizeTime(a.endTime) : null,
+    breakMinutes: a.breakMinutes,
+    breakStart: a.breakStart ? normalizeTime(a.breakStart) : null,
+  }));
+  const boardAvailability: Record<string, Availability> = {};
   for (const s of shifts) {
-    const conf = confirmed.get(s.id);
-    if (conf && conf.size > 0) {
-      for (const staffId of conf) {
-        const perStaff = cellShifts.get(staffId) ?? new Map();
-        const list = perStaff.get(s.date) ?? [];
-        list.push(s);
-        perStaff.set(s.date, list);
-        cellShifts.set(staffId, perStaff);
-      }
-    } else {
-      const list = openByDate.get(s.date) ?? [];
-      list.push(s);
-      openByDate.set(s.date, list);
+    for (const m of staff) {
+      boardAvailability[`${s.id}:${m.id}`] = availabilityOf(s.id, m.id);
     }
   }
-  const dayCounts = days.map(
-    (d) =>
-      staff.filter((m) => (cellShifts.get(m.id)?.get(d)?.length ?? 0) > 0)
-        .length,
-  );
-  const gridCols = `216px repeat(${days.length}, minmax(132px,1fr))`;
+  const boardLeave: Record<string, boolean> = {};
+  for (const m of staff) {
+    for (const d of days) {
+      if (onLeave(m.id, d)) boardLeave[`${m.id}:${d}`] = true;
+    }
+  }
 
   return (
     <>
@@ -436,114 +672,21 @@ export default async function BuildRosterPage({
         </div>
       ) : null}
 
-      {/* Weekly overview grid — staff × day matrix. */}
-      <div className="overflow-hidden rounded-[16px] border border-[var(--color-border)] bg-white shadow-[0_1px_3px_rgba(17,24,39,0.05)]">
-        <div className="max-h-[560px] overflow-auto">
-          <div
-            className="grid min-w-[1060px]"
-            style={{ gridTemplateColumns: gridCols }}
-          >
-            {/* Header row */}
-            <div className="sticky left-0 top-0 z-[6] flex items-end border-b border-r border-[var(--color-border)] bg-white px-[14px] py-3">
-              <span className="font-archivo text-[10.5px] font-bold uppercase tracking-[0.07em] text-[var(--color-text-muted)]">
-                Staff member
-              </span>
-            </div>
-            {days.map((d, i) => {
-              const h = dayHeader(d);
-              return (
-                <div
-                  key={d}
-                  className="sticky top-0 z-[4] border-b border-r border-[var(--color-border-subtle)] bg-[#FAFBFC] px-[11px] py-[11px]"
-                >
-                  <div className="flex items-center justify-between gap-1.5">
-                    <span className="font-archivo text-[13px] font-bold text-[var(--color-ink)]">
-                      {h.name}{" "}
-                      <span className="font-semibold text-[var(--color-text-muted)]">
-                        {h.date}
-                      </span>
-                    </span>
-                    <span className="rounded-full bg-[#F0F6E2] px-2 py-0.5 font-archivo text-[10.5px] font-bold text-[#5A7D17]">
-                      {dayCounts[i]}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Staff rows */}
-            {staff.map((member) => (
-              <RosterRow
-                key={member.id}
-                member={member}
-                days={days}
-                cellShifts={cellShifts.get(member.id) ?? new Map()}
-                onLeave={onLeave}
-                availabilityOf={availabilityOf}
-                schemeFor={schemeForShift}
-              />
-            ))}
-
-            {/* Open shifts footer row */}
-            <div className="sticky left-0 z-[3] flex items-center gap-2.5 border-r border-t border-[var(--color-border)] bg-[#FCFCFB] px-[13px] py-[9px]">
-              <span className="flex h-[31px] w-[31px] flex-shrink-0 items-center justify-center rounded-full border border-dashed border-[#CBD5E1] text-[#94A3B8]">
-                <span className="material-symbols-rounded text-[18px]">
-                  add
-                </span>
-              </span>
-              <div>
-                <div className="text-[13px] font-bold text-[#475569]">
-                  Open shifts
-                </div>
-                <div className="text-[11px] text-[var(--color-text-muted)]">
-                  Unassigned
-                </div>
-              </div>
-            </div>
-            {days.map((d) => {
-              const open = openByDate.get(d) ?? [];
-              return (
-                <div
-                  key={`open-${d}`}
-                  className="border-r border-t border-[var(--color-border)] bg-[#FCFCFB] p-[5px]"
-                >
-                  {open.length === 0 ? (
-                    <div className="min-h-[62px]" />
-                  ) : (
-                    open.map((s) => {
-                      const scheme = schemeForShift(s);
-                      return (
-                        <div
-                          key={s.id}
-                          className="mb-1 flex min-h-[62px] flex-col gap-0.5 rounded-[8px] border-[1.5px] border-dashed border-[#CBD5E1] px-[9px] py-2"
-                          style={{
-                            background:
-                              "repeating-linear-gradient(135deg,#fff,#fff 9px,#FAFBFC 9px,#FAFBFC 18px)",
-                            borderLeftColor: scheme.bar,
-                          }}
-                        >
-                          <div className="font-archivo text-[12px] font-bold text-[#475569]">
-                            Open · {s.label}
-                          </div>
-                          <div className="text-[11px] text-[#94A3B8]">
-                            {formatTimeOnly(s.startTime)} –{" "}
-                            {formatTimeOnly(s.endTime)}
-                          </div>
-                          <div className="mt-auto text-[10.5px] font-bold text-[#4D7C0F]">
-                            0 claimed · assign below
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      <RosterLegend />
+      {/* Weekly board — drag-and-drop staff × day grid. */}
+      <RosterBoard
+        days={days}
+        staff={boardStaff}
+        shifts={boardShifts}
+        assignments={boardAssignments}
+        availability={boardAvailability}
+        leave={boardLeave}
+        moveAction={moveAssignmentAction}
+        assignAction={assignOpenShiftAction}
+        unassignAction={unassignAction}
+        scheduleAction={setScheduleAction}
+        acceptSuggestionAction={acceptSuggestionBoardAction}
+        clearSuggestionAction={clearSuggestionBoardAction}
+      />
 
       {/* Assignment editor — the interactive tool (tap names to roster). */}
       <div className="mt-8">
@@ -773,191 +916,5 @@ export default async function BuildRosterPage({
         </Link>
       </div>
     </>
-  );
-}
-
-/**
- * One staff row of the weekly matrix: a sticky name cell + a shift/leave/empty
- * cell per day. Presentational; assignment happens in the editor below the grid.
- */
-function RosterRow({
-  member,
-  days,
-  cellShifts,
-  onLeave,
-  availabilityOf,
-  schemeFor,
-}: {
-  member: { id: string; name: string; rateLabel?: string | null };
-  days: string[];
-  cellShifts: Map<
-    string,
-    {
-      id: string;
-      label: string;
-      templateId: string | null;
-      startTime: string;
-      endTime: string;
-      date: string;
-    }[]
-  >;
-  onLeave: (staffId: string, date: string) => boolean;
-  availabilityOf: (shiftId: string, staffId: string) => Availability;
-  schemeFor: (s: { templateId: string | null; label: string }) => ShiftColors;
-}) {
-  const availDot: Record<Availability, string> = {
-    yes: "#16A34A",
-    no: "#D97706",
-    unknown: "#9CA3AF",
-  };
-  return (
-    <>
-      <div className="sticky left-0 z-[3] flex items-center gap-2.5 border-b border-r border-[var(--color-border)] bg-white px-[13px] py-[9px]">
-        <Avatar name={member.name} colorKey={member.id} size={31} />
-        <div className="min-w-0">
-          <div className="truncate text-[13px] font-semibold text-[var(--color-ink)]">
-            {member.name}
-          </div>
-          {member.rateLabel ? (
-            <div className="text-[11px] text-[var(--color-text-secondary)]">
-              {member.rateLabel}
-            </div>
-          ) : null}
-        </div>
-      </div>
-      {days.map((d) => {
-        const shiftsHere = cellShifts.get(d) ?? [];
-        const leaveHere = onLeave(member.id, d);
-        return (
-          <div
-            key={`${member.id}-${d}`}
-            className="min-h-[76px] border-b border-r border-[var(--color-border-subtle)] bg-white p-[5px]"
-          >
-            {shiftsHere.length > 0 ? (
-              shiftsHere.map((s) => {
-                const scheme = schemeFor(s);
-                const dot = availDot[availabilityOf(s.id, member.id)];
-                return (
-                  <div
-                    key={s.id}
-                    className="relative mb-1 min-h-[62px] rounded-[8px] px-[9px] py-2 transition-transform hover:-translate-y-px hover:shadow-[0_5px_14px_rgba(17,24,39,0.11)]"
-                    style={{
-                      backgroundColor: scheme.bg,
-                      borderLeft: `3px solid ${scheme.bar}`,
-                    }}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="absolute right-2 top-2 h-[9px] w-[9px] rounded-full"
-                      style={{ backgroundColor: dot }}
-                    />
-                    <div
-                      className="font-archivo text-[12.5px] font-bold tracking-[0.01em]"
-                      style={{ color: scheme.text }}
-                    >
-                      {s.label}
-                    </div>
-                    <div
-                      className="mt-0.5 text-[11px] font-medium"
-                      style={{ color: scheme.text, opacity: 0.8 }}
-                    >
-                      {formatTimeOnly(s.startTime)} –{" "}
-                      {formatTimeOnly(s.endTime)}
-                    </div>
-                  </div>
-                );
-              })
-            ) : leaveHere ? (
-              <div
-                className="flex min-h-[62px] flex-col justify-center rounded-[8px] border border-[#EAECEF] px-[9px] py-2"
-                style={{
-                  background:
-                    "repeating-linear-gradient(135deg,#F4F5F7,#F4F5F7 7px,#EAECEF 7px,#EAECEF 14px)",
-                }}
-              >
-                <div className="font-archivo text-[11px] font-bold uppercase tracking-[0.05em] text-[#9097A1]">
-                  On leave
-                </div>
-                <div className="mt-0.5 text-[10.5px] text-[#A8AEB8]">
-                  Approved
-                </div>
-              </div>
-            ) : (
-              <div className="flex h-full min-h-[62px] items-center justify-center rounded-[8px] text-[20px] text-[#E2E5EA]">
-                +
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </>
-  );
-}
-
-/**
- * Visual key for the builder: shift-type colours, availability dots and the
- * on-leave pattern. Presentational only; colours come from the pure
- * shiftColorScheme helper so they stay in sync with the cards above.
- */
-function RosterLegend() {
-  const shiftTypes = [
-    { label: "Morning", name: "Morning" },
-    { label: "Afternoon", name: "Afternoon" },
-    { label: "Close", name: "Close" },
-    { label: "Split", name: "Split" },
-  ];
-  const dots = [
-    { label: "Available", color: "#16A34A" },
-    { label: "Partial", color: "#D97706" },
-    { label: "No response", color: "#9CA3AF" },
-  ];
-  return (
-    <div className="mt-[15px] flex flex-wrap items-center gap-[18px] text-[12px] text-[var(--color-text-secondary)]">
-      {shiftTypes.map((t) => {
-        const scheme = shiftColorScheme(t.name);
-        return (
-          <span key={t.label} className="inline-flex items-center gap-1.5">
-            <span
-              aria-hidden="true"
-              className="inline-block h-[13px] w-[13px] rounded-[4px]"
-              style={{
-                backgroundColor: scheme.bg,
-                borderLeft: `3px solid ${scheme.bar}`,
-              }}
-            />
-            {t.label}
-          </span>
-        );
-      })}
-      <span
-        aria-hidden="true"
-        className="h-[14px] w-px bg-[var(--color-border)]"
-      />
-      {dots.map((d) => (
-        <span key={d.label} className="inline-flex items-center gap-1.5">
-          <span
-            aria-hidden="true"
-            className="inline-block h-[9px] w-[9px] rounded-full"
-            style={{ backgroundColor: d.color }}
-          />
-          {d.label}
-        </span>
-      ))}
-      <span
-        aria-hidden="true"
-        className="h-[14px] w-px bg-[var(--color-border)]"
-      />
-      <span className="inline-flex items-center gap-1.5">
-        <span
-          aria-hidden="true"
-          className="inline-block h-[13px] w-[14px] rounded-[4px] border border-[#EAECEF]"
-          style={{
-            background:
-              "repeating-linear-gradient(135deg,#F4F5F7,#F4F5F7 4px,#EAECEF 4px,#EAECEF 8px)",
-          }}
-        />
-        On leave
-      </span>
-    </div>
   );
 }
