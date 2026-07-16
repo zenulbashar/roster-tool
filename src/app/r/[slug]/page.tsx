@@ -4,6 +4,7 @@ import { businesses } from "@/lib/db/schema";
 import { findPublishedBySlug } from "@/lib/tenant/public-access";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { formatDateOnly, formatTimeOnly } from "@/lib/time";
+import { resolveSchedule } from "@/lib/roster-schedule";
 import { resolveShiftColors } from "@/lib/shift-colors";
 import { StaffHeader } from "@/components/StaffHeader";
 
@@ -54,7 +55,8 @@ export default async function PublicRosterPage({
       .limit(1),
   ]);
 
-  // Group rows: day -> shift -> staff names.
+  // Group rows: day -> shift -> staff names (with each person's OWN resolved
+  // times when the owner shaped their shift — shown beside their name).
   type ShiftGroup = {
     shiftId: string;
     label: string;
@@ -72,7 +74,23 @@ export default async function PublicRosterPage({
       timeText: `${formatTimeOnly(r.startTime)} – ${formatTimeOnly(r.endTime)}`,
       names: [],
     };
-    if (r.staffName) group.names.push(r.staffName);
+    if (r.staffName) {
+      const sched = resolveSchedule(
+        {
+          startTime: r.assignmentStartTime,
+          endTime: r.assignmentEndTime,
+          breakMinutes: r.assignmentBreakMinutes,
+        },
+        r,
+      );
+      group.names.push(
+        sched.custom
+          ? `${r.staffName} (${formatTimeOnly(sched.start)} – ${formatTimeOnly(sched.end)}${
+              sched.breakMinutes > 0 ? `, ${sched.breakMinutes}m break` : ""
+            })`
+          : r.staffName,
+      );
+    }
     day.set(r.shiftId, group);
     byDay.set(r.date, day);
   }

@@ -27,9 +27,21 @@ export type PastAssignmentLike = {
   startTime: string;
   endTime: string;
   date: string;
+  /** The person's own schedule override last week (null = the shift's times).
+   * Carried into the suggestion so a shaped shift (custom span + break)
+   * reproduces, not just the slot. */
+  assignmentStartTime?: string | null;
+  assignmentEndTime?: string | null;
+  assignmentBreakMinutes?: number | null;
 };
 
-export type DraftSuggestion = { shiftId: string; staffMemberId: string };
+export type DraftSuggestion = {
+  shiftId: string;
+  staffMemberId: string;
+  startTime?: string | null;
+  endTime?: string | null;
+  breakMinutes?: number;
+};
 
 export type DraftCounts = {
   totalShifts: number;
@@ -76,13 +88,26 @@ export function buildDraft(input: {
 }): DraftResult {
   const { currentShifts, lastAssignments, isAvailable, isOnLeave } = input;
 
-  // Last week's staff per shift-type+weekday slot. Insertion order preserved so
-  // suggestions come out deterministically.
-  const lastBySlot = new Map<string, string[]>();
+  // Last week's staff (with their own schedule, if any) per shift-type+weekday
+  // slot. Insertion order preserved so suggestions come out deterministically.
+  type Candidate = {
+    staffMemberId: string;
+    startTime: string | null;
+    endTime: string | null;
+    breakMinutes: number;
+  };
+  const lastBySlot = new Map<string, Candidate[]>();
   for (const a of lastAssignments) {
     const key = shiftTypeKey(a);
     const list = lastBySlot.get(key) ?? [];
-    if (!list.includes(a.staffMemberId)) list.push(a.staffMemberId);
+    if (!list.some((c) => c.staffMemberId === a.staffMemberId)) {
+      list.push({
+        staffMemberId: a.staffMemberId,
+        startTime: a.assignmentStartTime ?? null,
+        endTime: a.assignmentEndTime ?? null,
+        breakMinutes: a.assignmentBreakMinutes ?? 0,
+      });
+    }
     lastBySlot.set(key, list);
   }
 
@@ -93,15 +118,21 @@ export function buildDraft(input: {
   for (const shift of currentShifts) {
     const candidates = lastBySlot.get(shiftTypeKey(shift)) ?? [];
     const available = candidates.filter(
-      (staffId) =>
-        isAvailable(shift.id, staffId) &&
-        !(isOnLeave?.(shift.id, staffId) ?? false),
+      (c) =>
+        isAvailable(shift.id, c.staffMemberId) &&
+        !(isOnLeave?.(shift.id, c.staffMemberId) ?? false),
     );
 
     if (available.length > 0) {
       suggestedShifts += 1;
-      for (const staffMemberId of available) {
-        suggestions.push({ shiftId: shift.id, staffMemberId });
+      for (const c of available) {
+        suggestions.push({
+          shiftId: shift.id,
+          staffMemberId: c.staffMemberId,
+          startTime: c.startTime,
+          endTime: c.endTime,
+          breakMinutes: c.breakMinutes,
+        });
       }
     } else if (candidates.length > 0) {
       // Someone did this slot last week but none of them are free now.

@@ -65,7 +65,7 @@ describe("buildDraft", () => {
       lastAssignments: [lastSatMorningAva],
       isAvailable: () => true,
     });
-    expect(suggestions).toEqual([
+    expect(suggestions).toMatchObject([
       { shiftId: "cur-sat-morning", staffMemberId: "ava" },
     ]);
     expect(counts).toMatchObject({
@@ -82,7 +82,7 @@ describe("buildDraft", () => {
       lastAssignments: [lastSatMorningAva],
       isAvailable: () => false,
     });
-    expect(suggestions).toEqual([]);
+    expect(suggestions).toMatchObject([]);
     expect(counts).toMatchObject({
       totalShifts: 1,
       suggestedShifts: 0,
@@ -97,7 +97,7 @@ describe("buildDraft", () => {
       lastAssignments: [], // nobody did this slot last week
       isAvailable: () => true,
     });
-    expect(suggestions).toEqual([]);
+    expect(suggestions).toMatchObject([]);
     expect(counts).toMatchObject({
       suggestedShifts: 0,
       blankShifts: 1,
@@ -112,7 +112,7 @@ describe("buildDraft", () => {
       lastAssignments: [lastMonMorningCal],
       isAvailable: () => true,
     });
-    expect(suggestions).toEqual([]);
+    expect(suggestions).toMatchObject([]);
   });
 
   it("only suggests available people for a mixed week", () => {
@@ -126,7 +126,7 @@ describe("buildDraft", () => {
       // Ava + Cal free, Ben not.
       isAvailable: (_shiftId, staffId) => staffId !== "ben",
     });
-    expect(suggestions).toEqual([
+    expect(suggestions).toMatchObject([
       { shiftId: "cur-sat-morning", staffMemberId: "ava" },
       { shiftId: "cur-mon-morning", staffMemberId: "cal" },
     ]);
@@ -144,8 +144,49 @@ describe("buildDraft", () => {
       lastAssignments: [{ ...lastSatMorningAva, templateId: null }],
       isAvailable: () => true,
     });
-    expect(suggestions).toEqual([
+    expect(suggestions).toMatchObject([
       { shiftId: "cur-sat-morning", staffMemberId: "ava" },
+    ]);
+  });
+
+  it("carries last week's per-person schedule (custom span + break) into the suggestion", () => {
+    const { suggestions } = buildDraft({
+      currentShifts: [satMorning],
+      lastAssignments: [
+        {
+          ...lastSatMorningAva,
+          assignmentStartTime: "09:00:00",
+          assignmentEndTime: "21:00:00",
+          assignmentBreakMinutes: 60,
+        },
+      ],
+      isAvailable: () => true,
+    });
+    expect(suggestions).toEqual([
+      {
+        shiftId: "cur-sat-morning",
+        staffMemberId: "ava",
+        startTime: "09:00:00",
+        endTime: "21:00:00",
+        breakMinutes: 60,
+      },
+    ]);
+  });
+
+  it("suggests null schedule when last week had no override", () => {
+    const { suggestions } = buildDraft({
+      currentShifts: [satMorning],
+      lastAssignments: [lastSatMorningAva],
+      isAvailable: () => true,
+    });
+    expect(suggestions).toEqual([
+      {
+        shiftId: "cur-sat-morning",
+        staffMemberId: "ava",
+        startTime: null,
+        endTime: null,
+        breakMinutes: 0,
+      },
     ]);
   });
 });

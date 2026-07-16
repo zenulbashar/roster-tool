@@ -34,6 +34,7 @@ import {
   formatTimeOnly,
   businessDateOf,
 } from "@/lib/time";
+import { resolveSchedule } from "@/lib/roster-schedule";
 import { leaveTypeLabel, certDisplayLabel } from "@/lib/labels";
 import { dueReminderStage, daysUntil, expiryPhrase } from "@/lib/certification";
 import {
@@ -235,11 +236,27 @@ export async function handlePublishedRoster(
   const rows = await repo.rosterRows(payload.rosterPeriodId);
   const mine = rows
     .filter((r) => r.staffMemberId === payload.staffMemberId)
-    .map((r) => ({
-      dayText: formatDateOnly(r.date),
-      label: r.label,
-      timeText: `${formatTimeOnly(r.startTime)} – ${formatTimeOnly(r.endTime)}`,
-    }));
+    .map((r) => {
+      // This person's own resolved times (their assignment override when the
+      // owner shaped their shift in the builder, else the shift's times).
+      const sched = resolveSchedule(
+        {
+          startTime: r.assignmentStartTime,
+          endTime: r.assignmentEndTime,
+          breakMinutes: r.assignmentBreakMinutes,
+        },
+        r,
+      );
+      return {
+        dayText: formatDateOnly(r.date),
+        label: r.label,
+        timeText: `${formatTimeOnly(sched.start)} – ${formatTimeOnly(sched.end)}${
+          sched.breakMinutes > 0
+            ? ` (${sched.breakMinutes} min unpaid break)`
+            : ""
+        }`,
+      };
+    });
 
   const email = publishedRosterEmail({
     businessName: period.businessName,

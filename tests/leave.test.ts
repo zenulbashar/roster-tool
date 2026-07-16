@@ -90,7 +90,9 @@ describe("buildDraft skips on-leave staff", () => {
       isAvailable: () => true,
       isOnLeave: () => false,
     });
-    expect(suggestions).toEqual([{ shiftId: "shift1", staffMemberId: "ava" }]);
+    expect(suggestions).toMatchObject([
+      { shiftId: "shift1", staffMemberId: "ava" },
+    ]);
   });
 
   it("does NOT suggest a person on approved leave that day", () => {

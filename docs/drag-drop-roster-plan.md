@@ -1,7 +1,18 @@
 # Drag-and-drop roster builder — research & plan
 
-Status: **proposal / awaiting scope sign-off.** Branch:
-`claude/roster-drag-drop-calendar-x7r948`.
+Status: **BUILT (M31 — both phases, owner chose "Full timeline").** Branch:
+`claude/roster-drag-drop-calendar-x7r948`. What shipped vs this plan: Phase 1
+as specced (drag-to-rearrange via `RosterBoard` + @dnd-kit, colour-by-employee
+with an Employee/Type toggle, `chooseTargetShift` drop resolution, atomic
+`moveAssignment`, tap editor kept as the accessible fallback); Phase 2 as a
+**per-assignment schedule editor** (nullable
+`roster_assignment.start_time`/`end_time`/`break_minutes`, migration `0028`)
+opened by tapping a chip — drag handles + steppers rather than a full week
+time-axis, with the proportional span bar on each chip giving the
+length-of-time visual. §4.2 ripple decisions taken: availability stays
+per-shift; public roster + publish emails show resolved per-person times;
+draft-from-last-week copies the shaped schedule; CSV/report/Xero remain
+timesheet-only.
 
 Owner ask (paraphrased): while building a roster, let the owner drag an employee
 from one day to another, resize a shift's length, and drop a 30/60-min break

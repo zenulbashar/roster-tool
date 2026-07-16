@@ -12,16 +12,12 @@ import { formatDateOnly, formatTimeOnly } from "@/lib/time";
 import { periodStatusLabel, rosterBuildVerb } from "@/lib/labels";
 import { Badge, Banner, Button, Card } from "@/components/ui";
 import { CopyButton } from "@/components/CopyButton";
-import { Avatar } from "@/components/ui";
-import {
-  resolveShiftColors,
-  shiftColorScheme,
-  type ShiftColors,
-} from "@/lib/shift-colors";
+import { RosterBoard } from "@/components/RosterBoard";
+import { z } from "zod";
+import { resolveShiftColors, shiftColorScheme } from "@/lib/shift-colors";
+import { validateScheduleEdit } from "@/lib/roster-schedule";
 
 type Availability = "yes" | "no" | "unknown";
-
-const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /** Inclusive list of `YYYY-MM-DD` dates from start to end (UTC-safe). */
 function eachDate(start: string, end: string): string[] {
@@ -32,15 +28,6 @@ function eachDate(start: string, end: string): string[] {
     out.push(t.toISOString().slice(0, 10));
   }
   return out;
-}
-
-/** "Mon 23" style day header from a `YYYY-MM-DD` string. */
-function dayHeader(date: string): { name: string; date: string } {
-  const d = new Date(`${date}T00:00:00Z`);
-  return {
-    name: WEEKDAY_SHORT[d.getUTCDay()] ?? "",
-    date: String(d.getUTCDate()),
-  };
 }
 
 export default async function BuildRosterPage({
@@ -249,6 +236,194 @@ export default async function BuildRosterPage({
     revalidatePath(`/app/periods/${id}/build`);
   }
 
+  // --- Interactive board actions (typed; return {ok,error}) ------------------
+  // Each re-derives businessId from the owner session and re-validates that the
+  // shift(s) belong to THIS period before mutating — never trusting the client.
+
+  async function moveAction(input: {
+    fromShiftId: string;
+    toShiftId: string;
+    staffMemberId: string;
+  }) {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const [from, to] = await Promise.all([
+      repo.getShift(input.fromShiftId),
+      repo.getShift(input.toShiftId),
+    ]);
+    if (
+      !from ||
+      !to ||
+      from.rosterPeriodId !== id ||
+      to.rosterPeriodId !== id
+    ) {
+      return { ok: false, error: "That shift couldn't be moved." };
+    }
+    const row = await repo.moveAssignment(input);
+    if (!row) return { ok: false, error: "That shift couldn't be moved." };
+    revalidatePath(`/app/periods/${id}/build`);
+    return { ok: true };
+  }
+
+  async function moveToNewDayAction(input: {
+    fromShiftId: string;
+    date: string;
+    staffMemberId: string;
+  }) {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const period = await repo.getPeriod(id);
+    if (!period) return { ok: false, error: "Roster not found." };
+    if (!eachDate(period.startDate, period.endDate).includes(input.date)) {
+      return { ok: false, error: "That day isn't in this roster." };
+    }
+    const src = await repo.getShift(input.fromShiftId);
+    if (!src || src.rosterPeriodId !== id) {
+      return { ok: false, error: "Shift not found." };
+    }
+    const [created] = await repo.createShifts([
+      {
+        rosterPeriodId: id,
+        templateId: src.templateId,
+        date: input.date,
+        label: src.label,
+        startTime: src.startTime,
+        endTime: src.endTime,
+      },
+    ]);
+    if (!created) return { ok: false, error: "Couldn't create the shift." };
+    const row = await repo.moveAssignment({
+      fromShiftId: input.fromShiftId,
+      toShiftId: created.id,
+      staffMemberId: input.staffMemberId,
+    });
+    if (!row) return { ok: false, error: "Couldn't move them." };
+    revalidatePath(`/app/periods/${id}/build`);
+    return { ok: true };
+  }
+
+  async function assignFromOpenAction(input: {
+    shiftId: string;
+    staffMemberId: string;
+  }) {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const [shift, member] = await Promise.all([
+      repo.getShift(input.shiftId),
+      repo.getStaff(input.staffMemberId),
+    ]);
+    if (!shift || shift.rosterPeriodId !== id || !member) {
+      return { ok: false, error: "That assignment isn't allowed." };
+    }
+    await repo.assign(input.shiftId, input.staffMemberId);
+    revalidatePath(`/app/periods/${id}/build`);
+    return { ok: true };
+  }
+
+  async function unassignAction(input: {
+    shiftId: string;
+    staffMemberId: string;
+  }) {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const shift = await repo.getShift(input.shiftId);
+    if (!shift || shift.rosterPeriodId !== id) {
+      return { ok: false, error: "Shift not found." };
+    }
+    await repo.unassign(input.shiftId, input.staffMemberId);
+    revalidatePath(`/app/periods/${id}/build`);
+    return { ok: true };
+  }
+
+  async function acceptAction(input: {
+    shiftId: string;
+    staffMemberId: string;
+  }) {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const shift = await repo.getShift(input.shiftId);
+    if (!shift || shift.rosterPeriodId !== id) {
+      return { ok: false, error: "Shift not found." };
+    }
+    await repo.acceptSuggestion(input.shiftId, input.staffMemberId);
+    revalidatePath(`/app/periods/${id}/build`);
+    return { ok: true };
+  }
+
+  async function clearAction(input: {
+    shiftId: string;
+    staffMemberId: string;
+  }) {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const shift = await repo.getShift(input.shiftId);
+    if (!shift || shift.rosterPeriodId !== id) {
+      return { ok: false, error: "Shift not found." };
+    }
+    await repo.clearSuggestion(input.shiftId, input.staffMemberId);
+    revalidatePath(`/app/periods/${id}/build`);
+    return { ok: true };
+  }
+
+  async function setScheduleAction(input: {
+    shiftId: string;
+    staffMemberId: string;
+    startMinutes: number | null;
+    endMinutes: number | null;
+    breakMinutes: number;
+  }) {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const parsed = z
+      .object({
+        shiftId: z.string().uuid(),
+        staffMemberId: z.string().uuid(),
+        startMinutes: z.number().int().min(0).max(1440).nullable(),
+        endMinutes: z.number().int().min(0).max(1440).nullable(),
+        breakMinutes: z.number().int().min(0).max(1440),
+      })
+      .safeParse(input);
+    if (!parsed.success) return { ok: false, error: "Invalid times." };
+    const { shiftId, staffMemberId, startMinutes, endMinutes, breakMinutes } =
+      parsed.data;
+    const shift = await repo.getShift(shiftId);
+    if (!shift || shift.rosterPeriodId !== id) {
+      return { ok: false, error: "Shift not found." };
+    }
+    // Null start/end -> revert to the shift's nominal times (clear override).
+    if (startMinutes === null || endMinutes === null) {
+      const row = await repo.setAssignmentSchedule({
+        shiftId,
+        staffMemberId,
+        startTime: null,
+        endTime: null,
+        breakMinutes: 0,
+      });
+      if (!row) return { ok: false, error: "They're not on this shift." };
+      revalidatePath(`/app/periods/${id}/build`);
+      return { ok: true };
+    }
+    const v = validateScheduleEdit({ startMinutes, endMinutes, breakMinutes });
+    if (!v.ok) return { ok: false, error: v.reason };
+    const row = await repo.setAssignmentSchedule({
+      shiftId,
+      staffMemberId,
+      startTime: v.value.start,
+      endTime: v.value.end,
+      breakMinutes: v.value.breakMinutes,
+    });
+    if (!row) return { ok: false, error: "They're not on this shift." };
+    revalidatePath(`/app/periods/${id}/build`);
+    return { ok: true };
+  }
+
   async function publish() {
     "use server";
     const { businessId } = await requireOwner();
@@ -315,34 +490,37 @@ export default async function BuildRosterPage({
         })
       : null;
 
-  // --- Weekly matrix (the design's hero grid) ---------------------------------
+  // --- Interactive board data (the design's hero grid, now drag-and-drop) -----
   const days = eachDate(period.startDate, period.endDate);
-  // cellShifts[staffId][date] = confirmed shifts that staff member holds that day
-  const cellShifts = new Map<string, Map<string, typeof shifts>>();
-  // openByDate[date] = shifts with no confirmed staff that day
-  const openByDate = new Map<string, typeof shifts>();
-  for (const s of shifts) {
-    const conf = confirmed.get(s.id);
-    if (conf && conf.size > 0) {
-      for (const staffId of conf) {
-        const perStaff = cellShifts.get(staffId) ?? new Map();
-        const list = perStaff.get(s.date) ?? [];
-        list.push(s);
-        perStaff.set(s.date, list);
-        cellShifts.set(staffId, perStaff);
-      }
-    } else {
-      const list = openByDate.get(s.date) ?? [];
-      list.push(s);
-      openByDate.set(s.date, list);
+  const boardStaff = staff.map((m) => ({
+    id: m.id,
+    name: m.name,
+    rateLabel: m.rateLabel ?? null,
+  }));
+  const boardShifts = shifts.map((s) => ({
+    id: s.id,
+    date: s.date,
+    templateId: s.templateId,
+    label: s.label,
+    startTime: s.startTime,
+    endTime: s.endTime,
+    color: s.templateId ? (colorByTemplateId.get(s.templateId) ?? null) : null,
+  }));
+  const boardAssignments = assignments.map((a) => ({
+    shiftId: a.shiftId,
+    staffMemberId: a.staffMemberId,
+    status: a.status,
+    startTime: a.startTime,
+    endTime: a.endTime,
+    breakMinutes: a.breakMinutes,
+  }));
+  // `${staffId}:${date}` keys for the on-leave cells.
+  const leaveKeys: string[] = [];
+  for (const m of staff) {
+    for (const d of days) {
+      if (onLeave(m.id, d)) leaveKeys.push(`${m.id}:${d}`);
     }
   }
-  const dayCounts = days.map(
-    (d) =>
-      staff.filter((m) => (cellShifts.get(m.id)?.get(d)?.length ?? 0) > 0)
-        .length,
-  );
-  const gridCols = `216px repeat(${days.length}, minmax(132px,1fr))`;
 
   return (
     <>
@@ -436,112 +614,23 @@ export default async function BuildRosterPage({
         </div>
       ) : null}
 
-      {/* Weekly overview grid — staff × day matrix. */}
-      <div className="overflow-hidden rounded-[16px] border border-[var(--color-border)] bg-white shadow-[0_1px_3px_rgba(17,24,39,0.05)]">
-        <div className="max-h-[560px] overflow-auto">
-          <div
-            className="grid min-w-[1060px]"
-            style={{ gridTemplateColumns: gridCols }}
-          >
-            {/* Header row */}
-            <div className="sticky left-0 top-0 z-[6] flex items-end border-b border-r border-[var(--color-border)] bg-white px-[14px] py-3">
-              <span className="font-archivo text-[10.5px] font-bold uppercase tracking-[0.07em] text-[var(--color-text-muted)]">
-                Staff member
-              </span>
-            </div>
-            {days.map((d, i) => {
-              const h = dayHeader(d);
-              return (
-                <div
-                  key={d}
-                  className="sticky top-0 z-[4] border-b border-r border-[var(--color-border-subtle)] bg-[#FAFBFC] px-[11px] py-[11px]"
-                >
-                  <div className="flex items-center justify-between gap-1.5">
-                    <span className="font-archivo text-[13px] font-bold text-[var(--color-ink)]">
-                      {h.name}{" "}
-                      <span className="font-semibold text-[var(--color-text-muted)]">
-                        {h.date}
-                      </span>
-                    </span>
-                    <span className="rounded-full bg-[#F0F6E2] px-2 py-0.5 font-archivo text-[10.5px] font-bold text-[#5A7D17]">
-                      {dayCounts[i]}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Staff rows */}
-            {staff.map((member) => (
-              <RosterRow
-                key={member.id}
-                member={member}
-                days={days}
-                cellShifts={cellShifts.get(member.id) ?? new Map()}
-                onLeave={onLeave}
-                availabilityOf={availabilityOf}
-                schemeFor={schemeForShift}
-              />
-            ))}
-
-            {/* Open shifts footer row */}
-            <div className="sticky left-0 z-[3] flex items-center gap-2.5 border-r border-t border-[var(--color-border)] bg-[#FCFCFB] px-[13px] py-[9px]">
-              <span className="flex h-[31px] w-[31px] flex-shrink-0 items-center justify-center rounded-full border border-dashed border-[#CBD5E1] text-[#94A3B8]">
-                <span className="material-symbols-rounded text-[18px]">
-                  add
-                </span>
-              </span>
-              <div>
-                <div className="text-[13px] font-bold text-[#475569]">
-                  Open shifts
-                </div>
-                <div className="text-[11px] text-[var(--color-text-muted)]">
-                  Unassigned
-                </div>
-              </div>
-            </div>
-            {days.map((d) => {
-              const open = openByDate.get(d) ?? [];
-              return (
-                <div
-                  key={`open-${d}`}
-                  className="border-r border-t border-[var(--color-border)] bg-[#FCFCFB] p-[5px]"
-                >
-                  {open.length === 0 ? (
-                    <div className="min-h-[62px]" />
-                  ) : (
-                    open.map((s) => {
-                      const scheme = schemeForShift(s);
-                      return (
-                        <div
-                          key={s.id}
-                          className="mb-1 flex min-h-[62px] flex-col gap-0.5 rounded-[8px] border-[1.5px] border-dashed border-[#CBD5E1] px-[9px] py-2"
-                          style={{
-                            background:
-                              "repeating-linear-gradient(135deg,#fff,#fff 9px,#FAFBFC 9px,#FAFBFC 18px)",
-                            borderLeftColor: scheme.bar,
-                          }}
-                        >
-                          <div className="font-archivo text-[12px] font-bold text-[#475569]">
-                            Open · {s.label}
-                          </div>
-                          <div className="text-[11px] text-[#94A3B8]">
-                            {formatTimeOnly(s.startTime)} –{" "}
-                            {formatTimeOnly(s.endTime)}
-                          </div>
-                          <div className="mt-auto text-[10.5px] font-bold text-[#4D7C0F]">
-                            0 claimed · assign below
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
+      {/* Weekly board — drag-and-drop staff × day matrix. */}
+      <RosterBoard
+        periodId={id}
+        days={days}
+        staff={boardStaff}
+        shifts={boardShifts}
+        assignments={boardAssignments}
+        leaveKeys={leaveKeys}
+        canEdit={!isPublished}
+        onMove={moveAction}
+        onMoveToNewDay={moveToNewDayAction}
+        onAssignFromOpen={assignFromOpenAction}
+        onUnassign={unassignAction}
+        onAccept={acceptAction}
+        onClear={clearAction}
+        onSetSchedule={setScheduleAction}
+      />
 
       <RosterLegend />
 
@@ -772,124 +861,6 @@ export default async function BuildRosterPage({
           ← Back to roster
         </Link>
       </div>
-    </>
-  );
-}
-
-/**
- * One staff row of the weekly matrix: a sticky name cell + a shift/leave/empty
- * cell per day. Presentational; assignment happens in the editor below the grid.
- */
-function RosterRow({
-  member,
-  days,
-  cellShifts,
-  onLeave,
-  availabilityOf,
-  schemeFor,
-}: {
-  member: { id: string; name: string; rateLabel?: string | null };
-  days: string[];
-  cellShifts: Map<
-    string,
-    {
-      id: string;
-      label: string;
-      templateId: string | null;
-      startTime: string;
-      endTime: string;
-      date: string;
-    }[]
-  >;
-  onLeave: (staffId: string, date: string) => boolean;
-  availabilityOf: (shiftId: string, staffId: string) => Availability;
-  schemeFor: (s: { templateId: string | null; label: string }) => ShiftColors;
-}) {
-  const availDot: Record<Availability, string> = {
-    yes: "#16A34A",
-    no: "#D97706",
-    unknown: "#9CA3AF",
-  };
-  return (
-    <>
-      <div className="sticky left-0 z-[3] flex items-center gap-2.5 border-b border-r border-[var(--color-border)] bg-white px-[13px] py-[9px]">
-        <Avatar name={member.name} colorKey={member.id} size={31} />
-        <div className="min-w-0">
-          <div className="truncate text-[13px] font-semibold text-[var(--color-ink)]">
-            {member.name}
-          </div>
-          {member.rateLabel ? (
-            <div className="text-[11px] text-[var(--color-text-secondary)]">
-              {member.rateLabel}
-            </div>
-          ) : null}
-        </div>
-      </div>
-      {days.map((d) => {
-        const shiftsHere = cellShifts.get(d) ?? [];
-        const leaveHere = onLeave(member.id, d);
-        return (
-          <div
-            key={`${member.id}-${d}`}
-            className="min-h-[76px] border-b border-r border-[var(--color-border-subtle)] bg-white p-[5px]"
-          >
-            {shiftsHere.length > 0 ? (
-              shiftsHere.map((s) => {
-                const scheme = schemeFor(s);
-                const dot = availDot[availabilityOf(s.id, member.id)];
-                return (
-                  <div
-                    key={s.id}
-                    className="relative mb-1 min-h-[62px] rounded-[8px] px-[9px] py-2 transition-transform hover:-translate-y-px hover:shadow-[0_5px_14px_rgba(17,24,39,0.11)]"
-                    style={{
-                      backgroundColor: scheme.bg,
-                      borderLeft: `3px solid ${scheme.bar}`,
-                    }}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="absolute right-2 top-2 h-[9px] w-[9px] rounded-full"
-                      style={{ backgroundColor: dot }}
-                    />
-                    <div
-                      className="font-archivo text-[12.5px] font-bold tracking-[0.01em]"
-                      style={{ color: scheme.text }}
-                    >
-                      {s.label}
-                    </div>
-                    <div
-                      className="mt-0.5 text-[11px] font-medium"
-                      style={{ color: scheme.text, opacity: 0.8 }}
-                    >
-                      {formatTimeOnly(s.startTime)} –{" "}
-                      {formatTimeOnly(s.endTime)}
-                    </div>
-                  </div>
-                );
-              })
-            ) : leaveHere ? (
-              <div
-                className="flex min-h-[62px] flex-col justify-center rounded-[8px] border border-[#EAECEF] px-[9px] py-2"
-                style={{
-                  background:
-                    "repeating-linear-gradient(135deg,#F4F5F7,#F4F5F7 7px,#EAECEF 7px,#EAECEF 14px)",
-                }}
-              >
-                <div className="font-archivo text-[11px] font-bold uppercase tracking-[0.05em] text-[#9097A1]">
-                  On leave
-                </div>
-                <div className="mt-0.5 text-[10.5px] text-[#A8AEB8]">
-                  Approved
-                </div>
-              </div>
-            ) : (
-              <div className="flex h-full min-h-[62px] items-center justify-center rounded-[8px] text-[20px] text-[#E2E5EA]">
-                +
-              </div>
-            )}
-          </div>
-        );
-      })}
     </>
   );
 }

@@ -869,13 +869,29 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
      * week". Never overwrites an existing assignment (confirmed or suggested).
      */
     async createSuggestedAssignments(
-      rows: Array<{ shiftId: string; staffMemberId: string }>,
+      rows: Array<{
+        shiftId: string;
+        staffMemberId: string;
+        // Optional per-person schedule carried over from last week's shaped
+        // shift, so the suggestion reproduces the custom span + break too.
+        startTime?: string | null;
+        endTime?: string | null;
+        breakMinutes?: number;
+      }>,
     ) {
       if (rows.length === 0) return [];
       return database
         .insert(rosterAssignments)
         .values(
-          rows.map((r) => ({ ...r, businessId, status: "suggested" as const })),
+          rows.map((r) => ({
+            shiftId: r.shiftId,
+            staffMemberId: r.staffMemberId,
+            startTime: r.startTime ?? null,
+            endTime: r.endTime ?? null,
+            breakMinutes: r.breakMinutes ?? 0,
+            businessId,
+            status: "suggested" as const,
+          })),
         )
         .onConflictDoNothing({
           target: [rosterAssignments.shiftId, rosterAssignments.staffMemberId],
