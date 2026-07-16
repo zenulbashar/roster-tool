@@ -4,6 +4,7 @@ import { businesses } from "@/lib/db/schema";
 import { findPublishedBySlug } from "@/lib/tenant/public-access";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { formatDateOnly, formatTimeOnly } from "@/lib/time";
+import { resolveSchedule } from "@/lib/assignment-schedule";
 import { resolveShiftColors } from "@/lib/shift-colors";
 import { StaffHeader } from "@/components/StaffHeader";
 
@@ -54,13 +55,15 @@ export default async function PublicRosterPage({
       .limit(1),
   ]);
 
-  // Group rows: day -> shift -> staff names.
+  // Group rows: day -> shift -> staff names. A person with their own times on
+  // the shift (a builder override) shows them beside their name; everyone
+  // else is covered by the shift's own time text.
   type ShiftGroup = {
     shiftId: string;
     label: string;
     color: string | null;
     timeText: string;
-    names: string[];
+    names: Array<{ name: string; note: string | null }>;
   };
   const byDay = new Map<string, Map<string, ShiftGroup>>();
   for (const r of rows) {
@@ -72,7 +75,27 @@ export default async function PublicRosterPage({
       timeText: `${formatTimeOnly(r.startTime)} – ${formatTimeOnly(r.endTime)}`,
       names: [],
     };
-    if (r.staffName) group.names.push(r.staffName);
+    if (r.staffName) {
+      const schedule = resolveSchedule(r, {
+        startTime: r.assignmentStartTime,
+        endTime: r.assignmentEndTime,
+        breakMinutes: r.assignmentBreakMinutes ?? 0,
+        breakStart: null,
+      });
+      const parts: string[] = [];
+      if (schedule.overridden) {
+        parts.push(
+          `${formatTimeOnly(schedule.startTime)} – ${formatTimeOnly(schedule.endTime)}`,
+        );
+      }
+      if (schedule.breakMinutes > 0) {
+        parts.push(`${schedule.breakMinutes} min break`);
+      }
+      group.names.push({
+        name: r.staffName,
+        note: parts.length > 0 ? parts.join(", ") : null,
+      });
+    }
     day.set(r.shiftId, group);
     byDay.set(r.date, day);
   }
@@ -124,7 +147,18 @@ export default async function PublicRosterPage({
                       </div>
                       <p className="mt-0.5 text-[13.5px] text-[var(--color-ink)]">
                         {g.names.length > 0 ? (
-                          g.names.join(", ")
+                          g.names.map((n, i) => (
+                            <span key={`${n.name}-${i}`}>
+                              {i > 0 ? ", " : ""}
+                              {n.name}
+                              {n.note ? (
+                                <span className="text-[var(--color-text-secondary)]">
+                                  {" "}
+                                  ({n.note})
+                                </span>
+                              ) : null}
+                            </span>
+                          ))
                         ) : (
                           <span className="text-[var(--color-text-muted)]">
                             Nobody assigned

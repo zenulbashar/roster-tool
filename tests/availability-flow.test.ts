@@ -222,6 +222,29 @@ describe("availability flow", () => {
     expect(msg.html).toContain("public-slug-abc");
   });
 
+  it("the published email shows a person's own times + break when overridden", async () => {
+    const m = await repo.addStaff({ name: "Fay", email: "fay@flow.test" });
+    await repo.assign(shiftIds[1]!, m.id);
+    // The builder stretched Fay's Evening (17:00–22:00) to 15:00–23:00 with a
+    // 30 min break — her email must say HER hours, not the shift's.
+    await repo.setAssignmentSchedule(shiftIds[1]!, m.id, {
+      startTime: "15:00",
+      endTime: "23:00",
+      breakMinutes: 30,
+      breakStart: "19:00",
+    });
+
+    const send = vi.fn().mockResolvedValue(undefined);
+    await handlePublishedRoster(
+      { rosterPeriodId: periodId, staffMemberId: m.id },
+      { send },
+    );
+    const msg = send.mock.calls[0]![0];
+    expect(msg.text).toContain("3 pm – 11 pm");
+    expect(msg.text).toContain("30 min unpaid break");
+    expect(msg.text).not.toContain("5 pm – 10 pm");
+  });
+
   it("tells an unrostered staff member they have no shifts", async () => {
     const m = await repo.addStaff({ name: "Eli", email: "eli@flow.test" });
     const send = vi.fn().mockResolvedValue(undefined);
