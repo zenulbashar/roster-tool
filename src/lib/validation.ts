@@ -74,6 +74,23 @@ export const assignmentMoveSchema = z.object({
     .optional(),
 });
 
+/** A (shift, staff) pair from the roster board (unassign, accept, clear). */
+export const assignmentPairSchema = z.object({
+  shiftId: z.string().uuid(),
+  staffMemberId: z.string().uuid(),
+});
+
+/** An open-shift drop from the roster board: assign, optionally to a day. */
+export const openShiftAssignSchema = z.object({
+  shiftId: z.string().uuid(),
+  staffMemberId: z.string().uuid(),
+  toDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .optional(),
+});
+
 /** One per-day time override: a start/end pair, end after start. */
 export const dayTimeOverrideSchema = z
   .object({ start: hhmm, end: hhmm })

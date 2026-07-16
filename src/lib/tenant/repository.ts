@@ -861,8 +861,10 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       shiftId: string,
       staffMemberId: string,
       schedule: {
-        startTime: string;
-        endTime: string;
+        // Null times with a non-zero break = "the shift's own times, plus a
+        // break" (a break-only assignment, no time override).
+        startTime: string | null;
+        endTime: string | null;
         breakMinutes: number;
         breakStart: string | null;
       } | null,
