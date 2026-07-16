@@ -14,6 +14,12 @@ export type TemplateLike = {
   dayTimeOverrides?: Record<string, { start: string; end: string }> | null;
   /** How many people each instance of this shift needs (default 1). */
   requiredStaff?: number;
+  /**
+   * Optional per-weekday staffing overrides, keyed by ISO weekday ("1".."7")
+   * → that day's required staff ("Friday needs 4"). A day with no entry uses
+   * `requiredStaff`.
+   */
+  dayStaffOverrides?: Record<string, number> | null;
 };
 
 export type GeneratedShift = {
@@ -49,8 +55,10 @@ export function expandTemplatesToShifts(
           startTime: override?.start ?? t.startTime,
           endTime: override?.end ?? t.endTime,
           // Snapshot the staffing target (like label/times) so later template
-          // edits don't rewrite existing rosters.
-          requiredStaff: t.requiredStaff ?? 1,
+          // edits don't rewrite existing rosters; a per-weekday staffing
+          // override wins over the type's default for that day.
+          requiredStaff:
+            t.dayStaffOverrides?.[String(wd)] ?? t.requiredStaff ?? 1,
         };
       });
   });

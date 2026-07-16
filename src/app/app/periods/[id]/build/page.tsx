@@ -91,10 +91,11 @@ export default async function BuildRosterPage({
     sg?: string;
     tot?: string;
     un?: string;
+    sh?: string;
   }>;
 }) {
   const { id } = await params;
-  const { drafted, sg, tot, un } = await searchParams;
+  const { drafted, sg, tot, un, sh } = await searchParams;
   const { businessId } = await requireOwner();
   const repo = createTenantRepo(businessId);
 
@@ -219,13 +220,21 @@ export default async function BuildRosterPage({
       redirect(`/app/periods/${id}/build?drafted=none`);
     }
 
-    const [currentShifts, lastAssignments, responses, leave] =
-      await Promise.all([
-        repo.listShifts(id),
-        repo.assignmentsWithShiftType(last.id),
-        repo.listResponses(id),
-        repo.listApprovedLeaveBetween(period.startDate, period.endDate),
-      ]);
+    const [
+      currentShifts,
+      lastAssignments,
+      responses,
+      leave,
+      activeStaff,
+      currentAssignments,
+    ] = await Promise.all([
+      repo.listShifts(id),
+      repo.assignmentsWithShiftType(last.id),
+      repo.listResponses(id),
+      repo.listApprovedLeaveBetween(period.startDate, period.endDate),
+      repo.listStaff({ activeOnly: true }),
+      repo.listAssignments(id),
+    ]);
 
     // Available = an explicit "yes" response (staff reply or manual pre-fill).
     const availSet = new Set(
@@ -246,12 +255,19 @@ export default async function BuildRosterPage({
         const date = shiftDate.get(shiftId);
         return date ? onLeave(staffId, date) : false;
       },
+      // Fill-to-target: top understaffed shifts up from everyone who said
+      // yes, after last week's crew took their slots.
+      staffIds: activeStaff.map((m) => m.id),
+      existingAssignments: currentAssignments.map((a) => ({
+        shiftId: a.shiftId,
+        staffMemberId: a.staffMemberId,
+      })),
     });
 
     await repo.createSuggestedAssignments(suggestions);
 
     redirect(
-      `/app/periods/${id}/build?drafted=1&sg=${counts.suggestedShifts}&tot=${counts.totalShifts}&un=${counts.blankDueToUnavailable}`,
+      `/app/periods/${id}/build?drafted=1&sg=${counts.suggestedShifts}&tot=${counts.totalShifts}&un=${counts.blankDueToUnavailable}&sh=${counts.shortShifts ?? 0}`,
     );
   }
 
@@ -563,6 +579,7 @@ export default async function BuildRosterPage({
           suggestedShifts: Number(sg ?? 0),
           blankShifts: Number(tot) - Number(sg ?? 0),
           blankDueToUnavailable: Number(un ?? 0),
+          shortShifts: Number(sh ?? 0),
         })
       : null;
 

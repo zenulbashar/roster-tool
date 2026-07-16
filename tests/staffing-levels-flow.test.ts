@@ -56,6 +56,38 @@ describe("staffing levels + multi-staff shifts", () => {
     expect(plain.requiredStaff).toBe(1);
   });
 
+  it("stores per-weekday staffing overrides and expands them onto the right day", async () => {
+    const t = await repoA.addTemplate({
+      label: "Dinner",
+      startTime: "18:00",
+      endTime: "22:00",
+      weekdays: [1, 2, 3, 4, 5, 6, 7],
+      requiredStaff: 2,
+      dayStaffOverrides: { "5": 5 },
+    });
+    expect(t.dayStaffOverrides).toEqual({ "5": 5 });
+
+    const period = await repoA.createPeriod({
+      label: "Override week",
+      // 2026-07-27 (Mon) .. 2026-08-02 (Sun); Friday is 2026-07-31.
+      startDate: "2026-07-27",
+      endDate: "2026-08-02",
+    });
+    const rows = expandTemplatesToShifts(period, [t]).map((r) => ({
+      ...r,
+      rosterPeriodId: period.id,
+    }));
+    const shifts = await repoA.createShifts(rows);
+    expect(shifts.find((s) => s.date === "2026-07-31")?.requiredStaff).toBe(5);
+    expect(shifts.find((s) => s.date === "2026-07-30")?.requiredStaff).toBe(2);
+
+    // Clearing the overrides sticks (null write, mirroring time overrides).
+    const cleared = await repoA.updateTemplate(t.id, {
+      dayStaffOverrides: null,
+    });
+    expect(cleared?.dayStaffOverrides).toBeNull();
+  });
+
   it("expansion snapshots the target onto each concrete shift", async () => {
     const templates = await repoA.listTemplates({ activeOnly: true });
     const period = await repoA.createPeriod({

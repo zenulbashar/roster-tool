@@ -31,6 +31,25 @@ describe("expandTemplatesToShifts", () => {
     });
   });
 
+  it("applies a per-weekday staffing override only on that weekday", () => {
+    // 2025-06-09 Mon .. 2025-06-15 Sun; Friday is 2025-06-13 (ISO weekday 5).
+    const shifts = expandTemplatesToShifts(
+      { startDate: "2025-06-09", endDate: "2025-06-15" },
+      [{ ...morning, requiredStaff: 2, dayStaffOverrides: { "5": 4 } }],
+    );
+    expect(shifts.find((s) => s.date === "2025-06-13")?.requiredStaff).toBe(4);
+    expect(shifts.find((s) => s.date === "2025-06-12")?.requiredStaff).toBe(2);
+  });
+
+  it("ignores a staffing override for a weekday the type doesn't run", () => {
+    const shifts = expandTemplatesToShifts(
+      { startDate: "2025-06-09", endDate: "2025-06-15" },
+      [{ ...weekendEvening, requiredStaff: 2, dayStaffOverrides: { "1": 9 } }],
+    );
+    // Sat + Sun only; the Monday override never materialises.
+    expect(shifts.map((s) => s.requiredStaff)).toEqual([2, 2]);
+  });
+
   it("snapshots the staffing target, defaulting to 1", () => {
     const shifts = expandTemplatesToShifts(
       { startDate: "2025-06-09", endDate: "2025-06-10" },

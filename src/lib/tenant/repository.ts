@@ -266,6 +266,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       color?: string | null;
       dayTimeOverrides?: Record<string, { start: string; end: string }> | null;
       requiredStaff?: number;
+      dayStaffOverrides?: Record<string, number> | null;
     }) {
       const [row] = await database
         .insert(shiftTemplates)
@@ -285,6 +286,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         color: string | null;
         dayTimeOverrides: Record<string, { start: string; end: string }> | null;
         requiredStaff: number;
+        dayStaffOverrides: Record<string, number> | null;
       }>,
     ) {
       const [row] = await database

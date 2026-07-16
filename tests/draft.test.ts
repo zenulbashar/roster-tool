@@ -150,6 +150,110 @@ describe("buildDraft", () => {
   });
 });
 
+describe("buildDraft fill-to-target", () => {
+  const need3: ShiftLike = { ...satMorning, requiredStaff: 3 };
+  const allYes = () => true;
+
+  it("tops up an understaffed shift with available staff after last week's crew", () => {
+    const { suggestions, counts } = buildDraft({
+      currentShifts: [need3],
+      lastAssignments: [lastSatMorningAva],
+      isAvailable: allYes,
+      staffIds: ["ava", "ben", "cal", "dee"],
+    });
+    // Ava (last week) first, then ben + cal fill to the target of 3.
+    expect(suggestions.map((s) => s.staffMemberId)).toEqual([
+      "ava",
+      "ben",
+      "cal",
+    ]);
+    expect(counts.shortShifts).toBe(0);
+  });
+
+  it("never fills beyond the target and never without staffIds", () => {
+    const capped = buildDraft({
+      currentShifts: [{ ...satMorning, requiredStaff: 1 }],
+      lastAssignments: [],
+      isAvailable: allYes,
+      staffIds: ["ava", "ben"],
+    });
+    expect(capped.suggestions).toHaveLength(1);
+
+    const legacy = buildDraft({
+      currentShifts: [need3],
+      lastAssignments: [lastSatMorningAva],
+      isAvailable: allYes,
+    });
+    // No staffIds = the original last-week-only behaviour.
+    expect(legacy.suggestions.map((s) => s.staffMemberId)).toEqual(["ava"]);
+    expect(legacy.counts.shortShifts).toBe(1);
+  });
+
+  it("counts existing assignments toward the target and never re-suggests them", () => {
+    const { suggestions } = buildDraft({
+      currentShifts: [need3],
+      lastAssignments: [],
+      isAvailable: allYes,
+      staffIds: ["ava", "ben", "cal"],
+      existingAssignments: [
+        { shiftId: need3.id, staffMemberId: "ava" },
+        { shiftId: need3.id, staffMemberId: "ben" },
+      ],
+    });
+    expect(suggestions).toEqual([{ shiftId: need3.id, staffMemberId: "cal" }]);
+  });
+
+  it("only tops up with people who explicitly said yes and aren't on leave", () => {
+    const { suggestions, counts } = buildDraft({
+      currentShifts: [need3],
+      lastAssignments: [],
+      isAvailable: (_shift, staffId) => staffId === "ben" || staffId === "cal",
+      isOnLeave: (_shift, staffId) => staffId === "cal",
+      staffIds: ["ava", "ben", "cal", "dee"],
+    });
+    expect(suggestions.map((s) => s.staffMemberId)).toEqual(["ben"]);
+    // Still 2 short of 3 — counted, never guessed.
+    expect(counts.shortShifts).toBe(1);
+  });
+
+  it("spreads top-ups by fewest shifts held this week", () => {
+    // Ava already holds two shifts this week; Ben holds none. Two one-person
+    // shifts need cover: Ben should get the first, then Ava the second (both
+    // are then equally eligible for spreading).
+    const shiftA: ShiftLike = { ...satMorning, id: "a" };
+    const shiftB: ShiftLike = { ...satEvening, id: "b" };
+    const { suggestions } = buildDraft({
+      currentShifts: [shiftA, shiftB],
+      lastAssignments: [],
+      isAvailable: allYes,
+      staffIds: ["ava", "ben"],
+      existingAssignments: [
+        { shiftId: "x1", staffMemberId: "ava" },
+        { shiftId: "x2", staffMemberId: "ava" },
+      ],
+    });
+    expect(suggestions).toEqual([
+      { shiftId: "a", staffMemberId: "ben" },
+      { shiftId: "b", staffMemberId: "ben" },
+    ]);
+    // Ben (load 0 → 1) still beats Ava (load 2) on the second shift.
+  });
+
+  it("summary mentions shifts still below target", () => {
+    expect(
+      draftSummary({
+        totalShifts: 5,
+        suggestedShifts: 4,
+        blankShifts: 1,
+        blankDueToUnavailable: 0,
+        shortShifts: 2,
+      }),
+    ).toBe(
+      "Suggested 4 of 5 shifts based on last week and availability. 2 shifts still below the staff target — no one else said they're available.",
+    );
+  });
+});
+
 describe("draftSummary", () => {
   it("summarises suggestions and unavailable blanks", () => {
     expect(
@@ -160,7 +264,7 @@ describe("draftSummary", () => {
         blankDueToUnavailable: 4,
       }),
     ).toBe(
-      "Suggested 14 of 21 shifts based on last week. 4 shifts left blank — those staff aren't available this week.",
+      "Suggested 14 of 21 shifts based on last week and availability. 4 shifts left blank — those staff aren't available this week.",
     );
   });
 
@@ -172,7 +276,7 @@ describe("draftSummary", () => {
         blankShifts: 0,
         blankDueToUnavailable: 0,
       }),
-    ).toBe("Suggested 10 of 10 shifts based on last week.");
+    ).toBe("Suggested 10 of 10 shifts based on last week and availability.");
   });
 
   it("uses singular wording for one shift", () => {
@@ -184,7 +288,7 @@ describe("draftSummary", () => {
         blankDueToUnavailable: 1,
       }),
     ).toBe(
-      "Suggested 0 of 1 shift based on last week. 1 shift left blank — those staff aren't available this week.",
+      "Suggested 0 of 1 shift based on last week and availability. 1 shift left blank — those staff aren't available this week.",
     );
   });
 });
