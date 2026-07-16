@@ -114,6 +114,22 @@ export const dayTimeOverridesSchema = z
   ])
   .transform((v) => (v && Object.keys(v).length > 0 ? v : null));
 
+/**
+ * How many people a shift needs — a staffing TARGET the builder flags
+ * against, never a hard block. 1–20 covers any small-venue crew.
+ */
+export const requiredStaffSchema = z.coerce
+  .number()
+  .int()
+  .min(1, "A shift needs at least one person")
+  .max(20, "That's more people than a small venue rosters on one shift");
+
+/** The builder's per-shift "needs N people" adjustment. */
+export const shiftRequiredStaffSchema = z.object({
+  shiftId: z.string().uuid(),
+  requiredStaff: requiredStaffSchema,
+});
+
 export const templateSchema = z
   .object({
     label: z.string().trim().min(1, "Please enter a name").max(80),
@@ -124,6 +140,7 @@ export const templateSchema = z
       .min(1, "Pick at least one day"),
     color: shiftColorSchema,
     dayTimeOverrides: dayTimeOverridesSchema,
+    requiredStaff: requiredStaffSchema,
   })
   .refine((t) => t.startTime < t.endTime, {
     message: "End time must be after start time",

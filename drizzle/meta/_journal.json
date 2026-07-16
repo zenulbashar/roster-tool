@@ -204,6 +204,13 @@
       "when": 1784164316913,
       "tag": "0028_fuzzy_scarlet_witch",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1784172350034,
+      "tag": "0029_fresh_sugar_man",
+      "breakpoints": true
     }
   ]
 }

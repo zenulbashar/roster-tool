@@ -536,6 +536,10 @@ export const shiftTemplates = pgTable("shift_template", {
     jsonb("day_time_overrides").$type<
       Record<string, { start: string; end: string }>
     >(),
+  // How many people each instance of this shift needs (hospitality: several
+  // staff share one Friday-night close). A TARGET the builder flags against —
+  // never a hard block. Snapshotted onto each concrete shift at expansion.
+  requiredStaff: integer("required_staff").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -575,6 +579,10 @@ export const shifts = pgTable(
     label: text("label").notNull(),
     startTime: time("start_time").notNull(),
     endTime: time("end_time").notNull(),
+    // Snapshot of the type's required_staff at expansion (like label/times),
+    // owner-adjustable per shift in the builder ("Friday needs one more").
+    // A staffing TARGET the builder flags against; publish is never blocked.
+    requiredStaff: integer("required_staff").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

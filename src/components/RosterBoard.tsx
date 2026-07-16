@@ -71,6 +71,8 @@ export type BoardShift = {
   templateId: string | null;
   startTime: string; // "HH:MM"
   endTime: string;
+  /** Staffing target: how many people this shift needs (≥ 1). */
+  requiredStaff: number;
   scheme: BoardScheme;
   offer: { status: string; claimedByName: string | null } | null;
 };
@@ -296,43 +298,54 @@ export function RosterBoard(props: Props) {
   );
 
   // cell[staffId][date] = that person's assignments that day (with shift).
-  const { cells, openByDate, dayCounts, suggestedCount } = useMemo(() => {
-    const cells = new Map<string, Map<string, BoardAssignment[]>>();
-    const confirmedByShift = new Map<string, number>();
-    let suggestedCount = 0;
-    for (const a of optimistic) {
-      const shift = shiftById.get(a.shiftId);
-      if (!shift) continue;
-      const perStaff = cells.get(a.staffMemberId) ?? new Map();
-      const list = perStaff.get(shift.date) ?? [];
-      list.push(a);
-      perStaff.set(shift.date, list);
-      cells.set(a.staffMemberId, perStaff);
-      if (a.status === "confirmed") {
-        confirmedByShift.set(
-          a.shiftId,
-          (confirmedByShift.get(a.shiftId) ?? 0) + 1,
-        );
-      } else {
-        suggestedCount += 1;
+  const { cells, openByDate, dayCounts, suggestedCount, shortfall } =
+    useMemo(() => {
+      const cells = new Map<string, Map<string, BoardAssignment[]>>();
+      const confirmedByShift = new Map<string, number>();
+      let suggestedCount = 0;
+      for (const a of optimistic) {
+        const shift = shiftById.get(a.shiftId);
+        if (!shift) continue;
+        const perStaff = cells.get(a.staffMemberId) ?? new Map();
+        const list = perStaff.get(shift.date) ?? [];
+        list.push(a);
+        perStaff.set(shift.date, list);
+        cells.set(a.staffMemberId, perStaff);
+        if (a.status === "confirmed") {
+          confirmedByShift.set(
+            a.shiftId,
+            (confirmedByShift.get(a.shiftId) ?? 0) + 1,
+          );
+        } else {
+          suggestedCount += 1;
+        }
       }
-    }
-    const openByDate = new Map<string, BoardShift[]>();
-    for (const s of props.shifts) {
-      if ((confirmedByShift.get(s.id) ?? 0) === 0) {
-        const list = openByDate.get(s.date) ?? [];
-        list.push(s);
-        openByDate.set(s.date, list);
+      // A shift stays in the Open row until it's FULLY staffed — hospitality
+      // shifts often need several people, and "1 of 3 filled" is still open.
+      const openByDate = new Map<
+        string,
+        Array<{ shift: BoardShift; filled: number }>
+      >();
+      let shortfall = 0;
+      for (const s of props.shifts) {
+        const filled = confirmedByShift.get(s.id) ?? 0;
+        if (filled < s.requiredStaff) {
+          const list = openByDate.get(s.date) ?? [];
+          list.push({ shift: s, filled });
+          openByDate.set(s.date, list);
+          shortfall += s.requiredStaff - filled;
+        }
       }
-    }
-    const dayCounts = props.days.map(
-      (d) =>
-        props.staff.filter((m) =>
-          (cells.get(m.id)?.get(d) ?? []).some((a) => a.status === "confirmed"),
-        ).length,
-    );
-    return { cells, openByDate, dayCounts, suggestedCount };
-  }, [optimistic, props.shifts, props.days, props.staff, shiftById]);
+      const dayCounts = props.days.map(
+        (d) =>
+          props.staff.filter((m) =>
+            (cells.get(m.id)?.get(d) ?? []).some(
+              (a) => a.status === "confirmed",
+            ),
+          ).length,
+      );
+      return { cells, openByDate, dayCounts, suggestedCount, shortfall };
+    }, [optimistic, props.shifts, props.days, props.staff, shiftById]);
 
   const chipColors = useCallback(
     (shift: BoardShift, staffId: string): BoardScheme => {
@@ -478,10 +491,21 @@ export function RosterBoard(props: Props) {
     <div>
       {/* Board toolbar: colour mode + hint. */}
       <div className="mb-2.5 flex flex-wrap items-center justify-between gap-3">
-        <p className="text-[12.5px] text-[var(--color-text-secondary)]">
-          Drag a shift to another day or person, or to the Open shifts row to
-          unassign it. Click a shift to change its times or add a break.
-        </p>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <p className="text-[12.5px] text-[var(--color-text-secondary)]">
+            Drag a shift to another day or person, or to the Open shifts row to
+            unassign it. Click a shift to change its times or add a break.
+          </p>
+          {shortfall > 0 ? (
+            <span
+              data-shortfall={shortfall}
+              className="inline-flex items-center gap-1 rounded-full bg-[#FEF3C7] px-2.5 py-1 text-[11.5px] font-bold text-[#92400E]"
+            >
+              <Icon name="group_add" className="text-[15px]" />
+              {shortfall} more {shortfall === 1 ? "person" : "people"} needed
+            </span>
+          ) : null}
+        </div>
         <div
           className="inline-flex overflow-hidden rounded-[9px] border border-[var(--color-border)]"
           role="group"
@@ -1121,7 +1145,7 @@ function OpenCell({
   dragging,
 }: {
   date: string;
-  shifts: BoardShift[];
+  shifts: Array<{ shift: BoardShift; filled: number }>;
   suggestions: BoardAssignment[];
   staffById: Map<string, BoardStaff>;
   dragging: {
@@ -1144,12 +1168,13 @@ function OpenCell({
       {shifts.length === 0 ? (
         <div className="min-h-[62px]" />
       ) : (
-        shifts.map((s) => (
+        shifts.map(({ shift, filled }) => (
           <OpenBlock
-            key={s.id}
-            shift={s}
+            key={shift.id}
+            shift={shift}
+            filled={filled}
             suggestedNames={suggestions
-              .filter((a) => a.shiftId === s.id && a.status === "suggested")
+              .filter((a) => a.shiftId === shift.id && a.status === "suggested")
               .map((a) => staffById.get(a.staffMemberId)?.name ?? "")
               .filter(Boolean)}
           />
@@ -1161,9 +1186,11 @@ function OpenCell({
 
 function OpenBlock({
   shift,
+  filled,
   suggestedNames,
 }: {
   shift: BoardShift;
+  filled: number;
   suggestedNames: string[];
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -1172,6 +1199,7 @@ function OpenBlock({
   const { setNodeRef: setDropRef, isOver } = useDroppable({
     id: `oblock:${shift.id}`,
   });
+  const needed = Math.max(shift.requiredStaff - filled, 0);
   return (
     <div
       ref={(el) => {
@@ -1181,9 +1209,11 @@ function OpenBlock({
       {...listeners}
       {...attributes}
       data-open-block={shift.id}
-      className={`mb-1 flex min-h-[62px] cursor-grab flex-col gap-0.5 rounded-[8px] border-[1.5px] border-dashed border-[#CBD5E1] px-[9px] py-2 ${
-        isDragging ? "opacity-40" : ""
-      } ${isOver ? "ring-2 ring-[var(--color-brand)]" : ""}`}
+      className={`mb-1 flex min-h-[62px] cursor-grab flex-col gap-0.5 rounded-[8px] border-[1.5px] border-dashed px-[9px] py-2 ${
+        filled > 0 ? "border-[var(--color-warning)]" : "border-[#CBD5E1]"
+      } ${isDragging ? "opacity-40" : ""} ${
+        isOver ? "ring-2 ring-[var(--color-brand)]" : ""
+      }`}
       style={{
         background:
           "repeating-linear-gradient(135deg,#fff,#fff 9px,#FAFBFC 9px,#FAFBFC 18px)",
@@ -1197,6 +1227,11 @@ function OpenBlock({
       <div className="text-[11px] text-[#94A3B8]">
         {formatTimeOnly(shift.startTime)} – {formatTimeOnly(shift.endTime)}
       </div>
+      {shift.requiredStaff > 1 ? (
+        <div className="text-[10.5px] font-bold text-[#B45309]">
+          {filled} of {shift.requiredStaff} filled · needs {needed} more
+        </div>
+      ) : null}
       <div className="mt-auto text-[10.5px] font-bold text-[#4D7C0F]">
         {suggestedNames.length > 0
           ? `Suggested: ${suggestedNames.join(", ")}`
