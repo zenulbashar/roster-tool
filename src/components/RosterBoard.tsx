@@ -58,6 +58,7 @@ import {
   validateSchedule,
   workedMinutes,
 } from "@/lib/assignment-schedule";
+import { findAssignmentOverlaps, wouldOverlap } from "@/lib/roster-insights";
 import { Avatar, Icon } from "@/components/ui";
 
 /* ----------------------------- prop types -------------------------------- */
@@ -298,54 +299,75 @@ export function RosterBoard(props: Props) {
   );
 
   // cell[staffId][date] = that person's assignments that day (with shift).
-  const { cells, openByDate, dayCounts, suggestedCount, shortfall } =
-    useMemo(() => {
-      const cells = new Map<string, Map<string, BoardAssignment[]>>();
-      const confirmedByShift = new Map<string, number>();
-      let suggestedCount = 0;
-      for (const a of optimistic) {
-        const shift = shiftById.get(a.shiftId);
-        if (!shift) continue;
-        const perStaff = cells.get(a.staffMemberId) ?? new Map();
-        const list = perStaff.get(shift.date) ?? [];
-        list.push(a);
-        perStaff.set(shift.date, list);
-        cells.set(a.staffMemberId, perStaff);
-        if (a.status === "confirmed") {
-          confirmedByShift.set(
-            a.shiftId,
-            (confirmedByShift.get(a.shiftId) ?? 0) + 1,
-          );
-        } else {
-          suggestedCount += 1;
-        }
+  const {
+    cells,
+    openByDate,
+    dayCounts,
+    suggestedCount,
+    shortfall,
+    overlapKeys,
+  } = useMemo(() => {
+    const cells = new Map<string, Map<string, BoardAssignment[]>>();
+    const confirmedByShift = new Map<string, number>();
+    let suggestedCount = 0;
+    for (const a of optimistic) {
+      const shift = shiftById.get(a.shiftId);
+      if (!shift) continue;
+      const perStaff = cells.get(a.staffMemberId) ?? new Map();
+      const list = perStaff.get(shift.date) ?? [];
+      list.push(a);
+      perStaff.set(shift.date, list);
+      cells.set(a.staffMemberId, perStaff);
+      if (a.status === "confirmed") {
+        confirmedByShift.set(
+          a.shiftId,
+          (confirmedByShift.get(a.shiftId) ?? 0) + 1,
+        );
+      } else {
+        suggestedCount += 1;
       }
-      // A shift stays in the Open row until it's FULLY staffed — hospitality
-      // shifts often need several people, and "1 of 3 filled" is still open.
-      const openByDate = new Map<
-        string,
-        Array<{ shift: BoardShift; filled: number }>
-      >();
-      let shortfall = 0;
-      for (const s of props.shifts) {
-        const filled = confirmedByShift.get(s.id) ?? 0;
-        if (filled < s.requiredStaff) {
-          const list = openByDate.get(s.date) ?? [];
-          list.push({ shift: s, filled });
-          openByDate.set(s.date, list);
-          shortfall += s.requiredStaff - filled;
-        }
+    }
+    // A shift stays in the Open row until it's FULLY staffed — hospitality
+    // shifts often need several people, and "1 of 3 filled" is still open.
+    const openByDate = new Map<
+      string,
+      Array<{ shift: BoardShift; filled: number }>
+    >();
+    let shortfall = 0;
+    for (const s of props.shifts) {
+      const filled = confirmedByShift.get(s.id) ?? 0;
+      if (filled < s.requiredStaff) {
+        const list = openByDate.get(s.date) ?? [];
+        list.push({ shift: s, filled });
+        openByDate.set(s.date, list);
+        shortfall += s.requiredStaff - filled;
       }
-      const dayCounts = props.days.map(
-        (d) =>
-          props.staff.filter((m) =>
-            (cells.get(m.id)?.get(d) ?? []).some(
-              (a) => a.status === "confirmed",
-            ),
-          ).length,
-      );
-      return { cells, openByDate, dayCounts, suggestedCount, shortfall };
-    }, [optimistic, props.shifts, props.days, props.staff, shiftById]);
+    }
+    const dayCounts = props.days.map(
+      (d) =>
+        props.staff.filter((m) =>
+          (cells.get(m.id)?.get(d) ?? []).some((a) => a.status === "confirmed"),
+        ).length,
+    );
+    // Double-booked chips (same person, same day, clashing effective
+    // times) — recomputed from the optimistic state so a drag or resize
+    // updates the flag immediately. A flag, never a block.
+    const overlapKeys = new Set<string>();
+    for (const p of findAssignmentOverlaps({
+      shifts: props.shifts,
+      assignments: optimistic,
+    })) {
+      for (const id of p.shiftIds) overlapKeys.add(`${id}:${p.staffMemberId}`);
+    }
+    return {
+      cells,
+      openByDate,
+      dayCounts,
+      suggestedCount,
+      shortfall,
+      overlapKeys,
+    };
+  }, [optimistic, props.shifts, props.days, props.staff, shiftById]);
 
   const chipColors = useCallback(
     (shift: BoardShift, staffId: string): BoardScheme => {
@@ -589,6 +611,7 @@ export function RosterBoard(props: Props) {
                   colorMode={colorMode}
                   dragging={dragging}
                   allShifts={props.shifts}
+                  overlapKeys={overlapKeys}
                   onOpenEditor={setEditor}
                   onAccept={(pair) =>
                     run(
@@ -767,6 +790,7 @@ function StaffRow({
   colorMode,
   dragging,
   allShifts,
+  overlapKeys,
   onOpenEditor,
   onAccept,
   onClear,
@@ -785,6 +809,7 @@ function StaffRow({
     staffId: string | null;
   } | null;
   allShifts: BoardShift[];
+  overlapKeys: Set<string>;
   onOpenEditor: (pair: PairInput) => void;
   onAccept: (pair: PairInput) => void;
   onClear: (pair: PairInput) => void;
@@ -817,6 +842,7 @@ function StaffRow({
           colorMode={colorMode}
           dragging={dragging}
           allShifts={allShifts}
+          overlapKeys={overlapKeys}
           onOpenEditor={onOpenEditor}
           onAccept={onAccept}
           onClear={onClear}
@@ -837,6 +863,7 @@ function DayCell({
   colorMode,
   dragging,
   allShifts,
+  overlapKeys,
   onOpenEditor,
   onAccept,
   onClear,
@@ -855,6 +882,7 @@ function DayCell({
     staffId: string | null;
   } | null;
   allShifts: BoardShift[];
+  overlapKeys: Set<string>;
   onOpenEditor: (pair: PairInput) => void;
   onAccept: (pair: PairInput) => void;
   onClear: (pair: PairInput) => void;
@@ -880,8 +908,25 @@ function DayCell({
       const avail = target
         ? (availability[`${target.id}:${member.id}`] ?? "unknown")
         : "unknown";
+      // Would this drop double-book the person? Their other chips on this
+      // day (excluding the dragged one and the target itself) vs the target
+      // block's times. A warning, never a block.
+      const clash = target
+        ? wouldOverlap(
+            target,
+            assignments
+              .filter(
+                (a) =>
+                  a.shiftId !== dragging.shiftId && a.shiftId !== target.id,
+              )
+              .flatMap((a) => {
+                const sh = shiftById.get(a.shiftId);
+                return sh ? [resolveSchedule(sh, a)] : [];
+              }),
+          )
+        : false;
       const tone =
-        onLeave || avail === "no"
+        onLeave || clash || avail === "no"
           ? "ring-2 ring-[var(--color-warning)]"
           : avail === "yes"
             ? "ring-2 ring-[var(--color-success)]"
@@ -889,9 +934,11 @@ function DayCell({
       hint = {
         tone,
         note: target
-          ? onLeave
-            ? "On leave"
-            : null
+          ? clash
+            ? "Overlaps their other shift"
+            : onLeave
+              ? "On leave"
+              : null
           : `New ${source.label} shift`,
       };
     }
@@ -919,6 +966,7 @@ function DayCell({
                 availability[`${a.shiftId}:${member.id}`] ?? "unknown"
               }
               onLeave={onLeave}
+              overlaps={overlapKeys.has(`${a.shiftId}:${member.id}`)}
               onOpenEditor={onOpenEditor}
               onAccept={onAccept}
               onClear={onClear}
@@ -962,6 +1010,7 @@ function AssignmentChip({
   colorMode,
   availability,
   onLeave,
+  overlaps,
   onOpenEditor,
   onAccept,
   onClear,
@@ -973,6 +1022,7 @@ function AssignmentChip({
   colorMode: "employee" | "type";
   availability: Availability;
   onLeave: boolean;
+  overlaps: boolean;
   onOpenEditor: (pair: PairInput) => void;
   onAccept: (pair: PairInput) => void;
   onClear: (pair: PairInput) => void;
@@ -999,9 +1049,20 @@ function AssignmentChip({
             Suggested
           </span>
         </div>
-        <div className="text-[11px] text-[var(--color-text-secondary)]">
-          {formatTimeOnly(schedule.startTime)} –{" "}
-          {formatTimeOnly(schedule.endTime)}
+        <div className="flex flex-wrap items-center gap-1 text-[11px] text-[var(--color-text-secondary)]">
+          <span>
+            {formatTimeOnly(schedule.startTime)} –{" "}
+            {formatTimeOnly(schedule.endTime)}
+          </span>
+          {overlaps ? (
+            <span
+              data-overlap
+              className="rounded bg-[var(--color-danger-strong)] px-1 text-[9.5px] font-semibold text-white"
+              title="On two shifts at the same time"
+            >
+              Overlaps
+            </span>
+          ) : null}
         </div>
         <div className="mt-auto flex gap-1">
           <button
@@ -1075,6 +1136,15 @@ function AssignmentChip({
           {schedule.breakMinutes > 0 ? (
             <span className="rounded bg-white/70 px-1 text-[9.5px] font-bold text-[#6B7280]">
               {schedule.breakMinutes}m break
+            </span>
+          ) : null}
+          {overlaps ? (
+            <span
+              data-overlap
+              className="rounded bg-[var(--color-danger-strong)] px-1 text-[9.5px] font-semibold text-white"
+              title="On two shifts at the same time"
+            >
+              Overlaps
             </span>
           ) : null}
           {onLeave ? (
