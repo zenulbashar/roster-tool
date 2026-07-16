@@ -12,6 +12,8 @@ export type TemplateLike = {
    * startTime/endTime above.
    */
   dayTimeOverrides?: Record<string, { start: string; end: string }> | null;
+  /** How many people each instance of this shift needs (default 1). */
+  requiredStaff?: number;
 };
 
 export type GeneratedShift = {
@@ -20,6 +22,7 @@ export type GeneratedShift = {
   label: string;
   startTime: string;
   endTime: string;
+  requiredStaff: number;
 };
 
 /**
@@ -45,6 +48,9 @@ export function expandTemplatesToShifts(
           label: t.label,
           startTime: override?.start ?? t.startTime,
           endTime: override?.end ?? t.endTime,
+          // Snapshot the staffing target (like label/times) so later template
+          // edits don't rewrite existing rosters.
+          requiredStaff: t.requiredStaff ?? 1,
         };
       });
   });

@@ -203,6 +203,7 @@ export default async function TemplatesPage({
       weekdays,
       color: formData.get("color"),
       dayTimeOverrides: collectOverrides(formData, weekdays),
+      requiredStaff: formData.get("requiredStaff") ?? 1,
     });
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Please check the form";
@@ -232,6 +233,7 @@ export default async function TemplatesPage({
       weekdays,
       color: formData.get("color"),
       dayTimeOverrides: collectOverrides(formData, weekdays),
+      requiredStaff: formData.get("requiredStaff") ?? 1,
     });
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Please check the form";
@@ -384,6 +386,16 @@ export default async function TemplatesPage({
                           />
                         </Field>
                       </div>
+                      <Field label="How many staff on this shift?">
+                        <TextInput
+                          type="number"
+                          name="requiredStaff"
+                          min={1}
+                          max={20}
+                          required
+                          defaultValue={String(t.requiredStaff)}
+                        />
+                      </Field>
                       <fieldset>
                         <legend className="mb-1 block text-sm font-semibold">
                           Which days?
@@ -454,6 +466,11 @@ export default async function TemplatesPage({
 
                 <div className="mt-3 text-[12px] text-[#9CA3AF]">
                   {summariseDays(t.weekdays)}
+                  {t.requiredStaff > 1 ? (
+                    <span className="ml-2 rounded bg-[var(--color-bg)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--color-text-secondary)]">
+                      {t.requiredStaff} staff each
+                    </span>
+                  ) : null}
                 </div>
 
                 {t.dayTimeOverrides &&
@@ -532,6 +549,16 @@ export default async function TemplatesPage({
               />
             </Field>
           </div>
+          <Field label="How many staff on this shift?">
+            <TextInput
+              type="number"
+              name="requiredStaff"
+              min={1}
+              max={20}
+              required
+              defaultValue="1"
+            />
+          </Field>
           <fieldset>
             <legend className="mb-1 block text-sm font-semibold">
               Which days?

@@ -265,6 +265,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       weekdays: number[];
       color?: string | null;
       dayTimeOverrides?: Record<string, { start: string; end: string }> | null;
+      requiredStaff?: number;
     }) {
       const [row] = await database
         .insert(shiftTemplates)
@@ -283,6 +284,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         active: boolean;
         color: string | null;
         dayTimeOverrides: Record<string, { start: string; end: string }> | null;
+        requiredStaff: number;
       }>,
     ) {
       const [row] = await database
@@ -408,6 +410,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         label: string;
         startTime: string;
         endTime: string;
+        requiredStaff?: number;
       }>,
     ) {
       if (rows.length === 0) return [];
@@ -415,6 +418,19 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .insert(shifts)
         .values(rows.map((r) => ({ ...r, businessId })))
         .returning();
+    },
+
+    /**
+     * Adjust one shift's staffing target ("Friday needs one more"). A TARGET
+     * the builder flags against — never a cap or a block on assigning.
+     */
+    async updateShiftRequiredStaff(shiftId: string, requiredStaff: number) {
+      const [row] = await database
+        .update(shifts)
+        .set({ requiredStaff })
+        .where(and(eq(shifts.id, shiftId), eq(shifts.businessId, businessId)))
+        .returning();
+      return row ?? null;
     },
 
     async deleteShiftsForPeriod(rosterPeriodId: string) {

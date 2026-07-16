@@ -24,6 +24,7 @@ import {
   assignmentPairSchema,
   assignmentScheduleSchema,
   openShiftAssignSchema,
+  shiftRequiredStaffSchema,
 } from "@/lib/validation";
 import { RosterBoard, type BoardActionResult } from "@/components/RosterBoard";
 
@@ -46,6 +47,7 @@ async function resolveShiftForDate(
     startTime: string;
     endTime: string;
     date: string;
+    requiredStaff: number;
   },
   toDate: string,
 ): Promise<string | null> {
@@ -62,6 +64,7 @@ async function resolveShiftForDate(
       label: sourceShift.label,
       startTime: normalizeTime(sourceShift.startTime),
       endTime: normalizeTime(sourceShift.endTime),
+      requiredStaff: sourceShift.requiredStaff,
     },
   ]);
   return clone?.id ?? null;
@@ -475,6 +478,28 @@ export default async function BuildRosterPage({
     return { ok: true };
   }
 
+  /**
+   * The tap editor's "Needs N" stepper — adjust one shift's staffing target.
+   * A target only: it flags shortfalls, never blocks assigning or publishing.
+   */
+  async function setShiftStaffNeed(formData: FormData) {
+    "use server";
+    const { businessId } = await requireOwner();
+    const repo = createTenantRepo(businessId);
+    const parsed = shiftRequiredStaffSchema.safeParse({
+      shiftId: formData.get("shiftId"),
+      requiredStaff: formData.get("requiredStaff"),
+    });
+    if (!parsed.success) return;
+    const shift = await repo.getShift(parsed.data.shiftId);
+    if (!shift || shift.rosterPeriodId !== id) return;
+    await repo.updateShiftRequiredStaff(
+      parsed.data.shiftId,
+      parsed.data.requiredStaff,
+    );
+    revalidatePath(`/app/periods/${id}/build`);
+  }
+
   async function publish() {
     "use server";
     const { businessId } = await requireOwner();
@@ -550,6 +575,7 @@ export default async function BuildRosterPage({
     templateId: s.templateId,
     startTime: normalizeTime(s.startTime),
     endTime: normalizeTime(s.endTime),
+    requiredStaff: s.requiredStaff,
     scheme: schemeForShift(s),
     offer: offerByShift.get(s.id) ?? null,
   }));
@@ -579,6 +605,19 @@ export default async function BuildRosterPage({
       if (onLeave(m.id, d)) boardLeave[`${m.id}:${d}`] = true;
     }
   }
+
+  // Staffing shortfall across the period: how many more people are needed to
+  // hit every shift's target. A FLAG shown before publish — never a block.
+  const understaffed = shifts
+    .map((s) => ({
+      shift: s,
+      filled: confirmed.get(s.id)?.size ?? 0,
+    }))
+    .filter(({ shift, filled }) => filled < shift.requiredStaff);
+  const shortfallTotal = understaffed.reduce(
+    (sum, { shift, filled }) => sum + (shift.requiredStaff - filled),
+    0,
+  );
 
   return (
     <>
@@ -654,6 +693,18 @@ export default async function BuildRosterPage({
       {draftedSummary ? (
         <div className="mb-4">
           <Banner tone="info">{draftedSummary}</Banner>
+        </div>
+      ) : null}
+      {shortfallTotal > 0 ? (
+        <div className="mb-4">
+          <Banner tone="warn">
+            {understaffed.length}{" "}
+            {understaffed.length === 1
+              ? "shift still needs"
+              : "shifts still need"}{" "}
+            more people ({shortfallTotal} more in total). You can publish anyway
+            — unfilled spots stay in the Open shifts row.
+          </Banner>
         </div>
       ) : null}
       {isPublished && published ? (
@@ -766,6 +817,65 @@ export default async function BuildRosterPage({
                           >
                             {formatTimeOnly(s.startTime)} –{" "}
                             {formatTimeOnly(s.endTime)}
+                          </span>
+                        </div>
+                        {/* Staffing target: filled count + a −/+ stepper.
+                            A flag, never a cap — the owner can always assign
+                            more or fewer people than the target. */}
+                        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11.5px]">
+                          <span
+                            className={`font-semibold ${
+                              confirmedSet.size < s.requiredStaff
+                                ? "text-[#B45309]"
+                                : "text-[var(--color-text-secondary)]"
+                            }`}
+                          >
+                            {confirmedSet.size} of {s.requiredStaff} assigned
+                            {confirmedSet.size < s.requiredStaff
+                              ? ` · needs ${s.requiredStaff - confirmedSet.size} more`
+                              : ""}
+                          </span>
+                          <span className="inline-flex items-center gap-1">
+                            <form action={setShiftStaffNeed}>
+                              <input
+                                type="hidden"
+                                name="shiftId"
+                                value={s.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="requiredStaff"
+                                value={Math.max(s.requiredStaff - 1, 1)}
+                              />
+                              <button
+                                type="submit"
+                                disabled={s.requiredStaff <= 1}
+                                aria-label={`${s.label} needs one person fewer`}
+                                className="flex h-[22px] w-[22px] items-center justify-center rounded-[6px] border border-black/10 bg-white/70 text-[13px] leading-none disabled:opacity-40"
+                              >
+                                −
+                              </button>
+                            </form>
+                            <form action={setShiftStaffNeed}>
+                              <input
+                                type="hidden"
+                                name="shiftId"
+                                value={s.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="requiredStaff"
+                                value={Math.min(s.requiredStaff + 1, 20)}
+                              />
+                              <button
+                                type="submit"
+                                disabled={s.requiredStaff >= 20}
+                                aria-label={`${s.label} needs one person more`}
+                                className="flex h-[22px] w-[22px] items-center justify-center rounded-[6px] border border-black/10 bg-white/70 text-[13px] leading-none disabled:opacity-40"
+                              >
+                                +
+                              </button>
+                            </form>
                           </span>
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2">

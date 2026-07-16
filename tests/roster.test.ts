@@ -31,6 +31,19 @@ describe("expandTemplatesToShifts", () => {
     });
   });
 
+  it("snapshots the staffing target, defaulting to 1", () => {
+    const shifts = expandTemplatesToShifts(
+      { startDate: "2025-06-09", endDate: "2025-06-10" },
+      [morning, { ...weekendEvening, weekdays: [1, 2], requiredStaff: 3 }],
+    );
+    expect(shifts.filter((s) => s.label === "Morning")[0]?.requiredStaff).toBe(
+      1,
+    );
+    expect(
+      shifts.filter((s) => s.label === "Evening").map((s) => s.requiredStaff),
+    ).toEqual([3, 3]);
+  });
+
   it("respects weekday restrictions", () => {
     const shifts = expandTemplatesToShifts(
       { startDate: "2025-06-09", endDate: "2025-06-15" },
