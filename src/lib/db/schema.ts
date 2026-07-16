@@ -664,6 +664,19 @@ export const rosterAssignments = pgTable(
       .notNull()
       .references(() => staffMembers.id, { onDelete: "cascade" }),
     status: assignmentStatus("status").notNull().default("confirmed"),
+    // Per-assignment schedule override (drag-and-drop builder). Null start/end
+    // = this person works the shift's own times (the original behaviour —
+    // every pre-existing row behaves exactly as before). When set, BOTH are
+    // set, and this person's effective times differ from the shift block's.
+    // The shift's snapshot times stay the source of truth for the slot itself.
+    startTime: time("start_time"),
+    endTime: time("end_time"),
+    // Unpaid break inside this person's shift, minutes (0 = none). Roster
+    // display only — actual worked hours still come from timesheets.
+    breakMinutes: integer("break_minutes").notNull().default(0),
+    // Where the break sits ("HH:MM" wall clock). Set whenever breakMinutes >
+    // 0 so the builder can draw the gap and the owner can drag it.
+    breakStart: time("break_start"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
