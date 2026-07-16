@@ -170,7 +170,11 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
   "Friday needs one more"). **A target is a FLAG, never a block**: the builder
   keeps a shift in the Open row until it's fully staffed ("2 of 3 filled ·
   needs 1 more"), shows a total-shortfall pill and a pre-publish warning
-  banner, but never caps assignment or stops publishing. Owners can **edit** a type
+  banner, but never caps assignment or stops publishing. A type can also carry
+  **per-weekday staffing overrides** (`day_staff_overrides`, jsonb ISO-weekday
+  → count, mirroring `day_time_overrides` — "Friday needs 4", M32): applied
+  ONLY at expansion, pruned to differences on save, ignored for days the type
+  doesn't run. Owners can **edit** a type
   (name/times/days/colour) and **delete** one on `/app/templates`; deleting is
   non-destructive to past rosters — `shift.template_id` is ON DELETE SET NULL,
   so concrete shifts keep their label/time snapshot and just unlink.
@@ -1047,7 +1051,12 @@ staff_member_id)`. A person appears at a location when their home is there OR
   adjustable via `updateShiftRequiredStaff` (builder stepper). Drives the
   builder's open-until-fully-staffed row, shortfall pill and pre-publish
   warning. **Never enforced** — assigning more/fewer and publishing
-  understaffed are always allowed.
+  understaffed are always allowed. `shift_template.day_staff_overrides`
+  (jsonb, nullable, M32) — per-ISO-weekday target overrides ("5" → 4 =
+  "Friday needs 4"), mirroring `day_time_overrides`: applied only at
+  expansion (the weekday's override wins over `required_staff`), pruned of
+  entries equal to the default on save, ignored for weekdays the type
+  doesn't run.
 - `roster_assignment.status` — `'suggested'` (a draft proposed by "Draft from
   last week") or `'confirmed'`. **Only confirmed assignments are published**
   (`rosterRows` filters to confirmed), so un-accepted suggestions never leak
@@ -1066,7 +1075,14 @@ staff_member_id)`. A person appears at a location when their home is there OR
 - Draft suggestion logic lives in `src/lib/draft.ts` (pure, deterministic — no
   LLM/external calls). It matches by shift type (template, or label+times if the
   template was deleted) **and** weekday, suggesting only available staff who are
-  not on approved leave that day (optional `isOnLeave` arg).
+  not on approved leave that day (optional `isOnLeave` arg). **Fill-to-target
+  (M32)**: after last week's crew take their slots, shifts still below their
+  staffing target are topped up from the active-staff pool (`staffIds` arg) —
+  ONLY people who explicitly said yes (an unknown reply is never auto-drafted)
+  and aren't on leave, never beyond the target, spread by fewest shifts held
+  this week (existing assignments count, ties keep staff order). No `staffIds`
+  = the original last-week-only behaviour. `shortShifts` in the counts feeds
+  the summary's "still below the staff target" clause.
 - `leave_request` — a staff time-off request and the owner's decision. `status`
   (`pending`/`approved`/`denied`, NOT NULL default `pending`); `leave_type`
   (`annual`/`sick`/`unpaid`/`other`); inclusive `start_date`/`end_date` stored
@@ -1388,3 +1404,4 @@ charset=utf-8` + attachment with a slugified filename. **Buffered, newest-10k
 - [x] M29 — Multi-location & shared staff pool (Strategy A; **Phases 0–4 built**): one owner runs several **locations** under one **organisation** with a shared org-wide staff pool that can be placed/lent across locations, cross-location shift cover, and date-ranged loans. Phase 0 — additive `organisation`/`org_membership`/`staff_location` + `business.org_id`/`staff_member.org_id`, idempotent backfill (one org per business, id-reused 1:1; mirrored+tested `backfillOrgs`; migration `0023`). Phase 1 — `requireOwner` resolves org (membership) + a VALIDATED active location (N2), `createOrgRepo`/`ownerContext`, header **location switcher**, `/app/locations`, org-aware onboarding. Phase 2 — staff collapse: tenant-repo staff scoping becomes membership-based (`memberHere` = home OR active `staff_location`, backward compatible), `addStaff` creates the org row + home membership, org **People** page (`/app/people`) with per-location membership chips → cross-location staffing. Phase 3 — cross-location shift cover: `shift_offer.scope` (`location`|`org`, migration `0024`); offering up in a multi-location business goes org-scoped, shows in other locations' kiosk "Open shifts", claimable by any org member (`claimOrgOffer`, N3); `approveOffer` grants the claimer a membership at the shift's location before the atomic transfer. Phase 4 — date-ranged loans: `staff_loan` + `staff_location.loan_id` (migration `0025`); the owner lends a person to a location for a range on `/app/people`, `createLoan` ensures a loan-tagged membership, and `endLoan` / the daily `staff-loan-expiry` job remove only loan-created memberships (never permanent ones). Org invariants N1–N5 (see Non-negotiable conventions → Multi-tenancy). Tests: `tests/org-backfill-flow`, `org-repository-flow`, `org-people-flow`, `cross-location-swap-flow`, `staff-loan(-flow)`. Plan: `docs/multi-location-plan.md`.
 - [x] M30 — Drag-and-drop roster board: the builder's weekly grid becomes an interactive client island (`src/components/RosterBoard.tsx`, @dnd-kit/core) — drag a chip to another day/person (same-day = the same shift changes hands; other days resolve to the matching block, cloned when the day has none — a drag never deletes a shift), drag open blocks onto people, drag to the Open row to unassign, click a chip for a schedule editor (24 h timeline with drag handles + ±15 min steppers) that resizes that person's times and drops in a None/30/60 unpaid break (position draggable). Colour-by-employee default (stable avatarColor across a proportional day bar, break = gap) with a by-shift-type toggle. Data: nullable per-assignment `start_time`/`end_time` override + `break_minutes`/`break_start` (additive migration `0028`; null = the shift's own times, pre-existing rosters unchanged); overrides follow the person to the public roster + published email; moves carry the override only onto same-base-times blocks (`carrySchedule`); roster breaks/overrides never feed timesheets/CSV/report/Xero. Pure maths `src/lib/assignment-schedule.ts` (unit-tested); transactional `moveAssignment`/`setAssignmentSchedule` (flow-tested); zod-validated board actions re-derive everything server-side; the tap editor below stays as the keyboard path. Plan: `docs/drag-drop-roster-plan.md`.
 - [x] M31 — Per-shift staffing levels (multi-staff shifts): shift types carry a **staffing target** (`required_staff`, default 1) snapshotted onto each concrete shift at expansion and adjustable per shift in the builder (a −/+ stepper — "Friday needs one more"). Multiple staff already shared one shift block (unique per (shift, staff)); this makes the NEED visible: a shift stays in the board's Open row until fully staffed ("2 of 3 filled · needs 1 more"), a shortfall pill totals the missing people, the tap editor shows "N of M assigned", and an understaffed warning shows before publish. **A target is a flag, never a block** — assigning more/fewer than the target and publishing understaffed are always allowed. Additive migration `0029`; templates UI gains "How many staff on this shift?".
+- [x] M32 — Per-weekday staffing overrides + fill-to-target drafting: shift types gain `day_staff_overrides` (jsonb ISO-weekday → count, mirroring `day_time_overrides` — "Friday needs 4" as a standing rule instead of a weekly stepper tweak; applied only at expansion, pruned to differences, ignored on days the type doesn't run; migration `0030`), and "Draft from last week" now FILLS understaffed shifts: last week's crew keep priority, then shifts below their target top up from active staff who **explicitly said yes** (never an unknown reply, never anyone on leave, never beyond the target), spread by fewest shifts held this week. Existing assignments count toward targets and are never re-suggested; the draft summary reports shifts still short ("no one else said they're available"). Pure + deterministic in `src/lib/draft.ts`; no `staffIds` = the original behaviour.

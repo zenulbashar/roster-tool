@@ -540,6 +540,14 @@ export const shiftTemplates = pgTable("shift_template", {
   // staff share one Friday-night close). A TARGET the builder flags against —
   // never a hard block. Snapshotted onto each concrete shift at expansion.
   requiredStaff: integer("required_staff").notNull().default(1),
+  // Optional per-weekday staffing overrides, keyed by ISO weekday ("1".."7")
+  // → required staff for that day ("Friday needs 4"). A day with no entry
+  // uses requiredStaff above. Null/empty = every day uses the default.
+  // Applied only at expansion (like dayTimeOverrides); concrete shifts still
+  // snapshot their own resolved number.
+  dayStaffOverrides: jsonb("day_staff_overrides").$type<
+    Record<string, number>
+  >(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

@@ -82,6 +82,77 @@ function pruneToDifferences(
   return Object.keys(kept).length ? kept : null;
 }
 
+type DayStaff = Record<string, number>;
+
+/**
+ * Gather per-day STAFFING overrides from the form, only for the days the type
+ * runs and only where a number was entered. Returns null when there are none.
+ */
+function collectStaffOverrides(
+  formData: FormData,
+  weekdays: number[],
+): DayStaff | null {
+  const wdSet = new Set(weekdays);
+  const out: DayStaff = {};
+  for (const wd of ISO_WEEKDAYS) {
+    if (!wdSet.has(wd)) continue;
+    const raw = String(formData.get(`override_staff_${wd}`) ?? "").trim();
+    if (raw) out[String(wd)] = Number(raw);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** Drop staffing overrides equal to the default (they'd resolve identically). */
+function pruneStaffToDefault(
+  overrides: DayStaff | null | undefined,
+  defaultStaff: number,
+): DayStaff | null {
+  if (!overrides) return null;
+  const kept = Object.fromEntries(
+    Object.entries(overrides).filter(([, n]) => n !== defaultStaff),
+  );
+  return Object.keys(kept).length ? kept : null;
+}
+
+/**
+ * Optional per-day staffing inputs ("Friday needs 4"). A day left blank uses
+ * the type's default staff count; only the days that differ are stored. Opens
+ * automatically when the type already has overrides (edit form).
+ */
+function DayStaffOverrides({ overrides }: { overrides?: DayStaff | null }) {
+  const has = overrides != null && Object.keys(overrides).length > 0;
+  return (
+    <details open={has} className="rounded-[9px] bg-[var(--color-bg)] p-3">
+      <summary className="cursor-pointer text-[13px] font-semibold text-[#4D7C0F]">
+        More staff on some days?
+      </summary>
+      <p className="mt-2 text-[12px] text-[var(--color-text-muted)]">
+        Leave a day blank to use the staff count above. Only days this type runs
+        are used.
+      </p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {WEEKDAYS.map((d) => (
+          <label
+            key={d.n}
+            className="flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--color-text-secondary)]"
+          >
+            {d.label}
+            <input
+              type="number"
+              name={`override_staff_${d.n}`}
+              min={1}
+              max={20}
+              defaultValue={overrides?.[String(d.n)] ?? ""}
+              aria-label={`${d.label} staff needed`}
+              className="w-[54px] rounded-[8px] border border-[var(--color-line)] px-2 py-1.5 text-[13px]"
+            />
+          </label>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 /**
  * Optional per-day start/end inputs. Each day left blank uses the type's
  * default time; only the days that differ are stored. Opens automatically when
@@ -204,6 +275,7 @@ export default async function TemplatesPage({
       color: formData.get("color"),
       dayTimeOverrides: collectOverrides(formData, weekdays),
       requiredStaff: formData.get("requiredStaff") ?? 1,
+      dayStaffOverrides: collectStaffOverrides(formData, weekdays),
     });
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Please check the form";
@@ -215,6 +287,10 @@ export default async function TemplatesPage({
         parsed.data.dayTimeOverrides,
         parsed.data.startTime,
         parsed.data.endTime,
+      ),
+      dayStaffOverrides: pruneStaffToDefault(
+        parsed.data.dayStaffOverrides,
+        parsed.data.requiredStaff,
       ),
     });
     revalidatePath(PATH);
@@ -234,6 +310,7 @@ export default async function TemplatesPage({
       color: formData.get("color"),
       dayTimeOverrides: collectOverrides(formData, weekdays),
       requiredStaff: formData.get("requiredStaff") ?? 1,
+      dayStaffOverrides: collectStaffOverrides(formData, weekdays),
     });
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Please check the form";
@@ -241,11 +318,15 @@ export default async function TemplatesPage({
     }
     const updated = await repo.updateTemplate(id, {
       ...parsed.data,
-      // Always write the (possibly null) map so removing overrides sticks.
+      // Always write the (possibly null) maps so removing overrides sticks.
       dayTimeOverrides: pruneToDifferences(
         parsed.data.dayTimeOverrides,
         parsed.data.startTime,
         parsed.data.endTime,
+      ),
+      dayStaffOverrides: pruneStaffToDefault(
+        parsed.data.dayStaffOverrides,
+        parsed.data.requiredStaff,
       ),
     });
     if (!updated)
@@ -396,6 +477,7 @@ export default async function TemplatesPage({
                           defaultValue={String(t.requiredStaff)}
                         />
                       </Field>
+                      <DayStaffOverrides overrides={t.dayStaffOverrides} />
                       <fieldset>
                         <legend className="mb-1 block text-sm font-semibold">
                           Which days?
@@ -472,6 +554,23 @@ export default async function TemplatesPage({
                     </span>
                   ) : null}
                 </div>
+
+                {t.dayStaffOverrides &&
+                Object.keys(t.dayStaffOverrides).length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {Object.entries(t.dayStaffOverrides)
+                      .sort(([a], [b]) => Number(a) - Number(b))
+                      .map(([wd, n]) => (
+                        <span
+                          key={wd}
+                          className="rounded bg-[var(--color-bg)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--color-text-secondary)]"
+                          title="Different staffing on this day"
+                        >
+                          {WEEKDAY_LABEL[wd] ?? wd} ×{n} staff
+                        </span>
+                      ))}
+                  </div>
+                ) : null}
 
                 {t.dayTimeOverrides &&
                 Object.keys(t.dayTimeOverrides).length > 0 ? (
@@ -559,6 +658,7 @@ export default async function TemplatesPage({
               defaultValue="1"
             />
           </Field>
+          <DayStaffOverrides />
           <fieldset>
             <legend className="mb-1 block text-sm font-semibold">
               Which days?

@@ -102,12 +102,32 @@ export const dayTimeOverrideSchema = z
 /**
  * Optional per-weekday time overrides, keyed by ISO weekday ("1".."7"). Empty
  * or absent normalises to null (every day uses the type's default time).
+ * NOTE: partialRecord, not record — zod v4 makes enum-keyed records
+ * EXHAUSTIVE (all seven keys required), which would reject the normal
+ * "only Friday differs" map.
  */
 export const dayTimeOverridesSchema = z
   .union([
-    z.record(
+    z.partialRecord(
       z.enum(["1", "2", "3", "4", "5", "6", "7"]),
       dayTimeOverrideSchema,
+    ),
+    z.null(),
+    z.undefined(),
+  ])
+  .transform((v) => (v && Object.keys(v).length > 0 ? v : null));
+
+/**
+ * Optional per-weekday STAFFING overrides, keyed by ISO weekday ("1".."7") →
+ * how many people that day needs ("Friday needs 4"). Empty or absent
+ * normalises to null (every day uses the type's default target). Mirrors
+ * dayTimeOverridesSchema (incl. the partialRecord note above).
+ */
+export const dayStaffOverridesSchema = z
+  .union([
+    z.partialRecord(
+      z.enum(["1", "2", "3", "4", "5", "6", "7"]),
+      z.coerce.number().int().min(1).max(20),
     ),
     z.null(),
     z.undefined(),
@@ -141,6 +161,7 @@ export const templateSchema = z
     color: shiftColorSchema,
     dayTimeOverrides: dayTimeOverridesSchema,
     requiredStaff: requiredStaffSchema,
+    dayStaffOverrides: dayStaffOverridesSchema,
   })
   .refine((t) => t.startTime < t.endTime, {
     message: "End time must be after start time",
