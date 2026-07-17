@@ -1,7 +1,12 @@
 # Design brief — "Forest" refresh for Roster
 
-**Audience:** Claude Code (design + implementation).
+**Audience:** Claude Code (the porting/implementation stage).
 **Repo:** `zenulbashar/roster-tool` (public — clone/read it directly).
+**Handoff flow:** (1) **Claude Design** extends the `Roster.dc.html` prototype
+with the Forest look at all breakpoints and commits it to GitHub — see the
+paste-ready `docs/claude-design-prompt.md`; (2) **Claude Code** uses *this*
+document to port that look into the real `src/` screens. This file is the deep
+reference for stage 2.
 **Type:** Presentation-only reskin that **extends** the existing "Roster" design
 system. **The one substantive change is the brand green: replace the current
 Zaleit lime `#76b900` with Forest `#13301F` everywhere it is used as the brand /
