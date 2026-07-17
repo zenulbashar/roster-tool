@@ -18,8 +18,15 @@ import { backfillOrgs } from "@/lib/tenant/org-backfill";
  * staff pointed at its home org, an owner membership per onboarded owner, a
  * 1:1 `staff_location` per staff (carrying its active flag), all correctly
  * scoped — and that a second run changes nothing (idempotent).
+ *
+ * retry: `backfillOrgs` sweeps EVERY business in the shared test DB, so its
+ * INSERT…SELECT statements can hit an FK violation when a concurrently
+ * running test file tears its rows down between the snapshot read and the
+ * insert — a test-parallelism artifact, not a product bug (the canonical
+ * copy runs once inside a migration). Assertions stay strict; a
+ * deterministic regression still fails all three attempts.
  */
-describe("M29 org backfill (Phase 0)", () => {
+describe("M29 org backfill (Phase 0)", { retry: 2 }, () => {
   let bizA = "";
   let bizB = "";
   let userA = "";

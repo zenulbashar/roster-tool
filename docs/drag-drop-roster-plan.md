@@ -51,10 +51,10 @@ Pure maths (no I/O) in `src/lib/assignment-schedule.ts`, hammered by
 - `resolveSchedule(shift, assignment)` → the person's effective times +
   break (`overridden` flag); `scheduleSegments` → the 1–2 worked segments the
   bars draw (break = gap); `workedMinutes` (net of break, clamped ≥ 0).
-- `validateSchedule` — same-day times (the app has no overnight shifts;
-  template validation enforces start < end), ≥ 15 min span, break ∈ {0,30,60}
-  and fully inside the span. Run client-side for live feedback AND re-run in
-  the server action.
+- `validateSchedule` — ≥ 15 min span (overnight allowed since M34: an end at
+  or before the start wraps to the next day; only equal times are rejected),
+  break ∈ {0,30,60} and fully inside the extended span. Run client-side for
+  live feedback AND re-run in the server action.
 - `carrySchedule` — what a move keeps: the override + break travel only when
   the target block runs the **same base times** (same type on another day);
   otherwise the times reset to the target's and the break survives only if it
@@ -129,8 +129,9 @@ Ripples (per-person hours must show wherever hours show):
 
 ## Deliberately not built (flag before adding)
 
-- **Overnight per-person times** — the app has no overnight shifts anywhere;
-  keep the single-day axis until shifts themselves support it.
+- ~~Overnight per-person times~~ — BUILT (M34): shifts and per-person
+  schedules may cross midnight (end at/before start = next day); all maths
+  run on the extended minute axis in `assignment-schedule.ts`.
 - **Carrying overrides across weeks** in "Draft from last week" — drafts
   suggest people, not custom hours; a stale override on a new week is a
   surprise, not a convenience.

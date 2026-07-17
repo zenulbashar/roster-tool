@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { ownerRepo } from "@/lib/auth/context";
 import { templateSchema } from "@/lib/validation";
-import { formatTimeOnly } from "@/lib/time";
+import { formatTimeRange } from "@/lib/time";
 import { resolveShiftColors, SHIFT_PALETTE } from "@/lib/shift-colors";
 import {
   Banner,
@@ -467,6 +467,10 @@ export default async function TemplatesPage({
                           />
                         </Field>
                       </div>
+                      <p className="-mt-1 text-[12px] text-[var(--color-text-muted)]">
+                        Finishes at or before it starts? The shift runs into the
+                        next day (e.g. 6 pm – 2 am).
+                      </p>
                       <Field label="How many staff on this shift?">
                         <TextInput
                           type="number"
@@ -542,7 +546,7 @@ export default async function TemplatesPage({
                     className="text-[17px] text-[var(--color-muted)]"
                   />
                   <span className="font-archivo text-[13.5px] font-semibold text-[#374151]">
-                    {formatTimeOnly(t.startTime)} – {formatTimeOnly(t.endTime)}
+                    {formatTimeRange(t.startTime, t.endTime)}
                   </span>
                 </div>
 
@@ -583,8 +587,8 @@ export default async function TemplatesPage({
                           className="rounded bg-[var(--color-bg)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--color-text-secondary)]"
                           title="Different time on this day"
                         >
-                          {WEEKDAY_LABEL[wd] ?? wd} {formatTimeOnly(o.start)}–
-                          {formatTimeOnly(o.end)}
+                          {WEEKDAY_LABEL[wd] ?? wd}{" "}
+                          {formatTimeRange(o.start, o.end)}
                         </span>
                       ))}
                   </div>
@@ -648,6 +652,10 @@ export default async function TemplatesPage({
               />
             </Field>
           </div>
+          <p className="-mt-2 text-[12px] text-[var(--color-text-muted)]">
+            Finishes at or before it starts? The shift runs into the next day
+            (e.g. 6 pm – 2 am).
+          </p>
           <Field label="How many staff on this shift?">
             <TextInput
               type="number"

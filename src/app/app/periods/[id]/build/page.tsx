@@ -8,7 +8,7 @@ import { enqueuePublishedRoster } from "@/lib/jobs/boss";
 import { notifyStaff } from "@/lib/staff-notifications";
 import { buildDraft, draftSummary } from "@/lib/draft";
 import { makeOnLeaveLookup } from "@/lib/leave";
-import { formatDateOnly, formatTimeOnly } from "@/lib/time";
+import { formatDateOnly, formatTimeRange } from "@/lib/time";
 import { periodStatusLabel, rosterBuildVerb } from "@/lib/labels";
 import { Badge, Banner, Button, Card } from "@/components/ui";
 import { CopyButton } from "@/components/CopyButton";
@@ -896,8 +896,7 @@ export default async function BuildRosterPage({
                             className="text-[11px] font-medium"
                             style={{ color: scheme.text, opacity: 0.75 }}
                           >
-                            {formatTimeOnly(s.startTime)} –{" "}
-                            {formatTimeOnly(s.endTime)}
+                            {formatTimeRange(s.startTime, s.endTime)}
                           </span>
                         </div>
                         {/* Staffing target: filled count + a −/+ stepper.

@@ -145,15 +145,42 @@ describe("workedMinutes + segments", () => {
     ).toEqual([{ start: 540, end: 990 }]);
   });
 
-  it("returns nothing for a degenerate span", () => {
+  it("returns nothing for a degenerate (equal-times) span", () => {
     expect(
       scheduleSegments({
         startTime: "17:00",
-        endTime: "09:00",
+        endTime: "17:00",
         breakMinutes: 0,
         breakStart: null,
       }),
     ).toEqual([]);
+  });
+
+  it("overnight segments run past minute 1440 on the extended axis", () => {
+    // Fri 18:00 – Sat 02:00 with a 30 min break at 23:30.
+    expect(
+      scheduleSegments({
+        startTime: "18:00",
+        endTime: "02:00",
+        breakMinutes: 30,
+        breakStart: "23:30",
+      }),
+    ).toEqual([
+      { start: 1080, end: 1410 },
+      { start: 1440, end: 1560 },
+    ]);
+    // A break AFTER midnight (01:00) sits a day up on the axis.
+    expect(
+      scheduleSegments({
+        startTime: "18:00",
+        endTime: "04:00",
+        breakMinutes: 60,
+        breakStart: "01:00",
+      }),
+    ).toEqual([
+      { start: 1080, end: 1500 },
+      { start: 1560, end: 1680 },
+    ]);
   });
 });
 
@@ -180,7 +207,7 @@ describe("validateSchedule", () => {
     ).toBe(true);
   });
 
-  it("rejects invalid times, tiny spans and reversed times", () => {
+  it("rejects invalid times, tiny spans and equal times", () => {
     expect(
       validateSchedule({
         startTime: "25:00",
@@ -197,12 +224,43 @@ describe("validateSchedule", () => {
         breakStart: null,
       }).ok,
     ).toBe(false);
+    // Equal times = a zero-length shift (always a typo).
     expect(
       validateSchedule({
         startTime: "17:00",
-        endTime: "09:00",
+        endTime: "17:00",
         breakMinutes: 0,
         breakStart: null,
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("accepts overnight schedules, including breaks after midnight", () => {
+    // 6 pm – 2 am is a valid 8 h overnight shift.
+    expect(
+      validateSchedule({
+        startTime: "18:00",
+        endTime: "02:00",
+        breakMinutes: 0,
+        breakStart: null,
+      }).ok,
+    ).toBe(true);
+    // Break at 01:00 (after midnight) fits inside 18:00 – 04:00.
+    expect(
+      validateSchedule({
+        startTime: "18:00",
+        endTime: "04:00",
+        breakMinutes: 60,
+        breakStart: "01:00",
+      }).ok,
+    ).toBe(true);
+    // Break at 05:00 does NOT fit inside 18:00 – 04:00.
+    expect(
+      validateSchedule({
+        startTime: "18:00",
+        endTime: "04:00",
+        breakMinutes: 60,
+        breakStart: "05:00",
       }).ok,
     ).toBe(false);
   });

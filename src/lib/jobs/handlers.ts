@@ -31,8 +31,8 @@ import {
   formatDateTime,
   formatDateOnly,
   formatDateRange,
-  formatTimeOnly,
   businessDateOf,
+  formatTimeRange,
 } from "@/lib/time";
 import { leaveTypeLabel, certDisplayLabel } from "@/lib/labels";
 import { resolveSchedule } from "@/lib/assignment-schedule";
@@ -252,7 +252,7 @@ export async function handlePublishedRoster(
       return {
         dayText: formatDateOnly(r.date),
         label: r.label,
-        timeText: `${formatTimeOnly(schedule.startTime)} – ${formatTimeOnly(schedule.endTime)}${breakText}`,
+        timeText: `${formatTimeRange(schedule.startTime, schedule.endTime)}${breakText}`,
       };
     });
 
@@ -400,7 +400,7 @@ export async function handleShiftOfferDecision(
   }
 
   const dayText = formatDateOnly(row.date);
-  const timeText = `${formatTimeOnly(row.startTime)} – ${formatTimeOnly(row.endTime)}`;
+  const timeText = formatTimeRange(row.startTime, row.endTime);
 
   const claimerEmail = shiftClaimApprovedEmail({
     businessName: row.businessName,

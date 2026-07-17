@@ -1,4 +1,4 @@
-import { formatDateOnly, formatTimeOnly, type DateOnly } from "@/lib/time";
+import { formatDateOnly, type DateOnly, formatTimeRange } from "@/lib/time";
 
 /**
  * Daily staff shift reminder — pure logic.
@@ -55,10 +55,7 @@ export function buildShiftReminders(
     staffMemberId,
     title: "Reminder: you work tomorrow",
     body: `${formatDateOnly(date)} — ${shifts
-      .map(
-        (s) =>
-          `${s.label} ${formatTimeOnly(s.startTime)} – ${formatTimeOnly(s.endTime)}`,
-      )
+      .map((s) => `${s.label} ${formatTimeRange(s.startTime, s.endTime)}`)
       .join("; ")}`,
     dedupeKey: shiftReminderDedupeKey(staffMemberId, date),
   }));

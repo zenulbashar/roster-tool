@@ -124,6 +124,75 @@ describe("findAssignmentOverlaps", () => {
     expect(cleared).toEqual([]);
   });
 
+  it("catches an overnight shift clashing across the date line", () => {
+    const nightShifts = [
+      // Fri 22:00 – Sat 06:00 (overnight, anchored to Friday).
+      {
+        id: "friNight",
+        date: "2026-07-31",
+        startTime: "22:00",
+        endTime: "06:00",
+      },
+      // Sat 05:00 – 11:00 — starts before the night shift ends.
+      {
+        id: "satEarly",
+        date: "2026-08-01",
+        startTime: "05:00",
+        endTime: "11:00",
+      },
+      // Sat 08:00 – 14:00 — after the night shift ends; no clash.
+      {
+        id: "satLate",
+        date: "2026-08-01",
+        startTime: "08:00",
+        endTime: "14:00",
+      },
+    ];
+    const clash = findAssignmentOverlaps({
+      shifts: nightShifts,
+      assignments: [
+        {
+          shiftId: "friNight",
+          staffMemberId: "ava",
+          status: "confirmed",
+          ...plain,
+        },
+        {
+          shiftId: "satEarly",
+          staffMemberId: "ava",
+          status: "confirmed",
+          ...plain,
+        },
+      ],
+    });
+    expect(clash).toEqual([
+      {
+        staffMemberId: "ava",
+        date: "2026-07-31",
+        shiftIds: ["friNight", "satEarly"],
+      },
+    ]);
+    expect(
+      findAssignmentOverlaps({
+        shifts: nightShifts,
+        assignments: [
+          {
+            shiftId: "friNight",
+            staffMemberId: "ava",
+            status: "confirmed",
+            ...plain,
+          },
+          {
+            shiftId: "satLate",
+            staffMemberId: "ava",
+            status: "confirmed",
+            ...plain,
+          },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
   it("suggested chips count too — accepting them shouldn't spring a surprise", () => {
     const pairs = findAssignmentOverlaps({
       shifts,
@@ -208,6 +277,31 @@ describe("estimateRosterCost", () => {
     expect(est.totalMinutes).toBe(360);
     expect(est.unratedMinutes).toBe(360);
     expect(est.unratedStaffNames).toEqual(["Ben"]);
+  });
+
+  it("costs an overnight shift by its wrapped span", () => {
+    const est = estimateRosterCost({
+      shifts: [
+        {
+          id: "night",
+          date: "2026-07-31",
+          startTime: "18:00",
+          endTime: "02:00",
+        },
+      ],
+      assignments: [
+        {
+          shiftId: "night",
+          staffMemberId: "ava",
+          status: "confirmed",
+          ...plain,
+        },
+      ],
+      staff,
+    });
+    // 8h at $30 = $240.
+    expect(est.totalMinutes).toBe(480);
+    expect(est.costCents).toBe(24000);
   });
 
   it("empty roster → zeros", () => {

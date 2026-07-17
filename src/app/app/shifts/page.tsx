@@ -4,7 +4,7 @@ import { ownerRepo } from "@/lib/auth/context";
 import { enqueueShiftOfferDecision } from "@/lib/jobs/boss";
 import { notifyStaff } from "@/lib/staff-notifications";
 import { timesOverlap } from "@/lib/shift-offer";
-import { businessDateOf, formatDateOnly, formatTimeOnly } from "@/lib/time";
+import { businessDateOf, formatDateOnly, formatTimeRange } from "@/lib/time";
 import { Banner, Button, Card, PageHeader } from "@/components/ui";
 
 const PATH = "/app/shifts";
@@ -71,7 +71,7 @@ export default async function ShiftsPage({
     const { offer } = res;
     const shift = await repo.getPublishedShift(offer.shiftId);
     if (shift && offer.claimedByStaffId) {
-      const when = `${formatDateOnly(shift.date)} · ${shift.label} · ${formatTimeOnly(shift.startTime)} – ${formatTimeOnly(shift.endTime)}`;
+      const when = `${formatDateOnly(shift.date)} · ${shift.label} · ${formatTimeRange(shift.startTime, shift.endTime)}`;
       await notifyStaff(repo, {
         staffMemberId: offer.claimedByStaffId,
         type: "shift_swap_approved",
@@ -130,7 +130,7 @@ export default async function ShiftsPage({
     startTime: string;
     endTime: string;
   }) {
-    return `${formatDateOnly(c.date)} · ${c.label} · ${formatTimeOnly(c.startTime)} – ${formatTimeOnly(c.endTime)}`;
+    return `${formatDateOnly(c.date)} · ${c.label} · ${formatTimeRange(c.startTime, c.endTime)}`;
   }
 
   return (

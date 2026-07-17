@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireOwner } from "@/lib/auth/context";
 import { createTenantRepo } from "@/lib/tenant/repository";
-import { formatDateOnly, formatTimeOnly } from "@/lib/time";
+import { formatDateOnly, formatTimeRange } from "@/lib/time";
 import { periodStatusLabel, rosterActionLabel } from "@/lib/labels";
 import { Banner, ButtonLink, Card, PageHeader } from "@/components/ui";
 
@@ -160,10 +160,7 @@ export default async function PeriodDetailPage({
                     <span className="font-medium text-[var(--color-ink)]">
                       {s.label}
                     </span>
-                    <span>
-                      {formatTimeOnly(s.startTime)} –{" "}
-                      {formatTimeOnly(s.endTime)}
-                    </span>
+                    <span>{formatTimeRange(s.startTime, s.endTime)}</span>
                   </li>
                 ))}
               </ul>

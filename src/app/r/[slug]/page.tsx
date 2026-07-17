@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { businesses } from "@/lib/db/schema";
 import { findPublishedBySlug } from "@/lib/tenant/public-access";
 import { createTenantRepo } from "@/lib/tenant/repository";
-import { formatDateOnly, formatTimeOnly } from "@/lib/time";
+import { formatDateOnly, formatTimeRange } from "@/lib/time";
 import { resolveSchedule } from "@/lib/assignment-schedule";
 import { resolveShiftColors } from "@/lib/shift-colors";
 import { StaffHeader } from "@/components/StaffHeader";
@@ -72,7 +72,7 @@ export default async function PublicRosterPage({
       shiftId: r.shiftId,
       label: r.label,
       color: r.color,
-      timeText: `${formatTimeOnly(r.startTime)} – ${formatTimeOnly(r.endTime)}`,
+      timeText: formatTimeRange(r.startTime, r.endTime),
       names: [],
     };
     if (r.staffName) {
@@ -84,9 +84,7 @@ export default async function PublicRosterPage({
       });
       const parts: string[] = [];
       if (schedule.overridden) {
-        parts.push(
-          `${formatTimeOnly(schedule.startTime)} – ${formatTimeOnly(schedule.endTime)}`,
-        );
+        parts.push(formatTimeRange(schedule.startTime, schedule.endTime));
       }
       if (schedule.breakMinutes > 0) {
         parts.push(`${schedule.breakMinutes} min break`);
