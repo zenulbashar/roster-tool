@@ -13,6 +13,7 @@ import {
   type OrderReminderJob,
   type StaffShiftReminderJob,
   type StaffLoanExpiryJob,
+  type FormResponseDigestJob,
 } from "./queues";
 import {
   handleAvailabilityRequest,
@@ -25,6 +26,7 @@ import {
   handleOrderReminders,
   handleStaffShiftReminders,
   handleStaffLoanExpiry,
+  handleFormResponseDigests,
 } from "./handlers";
 
 /** Cron for the daily clock-in photo retention sweep: 03:00 UTC every day. */
@@ -44,6 +46,12 @@ const STAFF_SHIFT_REMINDER_CRON = "0 7 * * *";
 
 /** Cron for the daily staff-loan expiry sweep: 01:00 UTC every day. */
 const STAFF_LOAN_EXPIRY_CRON = "0 1 * * *";
+
+/**
+ * Cron for the daily form-response email digest: 21:00 UTC ≈ 7–8 am in
+ * Australia/Sydney — the owner reads yesterday's responses with their coffee.
+ */
+const FORM_DIGEST_CRON = "0 21 * * *";
 
 /**
  * pg-boss singleton. One instance per process (Next dev hot-reload safe via
@@ -224,6 +232,15 @@ export async function registerWorkers(): Promise<void> {
     },
   );
 
+  await boss.work<FormResponseDigestJob>(
+    QUEUES.formResponseDigest,
+    async (jobs: Job<FormResponseDigestJob>[]) => {
+      for (const _job of jobs) {
+        await handleFormResponseDigests();
+      }
+    },
+  );
+
   // Daily cron sweep of expired clock-in photos. Re-scheduling with the same
   // queue name is idempotent (pg-boss upserts the schedule), so booting the
   // worker repeatedly is safe. singletonKey collapses any overlapping runs.
@@ -266,6 +283,15 @@ export async function registerWorkers(): Promise<void> {
     STAFF_LOAN_EXPIRY_CRON,
     {},
     { ...RETRY, tz: "UTC", singletonKey: QUEUES.staffLoanExpiry },
+  );
+
+  // Daily form-response email digest (21:00 UTC). Idempotent reschedule; the
+  // handler advances a per-business cursor only after a successful send.
+  await boss.schedule(
+    QUEUES.formResponseDigest,
+    FORM_DIGEST_CRON,
+    {},
+    { ...RETRY, tz: "UTC", singletonKey: QUEUES.formResponseDigest },
   );
 
   logger.info("Workers registered");

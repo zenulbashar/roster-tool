@@ -1063,6 +1063,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         personalClockTokenHash: string | null;
         certReminderLeadDays: number;
         staffShiftRemindersEnabled: boolean;
+        formDigestEnabled: boolean;
       }>,
     ) {
       const [row] = await database
@@ -3114,6 +3115,30 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .from(forms)
         .where(eq(forms.businessId, businessId))
         .orderBy(desc(forms.createdAt));
+    },
+
+    /**
+     * New-response tallies per form inside (since, until] — the daily email
+     * digest's counting query (M35). COUNTS + titles only, grouped by form;
+     * forms with no new responses simply don't appear. Tenant-scoped.
+     */
+    countResponsesSince(since: Date, until: Date) {
+      return database
+        .select({
+          formId: forms.id,
+          title: forms.title,
+          count: sql`count(*)`.mapWith(Number),
+        })
+        .from(formResponses)
+        .innerJoin(forms, eq(formResponses.formId, forms.id))
+        .where(
+          and(
+            eq(formResponses.businessId, businessId),
+            gt(formResponses.submittedAt, since),
+            lte(formResponses.submittedAt, until),
+          ),
+        )
+        .groupBy(forms.id, forms.title);
     },
 
     /**
