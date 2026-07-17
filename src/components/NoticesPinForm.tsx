@@ -74,7 +74,7 @@ export function NoticesPinForm({
             required
             autoFocus
             placeholder="••••"
-            className="block w-full rounded-[14px] border border-[var(--color-line)] bg-white px-4 py-3.5 text-center font-archivo text-3xl tracking-[0.5em] text-[var(--color-ink)] outline-none placeholder:text-[#CBD5E1] focus:border-[#76b900] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.16)]"
+            className="block w-full rounded-[14px] border border-[var(--color-line)] bg-white px-4 py-3.5 text-center font-archivo text-3xl tracking-[0.5em] text-[var(--color-ink)] outline-none placeholder:text-[#CBD5E1] focus:border-[#13301F] focus:ring-[3px] focus:ring-[rgba(19,48,31,0.18)]"
             aria-label="Your 4-digit PIN"
           />
           <button

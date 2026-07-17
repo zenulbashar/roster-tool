@@ -4,6 +4,11 @@
  * Design tokens for the roster tool.
  * High-contrast, mobile-first, WCAG AA. Kept deliberately small and obvious.
  *
+ * Brand: Forest #13301F + white on LIGHT surfaces; Leaf #5FA875 + ink on DARK
+ * chrome (top nav, kiosk, phone clock-in, landing hero). The earlier lime
+ * #76b900 is fully retired. Blue (--color-brand) and the semantic status
+ * colours were intentionally left untouched. See design/roster-handoff/.
+ *
  * Type system: Archivo (headings, badges, numbers) + Public Sans (body, UI),
  * loaded via <link> in the root layout. Archivo is exposed as --font-display
  * and applied to h1/h2/h3 globally; Public Sans is --font-sans on the body.
@@ -16,18 +21,26 @@
   --color-line: #d1d5db;
   --color-brand: #1d4ed8; /* blue-700, ~6.3:1 on white — links/focus/info */
   --color-brand-ink: #ffffff;
-  --color-button: #76b900; /* Zaleit green — primary buttons */
-  --color-button-ink: #111827; /* dark text on green, ~7.4:1 on --color-button */
+  --color-button: #13301f; /* Forest — primary buttons (light surfaces) */
+  --color-button-ink: #ffffff; /* white text on Forest, ~12:1 */
   --color-ok: #15803d; /* success text — matches design badges/banners */
   --color-warn: #b45309; /* amber-700 */
   --color-danger: #b91c1c; /* red-700 */
 
-  /* Brand header only (Zaleit). Used by the owner-area header/nav — never the
-   * content areas, which stay on the white/canvas tokens above. */
-  --color-header-bg: #0f1115; /* near-black header bar */
+  /* Forest brand + Leaf (dark-surface accent). --forest for primary fills on
+   * light surfaces; --leaf for the wordmark/active accent/primary action on
+   * dark chrome (≥4.5:1 on #111827). */
+  --color-forest: #13301f;
+  --color-forest-hover: #1d4a2e;
+  --color-leaf: #5fa875;
+  --color-leaf-hover: #4e9666;
+  --color-green-text: #2e7d4e; /* secondary green text/icons on light */
+
+  /* Dark chrome (owner top nav). Nav bg #111827; wordmark + active = Leaf. */
+  --color-header-bg: #111827; /* dark nav bar */
   --color-header-ink: #f3f4f6; /* light nav text — AA on header-bg */
   --color-header-muted: #cbd5e1; /* secondary header text — AA on header-bg */
-  --color-accent: #76b900; /* Zaleit green — wordmark + active accent */
+  --color-accent: #5fa875; /* Leaf — wordmark + active accent on dark chrome */
 
   /*
    * Refined design-system tokens (added alongside the originals above — the
@@ -40,9 +53,12 @@
   --color-border-subtle: #f1f3f5; /* subtle dividers */
   --color-header: #111827; /* dark header/sidebar bg */
   --color-header-hover: #1f2937; /* header button hover */
-  --color-accent-dark: #6aa600; /* green hover */
-  --color-accent-faint: #f4f8e9; /* green tint bg */
-  --color-accent-ink: #111827; /* text ON green */
+  --color-accent-dark: #1d4a2e; /* Forest hover (primary button hover) */
+  --color-accent-faint: #ecf3ee; /* Forest tint bg (pale) */
+  --color-accent-ink: #ffffff; /* text ON a Forest fill */
+  --color-tint: #ecf3ee; /* Forest tint pale — badges, callouts, icon tiles */
+  --color-tint-2: #e3eee7; /* Forest tint — count pills, OK chips */
+  --color-tint-border: #cfe3d6; /* border on tinted surfaces */
   --color-text: #111827; /* primary text */
   --color-text-secondary: #6b7280; /* secondary text */
   --color-text-muted: #9ca3af; /* muted/placeholder */
@@ -56,9 +72,10 @@
   --color-info: #2563eb;
   --color-info-bg: #eff6ff;
 
-  /* Shift-type colours — used by the roster builder (see src/lib/shift-colors.ts) */
-  --shift-morning-bg: #f4f8e9;
-  --shift-morning-bar: #76b900;
+  /* Shift-type colours — used by the roster builder (see src/lib/shift-colors.ts).
+   * Morning collapses to the Forest family (green stripe #2E7D4E). */
+  --shift-morning-bg: #ecf3ee;
+  --shift-morning-bar: #2e7d4e;
   --shift-arvo-bg: #f2eefb;
   --shift-arvo-bar: #7c5cbf;
   --shift-close-bg: #eef1f5;
@@ -139,7 +156,8 @@ h3 {
     "opsz" 24;
 }
 
-/* Visible focus for keyboard users everywhere. */
+/* Visible focus for keyboard users everywhere. Blue by default (links/inputs);
+ * the design's Forest focus ring is applied where brand controls need it. */
 :focus-visible {
   outline: 3px solid var(--color-brand);
   outline-offset: 2px;
@@ -176,6 +194,27 @@ h3 {
   to {
     transform: translateY(0);
     opacity: 1;
+  }
+}
+/* Skeleton loading shimmer (available for loading states). */
+@keyframes rosterShimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+/* All non-essential motion is disabled for users who ask for reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

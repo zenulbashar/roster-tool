@@ -86,14 +86,14 @@ export function LocationSwitcher({
                   disabled={isActive}
                   className={`flex w-full items-center gap-2.5 rounded-[8px] px-[11px] py-[9px] text-left text-[13px] ${
                     isActive
-                      ? "bg-[var(--color-accent-faint)] font-semibold text-[#3F6212]"
-                      : "text-[#374151] hover:bg-[var(--color-accent-faint)] hover:text-[#3F6212]"
+                      ? "bg-[var(--color-accent-faint)] font-semibold text-[#13301F]"
+                      : "text-[#374151] hover:bg-[var(--color-accent-faint)] hover:text-[#13301F]"
                   }`}
                 >
                   <span
                     className={`material-symbols-rounded text-[17px] ${
                       isActive
-                        ? "text-[#3F6212]"
+                        ? "text-[#13301F]"
                         : "text-[var(--color-text-muted)]"
                     }`}
                   >
@@ -118,7 +118,7 @@ export function LocationSwitcher({
           <Link
             href="/app/locations#add"
             role="menuitem"
-            className="flex items-center gap-2.5 rounded-[8px] px-[11px] py-[9px] text-[13px] font-semibold text-[#3F6212] hover:bg-[var(--color-accent-faint)]"
+            className="flex items-center gap-2.5 rounded-[8px] px-[11px] py-[9px] text-[13px] font-semibold text-[#13301F] hover:bg-[var(--color-accent-faint)]"
           >
             <span className="material-symbols-rounded text-[17px]">add</span>
             Add location

@@ -212,7 +212,7 @@ export default async function TimesheetsPage({
               href={`${PATH}/export?week=${weekStart}`}
               className="inline-flex min-h-11 items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-[15px] py-[10px] text-[13px] font-semibold text-[#374151] transition-colors hover:bg-[var(--color-bg)]"
             >
-              <Icon name="download" className="text-[18px] text-[#5A7D17]" />
+              <Icon name="download" className="text-[18px] text-[#2E7D4E]" />
               Export approved hours (CSV)
             </a>
             <p className="ml-auto mt-[7px] max-w-[280px] text-[11px] leading-[1.4] text-[#9CA3AF]">
@@ -231,9 +231,9 @@ export default async function TimesheetsPage({
         <div className="mt-4 flex flex-wrap items-center gap-3 rounded-[14px] border border-[var(--color-border)] bg-[var(--color-surface)] px-[16px] py-[13px] shadow-[0_1px_2px_rgba(17,24,39,.04)]">
           <span
             aria-hidden="true"
-            className="flex h-[38px] w-[38px] flex-shrink-0 items-center justify-center rounded-[10px] bg-[#F4F8E9]"
+            className="flex h-[38px] w-[38px] flex-shrink-0 items-center justify-center rounded-[10px] bg-[#ECF3EE]"
           >
-            <Icon name="sync_alt" className="text-[20px] text-[#5A7D17]" />
+            <Icon name="sync_alt" className="text-[20px] text-[#2E7D4E]" />
           </span>
           <div className="min-w-[180px] flex-1">
             <div className="text-[13.5px] font-bold text-[#111827]">
@@ -455,7 +455,7 @@ export default async function TimesheetsPage({
                             <select
                               name="break"
                               defaultValue={String(e.breakMinutes ?? 0)}
-                              className="block w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-[14px] py-[11px] text-[14.5px] text-[var(--color-ink)] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.16)]"
+                              className="block w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-[14px] py-[11px] text-[14.5px] text-[var(--color-ink)] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(19,48,31,0.18)]"
                             >
                               <option value="0">None</option>
                               <option value="30">30 min</option>

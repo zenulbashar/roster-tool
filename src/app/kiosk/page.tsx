@@ -59,12 +59,12 @@ function KioskHeader({ name, timezone }: { name: string; timezone: string }) {
     <>
       <div className="mb-1.5 flex w-full items-center justify-between">
         <span className="flex items-center gap-2.5">
-          <span className="flex h-[26px] w-[26px] items-center justify-center rounded-[7px] bg-[#76b900]">
+          <span className="flex h-[26px] w-[26px] items-center justify-center rounded-[7px] bg-[#5FA875]">
             <span className="material-symbols-rounded text-[17px] text-[#111827]">
               grid_view
             </span>
           </span>
-          <span className="font-archivo text-[16px] font-extrabold tracking-[0.05em] text-[#76b900]">
+          <span className="font-archivo text-[16px] font-extrabold tracking-[0.05em] text-[#5FA875]">
             ROSTER
           </span>
         </span>
@@ -319,7 +319,7 @@ export default async function KioskPage({
               <li key={s.id}>
                 <Link
                   href={`/kiosk?staff=${s.id}`}
-                  className="flex flex-col items-center gap-[11px] rounded-[18px] border border-[#2A3344] bg-[#1C2433] p-[22px] transition-colors hover:border-[#76b900] hover:bg-[#222C3D]"
+                  className="flex flex-col items-center gap-[11px] rounded-[18px] border border-[#2A3344] bg-[#1C2433] p-[22px] transition-colors hover:border-[#5FA875] hover:bg-[#222C3D]"
                 >
                   <Avatar name={s.name} colorKey={s.id} size={52} />
                   <span className="font-archivo text-[15px] font-bold text-white">

@@ -99,11 +99,11 @@ export default async function PeriodsPage({
                 >
                   <div
                     aria-hidden="true"
-                    className="flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-[11px] bg-[#F4F8E9]"
+                    className="flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-[11px] bg-[#ECF3EE]"
                   >
                     <Icon
                       name="calendar_month"
-                      className="text-[22px] text-[#5A7D17]"
+                      className="text-[22px] text-[#2E7D4E]"
                     />
                   </div>
                   <div className="min-w-0">

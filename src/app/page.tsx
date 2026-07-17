@@ -17,7 +17,7 @@ const BrandMark = ({ size = 28 }: { size?: number }) => (
   <span className="flex items-center gap-2.5">
     <span
       aria-hidden="true"
-      className="flex items-center justify-center rounded-[8px] bg-[#76b900] text-[#111827]"
+      className="flex items-center justify-center rounded-[8px] bg-[#5FA875] text-[#111827]"
       style={{ width: size, height: size }}
     >
       <span
@@ -27,7 +27,7 @@ const BrandMark = ({ size = 28 }: { size?: number }) => (
         grid_view
       </span>
     </span>
-    <span className="font-archivo text-[19px] font-extrabold tracking-[0.05em] text-[#76b900]">
+    <span className="font-archivo text-[19px] font-extrabold tracking-[0.05em] text-[#5FA875]">
       ROSTER
     </span>
   </span>
@@ -66,7 +66,7 @@ const STEPS = [
 // Decorative mini-roster data for the hero mockup (matches the design colours).
 const MOCK_DAYS = ["Mon 23", "Tue 24", "Wed 25", "Thu 26", "Fri 27"];
 const SHIFT = {
-  m: { bg: "#F4F8E9", bar: "#76b900", label: "#3F6212", time: "#5A7D17" },
+  m: { bg: "#ECF3EE", bar: "#5FA875", label: "#1D4A2E", time: "#2E7D4E" },
   a: { bg: "#F2EEFB", bar: "#7C5CBF", label: "#5B43A6", time: "#6E57B8" },
   c: { bg: "#EEF1F5", bar: "#1E293B", label: "#1E293B", time: "#566476" },
 } as const;
@@ -145,13 +145,13 @@ export default function HomePage() {
             </a>
             <Link
               href="/sign-in"
-              className="mr-3.5 text-[13.5px] font-semibold text-white hover:text-[#76b900]"
+              className="mr-3.5 text-[13.5px] font-semibold text-white hover:text-[#5FA875]"
             >
               Sign in
             </Link>
             <Link
               href="/sign-in"
-              className="rounded-[9px] bg-[#76b900] px-4 py-2.5 font-archivo text-[13.5px] font-bold text-[#111827] hover:bg-[#6aa600]"
+              className="rounded-[9px] bg-[#5FA875] px-4 py-2.5 font-archivo text-[13.5px] font-bold text-[#111827] hover:bg-[#4E9666]"
             >
               Start free
             </Link>
@@ -159,7 +159,7 @@ export default function HomePage() {
 
           <div className="px-2 pb-[18px] pt-[54px] text-center">
             <div className="mb-[22px] inline-flex items-center gap-2 rounded-full border border-[#374151] bg-[#1F2937] px-3.5 py-1.5">
-              <span className="h-[7px] w-[7px] rounded-full bg-[#76b900]" />
+              <span className="h-[7px] w-[7px] rounded-full bg-[#5FA875]" />
               <span className="text-[12.5px] font-semibold text-[#9CA3AF]">
                 Built for Australian hospitality
               </span>
@@ -167,7 +167,7 @@ export default function HomePage() {
             <h1 className="mx-auto max-w-[760px] font-archivo text-[40px] font-black leading-[1.05] tracking-[-0.025em] text-white sm:text-[54px]">
               Your whole week,
               <br />
-              <span className="text-[#76b900]">sorted in minutes.</span>
+              <span className="text-[#5FA875]">sorted in minutes.</span>
             </h1>
             <p className="mx-auto mt-5 max-w-[560px] text-[16px] leading-[1.55] text-[#9CA3AF] sm:text-[17px]">
               Rostering that works as hard as your team. Build the week, track
@@ -177,7 +177,7 @@ export default function HomePage() {
             <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
               <Link
                 href="/sign-in"
-                className="inline-flex items-center gap-2 rounded-[11px] bg-[#76b900] px-[26px] py-3.5 font-archivo text-[15px] font-bold text-[#111827] shadow-[0_8px_24px_rgba(118,185,0,0.28)] hover:bg-[#6aa600]"
+                className="inline-flex items-center gap-2 rounded-[11px] bg-[#5FA875] px-[26px] py-3.5 font-archivo text-[15px] font-bold text-[#111827] shadow-[0_8px_24px_rgba(95,168,117,0.30)] hover:bg-[#4E9666]"
               >
                 Start free
                 <span className="material-symbols-rounded text-[20px]">
@@ -292,8 +292,8 @@ export default function HomePage() {
           <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-5">
             {FEATURES.map((f) => (
               <div key={f.title} className="p-2 text-center">
-                <div className="mx-auto mb-3 flex h-[46px] w-[46px] items-center justify-center rounded-[13px] bg-[#F4F8E9]">
-                  <span className="material-symbols-rounded text-[24px] text-[#5A7D17]">
+                <div className="mx-auto mb-3 flex h-[46px] w-[46px] items-center justify-center rounded-[13px] bg-[#ECF3EE]">
+                  <span className="material-symbols-rounded text-[24px] text-[#2E7D4E]">
                     {f.icon}
                   </span>
                 </div>
@@ -311,7 +311,7 @@ export default function HomePage() {
         {/* Three steps */}
         <div className="mx-auto max-w-[1080px] px-7 py-[60px]">
           <div className="mb-[38px] text-center">
-            <div className="font-archivo text-[12px] font-bold uppercase tracking-[0.1em] text-[#76b900]">
+            <div className="font-archivo text-[12px] font-bold uppercase tracking-[0.1em] text-[#13301F]">
               How it works
             </div>
             <h2 className="mt-2.5 font-archivo text-[30px] font-extrabold tracking-[-0.02em] text-[#111827] sm:text-[34px]">
@@ -324,7 +324,7 @@ export default function HomePage() {
                 key={s.n}
                 className="rounded-[16px] border border-[#E5E7EB] p-[26px]"
               >
-                <div className="font-archivo text-[13px] font-extrabold text-[#76b900]">
+                <div className="font-archivo text-[13px] font-extrabold text-[#13301F]">
                   {s.n}
                 </div>
                 <div className="mb-1.5 mt-2 font-archivo text-[19px] font-bold text-[#111827]">
@@ -339,14 +339,14 @@ export default function HomePage() {
         </div>
 
         {/* Pricing band */}
-        <div id="pricing" className="bg-[#F4F8E9]">
+        <div id="pricing" className="bg-[#ECF3EE]">
           <div className="mx-auto max-w-[1080px] px-7 py-14">
             <div className="flex flex-wrap items-center justify-between gap-8 rounded-[22px] bg-[#111827] p-8 sm:p-11">
               <div className="max-w-[520px]">
                 <h2 className="font-archivo text-[28px] font-extrabold leading-[1.15] tracking-[-0.02em] text-white sm:text-[30px]">
                   Flat monthly fee.
                   <br />
-                  <span className="text-[#76b900]">
+                  <span className="text-[#5FA875]">
                     No per-shift charges. No aggregator cut.
                   </span>
                 </h2>
@@ -369,7 +369,7 @@ export default function HomePage() {
                 </div>
                 <Link
                   href="/sign-in"
-                  className="mt-[18px] block rounded-[11px] bg-[#76b900] py-3 font-archivo text-[14.5px] font-bold text-[#111827] hover:bg-[#6aa600]"
+                  className="mt-[18px] block rounded-[11px] bg-[#5FA875] py-3 font-archivo text-[14.5px] font-bold text-[#111827] hover:bg-[#4E9666]"
                 >
                   Start free
                 </Link>
@@ -420,7 +420,7 @@ export default function HomePage() {
             </div>
             <div className="mt-[34px] flex flex-wrap justify-between gap-4 border-t border-[#1F2937] pt-5">
               <span className="text-[12.5px] text-[#6B7280]">
-                © 2026 Zaleit IT · roster.zaleit.com.au
+                © 2026 Zale IT · roster.zaleit.com.au
               </span>
               <div className="flex gap-[22px] text-[12.5px] text-[#6B7280]">
                 <span>Privacy</span>

@@ -7,7 +7,7 @@ export default function CheckEmailPage() {
       className="flex min-h-screen items-center justify-center px-5 py-10"
       style={{
         backgroundImage:
-          "radial-gradient(circle at 50% 0, #F4F8E9, #F9FAFB 60%)",
+          "radial-gradient(circle at 50% 0, #ECF3EE, #F9FAFB 60%)",
       }}
     >
       <div className="w-full max-w-[412px]">
@@ -19,7 +19,7 @@ export default function CheckEmailPage() {
             aria-hidden="true"
             className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[#111827]"
           >
-            <span className="material-symbols-rounded text-[20px] text-[#76b900]">
+            <span className="material-symbols-rounded text-[20px] text-[#13301F]">
               grid_view
             </span>
           </span>
@@ -29,8 +29,8 @@ export default function CheckEmailPage() {
         </Link>
 
         <div className="rounded-[18px] border border-[#E5E7EB] bg-white p-[30px] text-center shadow-[0_8px_30px_rgba(17,24,39,0.07)]">
-          <div className="mx-auto mb-[18px] mt-1.5 flex h-[58px] w-[58px] items-center justify-center rounded-full bg-[#F4F8E9]">
-            <span className="material-symbols-rounded text-[30px] text-[#5A7D17]">
+          <div className="mx-auto mb-[18px] mt-1.5 flex h-[58px] w-[58px] items-center justify-center rounded-full bg-[#ECF3EE]">
+            <span className="material-symbols-rounded text-[30px] text-[#2E7D4E]">
               mark_email_read
             </span>
           </div>
@@ -45,7 +45,7 @@ export default function CheckEmailPage() {
         </div>
 
         <div className="mt-[18px] text-center text-[12px] text-[#9CA3AF]">
-          Roster by Zaleit IT · roster.zaleit.com.au
+          Roster by Zale IT · roster.zaleit.com.au
         </div>
       </div>
     </main>

@@ -184,7 +184,7 @@ export default async function CertificationsPage({
         title="Certifications"
         subtitle="RSA, Food Safety, First Aid — tracked per staff so nothing lapses on a shift. This flags expiry only — it never blocks rostering or clock-in, and no documents are stored."
         action={
-          <span className="inline-flex items-center gap-[7px] rounded-[20px] border border-[#D6E8B0] bg-[#F4F8E9] px-[13px] py-[7px] text-[12px] font-semibold text-[#3F6212]">
+          <span className="inline-flex items-center gap-[7px] rounded-[20px] border border-[#CFE3D6] bg-[#ECF3EE] px-[13px] py-[7px] text-[12px] font-semibold text-[#13301F]">
             <Icon name="mark_email_read" className="text-[16px]" />
             Reminder emails sent automatically
           </span>

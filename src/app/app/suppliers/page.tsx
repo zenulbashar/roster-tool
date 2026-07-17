@@ -133,7 +133,7 @@ export default async function SuppliersPage({
               key={d}
               className={`w-[38px] rounded-[7px] py-1.5 text-center font-archivo text-[11px] font-bold ${
                 on
-                  ? "bg-[#F0F6E2] text-[#5A7D17]"
+                  ? "bg-[#E3EEE7] text-[#2E7D4E]"
                   : "border border-[#F1F3F5] bg-[#F9FAFB] text-[#CBD0D8]"
               }`}
             >
@@ -173,11 +173,11 @@ export default async function SuppliersPage({
                     <div className="flex items-center gap-3">
                       <span
                         aria-hidden="true"
-                        className="flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-[11px] bg-[#F4F8E9]"
+                        className="flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-[11px] bg-[#ECF3EE]"
                       >
                         <Icon
                           name="local_shipping"
-                          className="text-[23px] text-[#5A7D17]"
+                          className="text-[23px] text-[#2E7D4E]"
                         />
                       </span>
                       <div>
@@ -194,7 +194,7 @@ export default async function SuppliersPage({
                     </div>
                     <span
                       aria-hidden="true"
-                      className="flex text-[#9CA3AF] transition-colors group-open:text-[#4D7C0F]"
+                      className="flex text-[#9CA3AF] transition-colors group-open:text-[#2E7D4E]"
                     >
                       <Icon name="edit" className="text-[19px]" />
                     </span>
@@ -305,14 +305,14 @@ export default async function SuppliersPage({
           {/* Dashed "Add a supplier" prompt → jumps to the full form below. */}
           <a
             href="#add-supplier"
-            className="flex flex-col justify-center rounded-[var(--radius-card)] border-[1.5px] border-dashed border-[#D1D5DB] bg-[#FAFBFC] p-5 text-left transition-colors hover:border-[#76b900]"
+            className="flex flex-col justify-center rounded-[var(--radius-card)] border-[1.5px] border-dashed border-[#D1D5DB] bg-[#FAFBFC] p-5 text-left transition-colors hover:border-[#13301F]"
           >
             <span className="flex items-center gap-2.5">
               <span
                 aria-hidden="true"
-                className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] bg-[#F4F8E9]"
+                className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] bg-[#ECF3EE]"
               >
-                <Icon name="add" className="text-[20px] text-[#5A7D17]" />
+                <Icon name="add" className="text-[20px] text-[#2E7D4E]" />
               </span>
               <span className="font-archivo text-[15px] font-bold text-[#111827]">
                 Add a supplier

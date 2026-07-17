@@ -912,11 +912,16 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
   semantic states, `--shift-*` colours, `--radius-*`, `--shadow-*`); the
   originals (`--color-ink`/`--color-brand`/`--color-button`/header tokens, etc.)
   are kept alongside the refined names since they're referenced app-wide.
-  **`--color-brand` (blue) is reserved for links, focus rings and info banners;
-  only PRIMARY buttons use the Zaleit green (`--color-button`/`--color-accent`).**
-  Shared primitives (`Button`/`Card`/`PageHeader`/`Banner`/`Badge`) are in
-  `src/components/ui.tsx`. Three keyframes (`rosterFade`/`rosterPulse`/
-  `rosterToast`) are used sparingly — dropdowns, the bell badge, and toasts only.
+  **Brand: Forest `#13301F` + white on LIGHT surfaces (`--color-button`, primary
+  buttons/links/selected states with WHITE text); Leaf `#5FA875` + ink on DARK
+  chrome (`--color-accent` — top nav wordmark/active, kiosk, phone clock-in,
+  landing hero). The earlier lime `#76b900` is fully retired (M36).**
+  `--color-brand` (blue) stays reserved for links, focus rings and info
+  banners; the semantic status colours are unchanged. Shared primitives
+  (`Button`/`Card`/`PageHeader`/`Banner`/`Badge`) are in `src/components/ui.tsx`.
+  Four keyframes (`rosterFade`/`rosterPulse`/`rosterToast`/`rosterShimmer`) are
+  used sparingly — dropdowns, the bell badge, toasts, skeletons — and all
+  non-essential motion is disabled under `prefers-reduced-motion`.
 - **Shift-type colours**: the owner can pick an explicit colour from a fixed,
   accessible `SHIFT_PALETTE` (stored as the bar hex on `shift_template.color`);
   the PURE `resolveShiftColors(color, label)` in `src/lib/shift-colors.ts` uses
@@ -928,8 +933,8 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
   resolving each concrete shift's colour from its originating template
   (`templateId`), so a deleted type falls back to the keyword scheme.
 - **Owner-area header/nav** (`src/app/app/layout.tsx` + `src/components/OwnerNav.tsx`):
-  a Zaleit-branded **dark header** (`--color-header-bg`, green `--color-accent`
-  `#76b900` wordmark — header only, content stays white) with the nav grouped into
+  a **dark header** (`--color-header-bg` `#111827`, **Leaf `--color-accent`
+  `#5FA875`** wordmark + active accent — header only, content stays white) with the nav grouped into
   four top-level items: **Rosters** (Rosters/`/app/periods`, Shift types/`/app/templates`,
   Shifts/`/app/shifts`, Timesheets/`/app/timesheets`, Reports/`/app/reports`), **Team** (Staff, Leave,
   Certifications), **Orders** (Stock levels/`/app/stock`, Items, Suppliers), and
@@ -1448,3 +1453,4 @@ charset=utf-8` + attachment with a slugified filename. **Buffered, newest-10k
 - [x] M33 — Builder insights: double-booking flags + a rostered labour-cost estimate, both read-only over existing data (pure `src/lib/roster-insights.ts`; no schema change). Overlaps use each chip's EFFECTIVE times (per-assignment overrides included), flag on the chips (live under drag/resize via the board's optimistic state), warn in the drop preview, and list the people/days in a banner — never blocking. The cost strip totals confirmed assignments at net hours x the entered rate with unrated staff named (hours, never $0), server-rendered with LABOUR_COST_DISCLAIMER; suggestions cost nothing. Also de-flaked the cert-reminder notification test (cross-file race on the all-business sweep).
 - [x] M34 — Overnight shifts: an end time at or before the start means the shift finishes the NEXT day ("6 pm – 2 am"), anchored to its start date — no schema change. Extended-axis maths in `assignment-schedule.ts` (`spanMinutes`/`extendedRange`/`extendedBreakStart`; validate/segments/worked-minutes/carry all overnight-aware, breaks can sit after midnight); template + day-override validation rejects only equal times, with a "runs into the next day" hint on the forms; `timesOverlap` wraps; M33 overlap detection compares absolute date+minute ranges (cross-midnight clashes caught); every surface prints ranges via the shared `formatTimeRange` ("(next day)" suffix) — builder board/chips/editor, tap editor, templates, public roster, availability, kiosk/clock swap lists, emails, staff reminders. The board's day bar wraps the after-midnight tail; the schedule editor uses a noon-to-noon axis for overnight schedules. Timesheets/CSV/report/Xero untouched (they read clock timestamps, which always handled overnight).
 - [x] M35 — Daily form-response email digest (the phase M23 deferred): a `form-response-digest` pg-boss cron (21:00 UTC ≈ 7–8 am Sydney) emails each owner ONE consolidated summary of form responses since the last digest — SAME privacy rule as the bell (counts + form titles + links only; never answer content or respondent identity, identical wording for public/attributed/anonymous), and only on days something actually arrived. Idempotent via the `business.form_digest_last_at` cursor: the window is `(lastAt, now]`, the cursor advances only AFTER a successful send (retries re-send the window; re-runs count only newer), and a never-sent business starts from the last 24 h so a rollout never emails historic counts. Settings → Notifications toggle (`form_digest_enabled`, default on); owner-less businesses skipped. Additive migration `0031`; pure maths in `src/lib/form-digest.ts`; emails still ADDITIVE to the in-app bell.
+- [x] M36 — Forest rebrand (design/roster-handoff): retired the lime `#76b900` for **Forest `#13301F` + white** on light surfaces and **Leaf `#5FA875` + ink** on dark chrome (top nav, kiosk, phone clock-in, landing hero), per the new Claude-design handoff. Token-first migration in `globals.css` `@theme` (Forest/Leaf brand tokens, forest tints, Morning shift → green `#2E7D4E`, `rosterShimmer` keyframe, `prefers-reduced-motion` guard); `ui.tsx` primary Button → Forest fill + white text and the OK badge → Forest tint; `shift-colors.ts` Morning + palette "Green" → forest green; a context-aware sweep of every hardcoded lime across all owner/kiosk/staff/public surfaces (light green text → Forest family, dark-surface fills/accents → Leaf, tints → `#ECF3EE`/`#E3EEE7`). Blue (`--color-brand`) and the semantic status colours are unchanged. Verified at desktop/tablet/mobile + kiosk + landing; 714 tests green. Admin (Zale IT indigo) console + impersonation from the handoff are net-new and NOT built (no admin area exists yet).

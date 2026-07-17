@@ -297,7 +297,7 @@ export default async function SettingsPage({
   }
 
   const selectClass =
-    "rounded-[8px] border border-[#E5E7EB] bg-white px-[10px] py-[7px] text-[12.5px] font-medium text-[#374151] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.16)]";
+    "rounded-[8px] border border-[#E5E7EB] bg-white px-[10px] py-[7px] text-[12.5px] font-medium text-[#374151] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(19,48,31,0.18)]";
   const linkInputClass =
     "min-w-[160px] flex-1 rounded-[9px] border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-[9px] font-mono text-[12px] text-[#6B7280] outline-none";
 
@@ -349,7 +349,7 @@ export default async function SettingsPage({
             <div className="mb-[14px] flex items-center gap-[11px]">
               <span
                 aria-hidden="true"
-                className="flex h-[38px] w-[38px] flex-shrink-0 items-center justify-center rounded-full bg-[#111827] font-archivo text-[13px] font-bold text-[#76b900]"
+                className="flex h-[38px] w-[38px] flex-shrink-0 items-center justify-center rounded-full bg-[#111827] font-archivo text-[13px] font-bold text-[#13301F]"
               >
                 {initials(business.name)}
               </span>
@@ -918,7 +918,7 @@ export default async function SettingsPage({
                       required
                       placeholder="bookkeeper@example.com"
                       aria-label="Bookkeeper email"
-                      className="min-w-[180px] flex-1 rounded-[9px] border border-[#E5E7EB] px-3 py-[9px] text-[13px] text-[#374151] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.16)]"
+                      className="min-w-[180px] flex-1 rounded-[9px] border border-[#E5E7EB] px-3 py-[9px] text-[13px] text-[#374151] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(19,48,31,0.18)]"
                     />
                     <Button type="submit" variant="secondary">
                       Create invite link

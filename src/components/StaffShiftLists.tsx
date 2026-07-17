@@ -17,7 +17,7 @@ type ShiftLineInput = {
 };
 
 const menuPill =
-  "inline-flex items-center gap-1.5 rounded-[12px] border border-[#2A3344] bg-[#1C2433] px-3.5 py-2.5 text-[13.5px] font-semibold text-[#CBD5E1] hover:border-[#76b900] hover:text-white";
+  "inline-flex items-center gap-1.5 rounded-[12px] border border-[#2A3344] bg-[#1C2433] px-3.5 py-2.5 text-[13.5px] font-semibold text-[#CBD5E1] hover:border-[#5FA875] hover:text-white";
 
 const MENU = [
   { mode: "leave", label: "Request leave", icon: "beach_access" },

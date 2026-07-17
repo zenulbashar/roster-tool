@@ -37,7 +37,7 @@ export default async function SignInPage({
       className="flex min-h-screen items-center justify-center px-5 py-10"
       style={{
         backgroundImage:
-          "radial-gradient(circle at 50% 0, #F4F8E9, #F9FAFB 60%)",
+          "radial-gradient(circle at 50% 0, #ECF3EE, #F9FAFB 60%)",
       }}
     >
       <div className="w-full max-w-[412px]">
@@ -49,7 +49,7 @@ export default async function SignInPage({
             aria-hidden="true"
             className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[#111827]"
           >
-            <span className="material-symbols-rounded text-[20px] text-[#76b900]">
+            <span className="material-symbols-rounded text-[20px] text-[#13301F]">
               grid_view
             </span>
           </span>
@@ -88,11 +88,11 @@ export default async function SignInPage({
               autoComplete="email"
               inputMode="email"
               placeholder="you@yourbusiness.com"
-              className="w-full rounded-[11px] border border-[#D1D5DB] px-3.5 py-[13px] text-[14.5px] text-[#111827] outline-none focus:border-[#76b900] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.16)]"
+              className="w-full rounded-[11px] border border-[#D1D5DB] px-3.5 py-[13px] text-[14.5px] text-[#111827] outline-none focus:border-[#13301F] focus:ring-[3px] focus:ring-[rgba(19,48,31,0.18)]"
             />
             <button
               type="submit"
-              className="mt-3.5 w-full rounded-[11px] bg-[#76b900] py-3.5 font-archivo text-[15px] font-bold text-[#111827] hover:bg-[#6aa600]"
+              className="mt-3.5 w-full rounded-[11px] bg-[#13301F] py-3.5 font-archivo text-[15px] font-bold text-white hover:bg-[#1D4A2E]"
             >
               Send sign-in link
             </button>
@@ -100,7 +100,7 @@ export default async function SignInPage({
         </div>
 
         <div className="mt-[18px] text-center text-[12px] text-[#9CA3AF]">
-          Roster by Zaleit IT · roster.zaleit.com.au
+          Roster by Zale IT · roster.zaleit.com.au
         </div>
       </div>
     </main>
