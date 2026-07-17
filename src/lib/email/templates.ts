@@ -369,3 +369,57 @@ export function reminderEmail(input: {
       .join("\n"),
   };
 }
+
+/**
+ * Daily digest of NEW form responses (M35) — one consolidated email per
+ * business per day, sent only when something arrived. PRIVACY: counts + form
+ * titles + links ONLY — never answer content and never a respondent identity
+ * (identical wording for public, attributed and anonymous responses).
+ */
+export function formResponseDigestEmail(input: {
+  businessName: string;
+  items: Array<{
+    title: string;
+    count: number;
+    /** Absolute link to that form's responses page. */
+    url: string;
+  }>;
+}): OutgoingEmail {
+  const { businessName, items } = input;
+  const total = items.reduce((sum, i) => sum + i.count, 0);
+  const countText = `${total} new form response${total === 1 ? "" : "s"}`;
+
+  const listHtml = `<ul style="padding-left:18px;margin:12px 0;">${items
+    .map(
+      (i) =>
+        `<li style="margin:4px 0;"><a href="${i.url}" style="font-weight:700;">${i.title}</a> — ${i.count} new response${i.count === 1 ? "" : "s"}</li>`,
+    )
+    .join("")}</ul>`;
+
+  const listText = items
+    .map(
+      (i) =>
+        `  • ${i.title} — ${i.count} new response${i.count === 1 ? "" : "s"}\n    ${i.url}`,
+    )
+    .join("\n");
+
+  return {
+    to: "",
+    subject: `${countText} — ${businessName}`,
+    html: layout({
+      heading: "New form responses",
+      bodyHtml: `<p>Since your last digest, your forms received ${countText}:</p>${listHtml}<p>Open a form to read the answers.</p>`,
+      footer:
+        "You're getting this because you manage this business. One summary per day, only on days with new responses — turn it off under Settings → Notifications.",
+    }),
+    text: [
+      "New form responses",
+      "",
+      `Since your last digest, your forms received ${countText}:`,
+      "",
+      listText,
+      "",
+      "Open a form to read the answers.",
+    ].join("\n"),
+  };
+}

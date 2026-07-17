@@ -119,6 +119,14 @@ export const businesses = pgTable("business", {
   staffShiftRemindersEnabled: boolean("staff_shift_reminders_enabled")
     .notNull()
     .default(true),
+  // M35 — the daily form-response EMAIL digest (one consolidated email per
+  // day when forms received new responses; counts + titles only, never
+  // answer content or respondent identity). Settings toggle, on by default.
+  formDigestEnabled: boolean("form_digest_enabled").notNull().default(true),
+  // Idempotency cursor: the sweep counts responses submitted AFTER this and
+  // advances it only after a successful send (null = never sent → the first
+  // digest covers the last 24 h, not all history).
+  formDigestLastAt: timestamp("form_digest_last_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

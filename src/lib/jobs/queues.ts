@@ -11,6 +11,7 @@ export const QUEUES = {
   orderReminder: "order-reminder",
   staffShiftReminder: "staff-shift-reminder",
   staffLoanExpiry: "staff-loan-expiry",
+  formResponseDigest: "form-response-digest",
 } as const;
 
 /** Sends one staff member their availability magic link. */
@@ -90,3 +91,12 @@ export type StaffShiftReminderJob = Record<string, never>;
  * payload); idempotent (only acts on `active` loans, flipping them inactive).
  */
 export type StaffLoanExpiryJob = Record<string, never>;
+
+/**
+ * Daily sweep that, per business, emails the owner one consolidated digest of
+ * NEW form responses (counts + titles + links only — never answer content or
+ * respondent identity). Cron-scheduled (no payload); idempotent via
+ * `business.form_digest_last_at` (cursor advances only after a successful
+ * send). Quiet days send nothing.
+ */
+export type FormResponseDigestJob = Record<string, never>;

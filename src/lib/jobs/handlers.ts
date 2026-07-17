@@ -23,6 +23,7 @@ import {
   shiftCoveredEmail,
   certificationReminderEmail,
   orderReminderEmail,
+  formResponseDigestEmail,
 } from "@/lib/email";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { publishedRosters } from "@/lib/db/schema";
@@ -43,6 +44,7 @@ import {
   type ItemStatusForReminder,
 } from "@/lib/order-reminder";
 import { buildShiftReminders } from "@/lib/staff-shift-reminder";
+import { digestWindowStart, orderDigestItems } from "@/lib/form-digest";
 import { logger } from "@/lib/logger";
 import { notifyOwner } from "@/lib/notifications";
 import type {
@@ -748,4 +750,72 @@ export async function handleStaffLoanExpiry(
     "Staff loan expiry sweep complete",
   );
   return ended;
+}
+
+/**
+ * Daily sweep (M35): per business, email the owner ONE consolidated digest of
+ * form responses that arrived since the last digest — counts + form titles +
+ * links ONLY, never answer content or a respondent identity (mirroring the
+ * in-app bell's privacy rule). Quiet days send nothing.
+ *
+ * Idempotent via `business.form_digest_last_at`: the window is (lastAt, now]
+ * and the cursor advances only AFTER a successful send, so a retry re-sends
+ * the same window rather than losing it; a re-run after success counts only
+ * newer responses. A business that has never been sent a digest starts from
+ * the last 24 hours (never all history). Owner-less and toggled-off
+ * businesses are skipped.
+ */
+export async function handleFormResponseDigests(
+  now: Date = new Date(),
+  deps: HandlerDeps = defaultDeps,
+): Promise<number> {
+  const bizRows = await db
+    .select({
+      id: businesses.id,
+      name: businesses.name,
+      enabled: businesses.formDigestEnabled,
+      lastAt: businesses.formDigestLastAt,
+    })
+    .from(businesses);
+
+  let businessesEmailed = 0;
+  for (const biz of bizRows) {
+    if (!biz.enabled) continue;
+    const ownerEmails = (
+      await db
+        .select({ email: users.email })
+        .from(users)
+        .where(eq(users.businessId, biz.id))
+    ).map((u) => u.email);
+    if (ownerEmails.length === 0) continue;
+
+    const repo = createTenantRepo(biz.id);
+    const counts = await repo.countResponsesSince(
+      digestWindowStart(biz.lastAt, now),
+      now,
+    );
+    if (counts.length === 0) continue;
+
+    const email = formResponseDigestEmail({
+      businessName: biz.name,
+      items: orderDigestItems(counts).map((c) => ({
+        title: c.title,
+        count: c.count,
+        url: `${env.APP_URL}/app/forms/${c.formId}/responses`,
+      })),
+    });
+    for (const to of ownerEmails) {
+      await deps.send({ ...email, to });
+    }
+
+    // Advance the cursor only after a successful send.
+    await db
+      .update(businesses)
+      .set({ formDigestLastAt: now })
+      .where(eq(businesses.id, biz.id));
+    businessesEmailed += 1;
+  }
+
+  logger.info({ businessesEmailed }, "Form-response digest sweep complete");
+  return businessesEmailed;
 }

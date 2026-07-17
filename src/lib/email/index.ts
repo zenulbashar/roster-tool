@@ -8,4 +8,5 @@ export {
   shiftCoveredEmail,
   certificationReminderEmail,
   orderReminderEmail,
+  formResponseDigestEmail,
 } from "./templates";

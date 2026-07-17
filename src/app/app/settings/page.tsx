@@ -187,6 +187,14 @@ export default async function SettingsPage({
     revalidatePath(PATH);
   }
 
+  async function setFormDigest(formData: FormData) {
+    "use server";
+    const formDigestEnabled = formData.get("enabled") === "true";
+    const repo = await ownerRepo();
+    await repo.updateBusinessSettings({ formDigestEnabled });
+    revalidatePath(PATH);
+  }
+
   async function generateClockLink() {
     "use server";
     const repo = await ownerRepo();
@@ -621,6 +629,31 @@ export default async function SettingsPage({
                   </span>
                 </span>
                 <Switch on={business.staffShiftRemindersEnabled} />
+              </button>
+            </form>
+            {/* Daily form-response email digest (M35) */}
+            <form action={setFormDigest}>
+              <input
+                type="hidden"
+                name="enabled"
+                value={String(!business.formDigestEnabled)}
+              />
+              <button
+                type="submit"
+                role="switch"
+                aria-checked={business.formDigestEnabled}
+                className="flex w-full items-center justify-between gap-3 border-t border-[#F3F4F6] py-[12px] text-left"
+              >
+                <span>
+                  <span className="block text-[13.5px] font-medium text-[#111827]">
+                    Daily form-response email
+                  </span>
+                  <span className="block text-[12px] text-[#9CA3AF]">
+                    One morning summary of new form responses — counts only,
+                    never the answers. Sent only on days something arrived.
+                  </span>
+                </span>
+                <Switch on={business.formDigestEnabled} />
               </button>
             </form>
           </SectionCard>
