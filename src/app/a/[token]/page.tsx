@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { businesses } from "@/lib/db/schema";
 import { findRequestByToken } from "@/lib/tenant/public-access";
 import { createTenantRepo } from "@/lib/tenant/repository";
-import { formatDateOnly, formatTimeOnly, formatDateTime } from "@/lib/time";
+import { formatDateOnly, formatDateTime, formatTimeRange } from "@/lib/time";
 import { resolveShiftColors } from "@/lib/shift-colors";
 import { notifyOwner } from "@/lib/notifications";
 import { Banner } from "@/components/ui";
@@ -170,8 +170,7 @@ export default async function AvailabilityPage({
                           {s.label}
                         </span>{" "}
                         <span className="text-[12.5px] text-[var(--color-text-secondary)]">
-                          {formatTimeOnly(s.startTime)} –{" "}
-                          {formatTimeOnly(s.endTime)}
+                          {formatTimeRange(s.startTime, s.endTime)}
                         </span>
                       </span>
                     </span>

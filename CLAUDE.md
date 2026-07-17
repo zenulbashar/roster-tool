@@ -185,6 +185,24 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
     (`src/lib/roster.ts`); each concrete shift still snapshots its own resolved
     times, so nothing downstream changes. Overrides equal to the default are
     pruned on save, and overrides for a weekday the type doesn't run are ignored.
+- **Overnight shifts (M34)**: a shift stays anchored to the date it STARTS; an
+  end time at or before the start means it finishes the NEXT day ("Friday
+  close" = Fri 18:00 – Sat 02:00 lives on Friday). No schema change — a
+  convention over the existing `HH:MM` strings. All schedule maths run on the
+  EXTENDED minute axis (`assignment-schedule.ts`: `spanMinutes`/
+  `extendedRange`/`extendedBreakStart`; segments may pass minute 1440);
+  template + per-day-override validation rejects only EQUAL times (a
+  zero-length shift is always a typo); `timesOverlap` and the M33 overlap
+  detection are overnight-aware (the latter compares ABSOLUTE date+minute
+  ranges, so a Friday close clashes with a too-early Saturday shift). Every
+  surface prints ranges via the shared **`formatTimeRange`** (`src/lib/
+time.ts`) — "6 pm – 2 am (next day)" — never a hand-rolled `start – end`
+  pair. The board's day bar wraps the after-midnight tail to the track's left
+  edge; the schedule editor switches to a NOON-TO-NOON axis for overnight
+  schedules so the block reads as one span (start stays anchored to the
+  shift's date). Timesheets/payroll are untouched (clock timestamps already
+  handled overnight); the clock-in shift-link still matches by the clock-in's
+  local date (a post-midnight clock-in was never linked, unchanged).
 - **Availability**: per-shift yes/no (Available / Not available). 1:1 mapping to
   assignments.
 - **Drag-and-drop roster board (M30)**: the builder's weekly grid
@@ -1420,3 +1438,4 @@ charset=utf-8` + attachment with a slugified filename. **Buffered, newest-10k
 - [x] M31 — Per-shift staffing levels (multi-staff shifts): shift types carry a **staffing target** (`required_staff`, default 1) snapshotted onto each concrete shift at expansion and adjustable per shift in the builder (a −/+ stepper — "Friday needs one more"). Multiple staff already shared one shift block (unique per (shift, staff)); this makes the NEED visible: a shift stays in the board's Open row until fully staffed ("2 of 3 filled · needs 1 more"), a shortfall pill totals the missing people, the tap editor shows "N of M assigned", and an understaffed warning shows before publish. **A target is a flag, never a block** — assigning more/fewer than the target and publishing understaffed are always allowed. Additive migration `0029`; templates UI gains "How many staff on this shift?".
 - [x] M32 — Per-weekday staffing overrides + fill-to-target drafting: shift types gain `day_staff_overrides` (jsonb ISO-weekday → count, mirroring `day_time_overrides` — "Friday needs 4" as a standing rule instead of a weekly stepper tweak; applied only at expansion, pruned to differences, ignored on days the type doesn't run; migration `0030`), and "Draft from last week" now FILLS understaffed shifts: last week's crew keep priority, then shifts below their target top up from active staff who **explicitly said yes** (never an unknown reply, never anyone on leave, never beyond the target), spread by fewest shifts held this week. Existing assignments count toward targets and are never re-suggested; the draft summary reports shifts still short ("no one else said they're available"). Pure + deterministic in `src/lib/draft.ts`; no `staffIds` = the original behaviour.
 - [x] M33 — Builder insights: double-booking flags + a rostered labour-cost estimate, both read-only over existing data (pure `src/lib/roster-insights.ts`; no schema change). Overlaps use each chip's EFFECTIVE times (per-assignment overrides included), flag on the chips (live under drag/resize via the board's optimistic state), warn in the drop preview, and list the people/days in a banner — never blocking. The cost strip totals confirmed assignments at net hours x the entered rate with unrated staff named (hours, never $0), server-rendered with LABOUR_COST_DISCLAIMER; suggestions cost nothing. Also de-flaked the cert-reminder notification test (cross-file race on the all-business sweep).
+- [x] M34 — Overnight shifts: an end time at or before the start means the shift finishes the NEXT day ("6 pm – 2 am"), anchored to its start date — no schema change. Extended-axis maths in `assignment-schedule.ts` (`spanMinutes`/`extendedRange`/`extendedBreakStart`; validate/segments/worked-minutes/carry all overnight-aware, breaks can sit after midnight); template + day-override validation rejects only equal times, with a "runs into the next day" hint on the forms; `timesOverlap` wraps; M33 overlap detection compares absolute date+minute ranges (cross-midnight clashes caught); every surface prints ranges via the shared `formatTimeRange` ("(next day)" suffix) — builder board/chips/editor, tap editor, templates, public roster, availability, kiosk/clock swap lists, emails, staff reminders. The board's day bar wraps the after-midnight tail; the schedule editor uses a noon-to-noon axis for overnight schedules. Timesheets/CSV/report/Xero untouched (they read clock timestamps, which always handled overnight).

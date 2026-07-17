@@ -3,18 +3,24 @@
  *
  * Two concerns, both FLAGS (never blocks):
  * - Overlap detection: the same person on two shifts that run at the same
- *   time on the same day (double-booked). Uses each assignment's EFFECTIVE
- *   schedule (the M30 override when set, else the shift's own times), so
- *   resizing someone's hours can create or clear an overlap. Back-to-back
- *   (one ends exactly when the next starts) is NOT an overlap.
+ *   time (double-booked). Uses each assignment's EFFECTIVE schedule (the M30
+ *   override when set, else the shift's own times), so resizing someone's
+ *   hours can create or clear an overlap. Compared on ABSOLUTE time (date +
+ *   extended minutes, M34), so a Friday overnight close clashes with a
+ *   too-early Saturday morning shift. Back-to-back (one ends exactly when
+ *   the next starts) is NOT an overlap.
  * - Labour-cost estimate: the week as rostered — confirmed assignments only,
  *   net worked hours (unpaid breaks out) × the rate the owner typed. An
  *   ESTIMATE, never a payroll calculation (LABOUR_COST_DISCLAIMER applies
  *   wherever it's shown); staff without a rate contribute hours but no cost
  *   and are flagged, mirroring the labour report.
  */
-import { resolveSchedule, workedMinutes } from "@/lib/assignment-schedule";
-import { timesOverlap } from "@/lib/shift-offer";
+import {
+  DAY_MINUTES,
+  extendedRange,
+  resolveSchedule,
+  workedMinutes,
+} from "@/lib/assignment-schedule";
 
 export type InsightShift = {
   id: string;
@@ -35,50 +41,65 @@ export type InsightAssignment = {
 
 export type OverlapPair = {
   staffMemberId: string;
+  /** The date of the earlier of the two chips (for display). */
   date: string;
-  /** The two shifts that clash, in board order. */
+  /** The two shifts that clash, earlier first. */
   shiftIds: [string, string];
 };
 
+/** Days since epoch for a "YYYY-MM-DD" date (UTC-safe). */
+function dayNumber(date: string): number {
+  const [y, m, d] = date.split("-").map(Number);
+  return Date.UTC(y!, (m ?? 1) - 1, d ?? 1) / 86_400_000;
+}
+
 /**
- * Every (person, day) where two of their visible chips (confirmed OR
- * suggested — both sit on the board) run at overlapping effective times.
- * Deterministic: pairs come out by date, then person, then input order.
+ * Every pair of one person's visible chips (confirmed OR suggested — both
+ * sit on the board) that run at overlapping effective times, compared on
+ * absolute time so overnight shifts clash across the date line too.
+ * Deterministic: pairs come out by date, then person.
  */
 export function findAssignmentOverlaps(input: {
   shifts: InsightShift[];
   assignments: InsightAssignment[];
 }): OverlapPair[] {
   const shiftById = new Map(input.shifts.map((s) => [s.id, s]));
-  // (staffId, date) → that person's chips that day with effective times.
-  const byPersonDay = new Map<
+  // staffId → that person's chips as absolute [start, end) minute ranges.
+  const byPerson = new Map<
     string,
-    Array<{ shiftId: string; start: string; end: string }>
+    Array<{ shiftId: string; date: string; start: number; end: number }>
   >();
   for (const a of input.assignments) {
     const shift = shiftById.get(a.shiftId);
     if (!shift) continue;
     const schedule = resolveSchedule(shift, a);
-    const key = `${a.staffMemberId}|${shift.date}`;
-    const list = byPersonDay.get(key) ?? [];
+    const range = extendedRange(schedule.startTime, schedule.endTime);
+    const base = dayNumber(shift.date) * DAY_MINUTES;
+    const list = byPerson.get(a.staffMemberId) ?? [];
     list.push({
       shiftId: a.shiftId,
-      start: schedule.startTime,
-      end: schedule.endTime,
+      date: shift.date,
+      start: base + range.start,
+      end: base + range.end,
     });
-    byPersonDay.set(key, list);
+    byPerson.set(a.staffMemberId, list);
   }
 
   const pairs: OverlapPair[] = [];
-  for (const [key, chips] of byPersonDay) {
+  for (const [staffMemberId, chips] of byPerson) {
     if (chips.length < 2) continue;
-    const [staffMemberId = "", date = ""] = key.split("|");
     for (let i = 0; i < chips.length; i++) {
       for (let j = i + 1; j < chips.length; j++) {
-        const a = chips[i]!;
-        const b = chips[j]!;
-        if (timesOverlap(a.start, a.end, b.start, b.end)) {
-          pairs.push({ staffMemberId, date, shiftIds: [a.shiftId, b.shiftId] });
+        const [a, b] =
+          chips[i]!.start <= chips[j]!.start
+            ? [chips[i]!, chips[j]!]
+            : [chips[j]!, chips[i]!];
+        if (a.start < b.end && b.start < a.end) {
+          pairs.push({
+            staffMemberId,
+            date: a.date,
+            shiftIds: [a.shiftId, b.shiftId],
+          });
         }
       }
     }
@@ -90,14 +111,20 @@ export function findAssignmentOverlaps(input: {
   );
 }
 
-/** Would putting this person on `target` clash with their other chips? */
+/**
+ * Would putting this person on `target` clash with their other chips? All
+ * ranges anchored to the same day, overnight-aware (the drop-preview hint;
+ * cross-day clashes surface via findAssignmentOverlaps after the drop).
+ */
 export function wouldOverlap(
   target: { startTime: string; endTime: string },
   others: Array<{ startTime: string; endTime: string }>,
 ): boolean {
-  return others.some((o) =>
-    timesOverlap(target.startTime, target.endTime, o.startTime, o.endTime),
-  );
+  const t = extendedRange(target.startTime, target.endTime);
+  return others.some((o) => {
+    const r = extendedRange(o.startTime, o.endTime);
+    return t.start < r.end && r.start < t.end;
+  });
 }
 
 export type RosterCostEstimate = {

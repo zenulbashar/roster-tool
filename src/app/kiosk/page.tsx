@@ -25,7 +25,7 @@ import {
   kioskCancelOfferAction,
   kioskStockCheckAction,
 } from "@/app/kiosk/actions";
-import { businessDateOf, formatDateOnly, formatTimeOnly } from "@/lib/time";
+import { businessDateOf, formatDateOnly, formatTimeRange } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +35,7 @@ function shiftDetail(s: {
   startTime: string;
   endTime: string;
 }) {
-  return `${formatDateOnly(s.date)} · ${s.label} · ${formatTimeOnly(s.startTime)} – ${formatTimeOnly(s.endTime)}`;
+  return `${formatDateOnly(s.date)} · ${s.label} · ${formatTimeRange(s.startTime, s.endTime)}`;
 }
 
 /** Dark kiosk header: ROSTER · Kiosk, tenant name, current local date/time. */

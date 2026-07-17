@@ -9,7 +9,7 @@ import {
 } from "@/lib/pin";
 import { pinSchema } from "@/lib/validation";
 import { timesOverlap } from "@/lib/shift-offer";
-import { formatDateOnly, formatTimeOnly } from "@/lib/time";
+import { formatDateOnly, formatTimeRange } from "@/lib/time";
 import { notifyOwner } from "@/lib/notifications";
 
 /**
@@ -140,7 +140,7 @@ export async function claimShiftForStaff(
   let when = "";
   let heads = "";
   if (shift) {
-    when = ` for ${shift.label} on ${formatDateOnly(shift.date)} (${formatTimeOnly(shift.startTime)} – ${formatTimeOnly(shift.endTime)})`;
+    when = ` for ${shift.label} on ${formatDateOnly(shift.date)} (${formatTimeRange(shift.startTime, shift.endTime)})`;
     const [onLeave, sameDay] = await Promise.all([
       repo.hasApprovedLeaveOn(auth.staff.id, shift.date),
       repo.confirmedShiftsForStaffOnDate(auth.staff.id, shift.date, shift.id),
@@ -200,7 +200,7 @@ export async function claimOrgOfferForStaff(
   const offerRepo = createTenantRepo(res.businessId);
   const shift = await offerRepo.getPublishedShift(res.shiftId);
   const when = shift
-    ? ` for ${shift.label} on ${formatDateOnly(shift.date)} (${formatTimeOnly(shift.startTime)} – ${formatTimeOnly(shift.endTime)})`
+    ? ` for ${shift.label} on ${formatDateOnly(shift.date)} (${formatTimeRange(shift.startTime, shift.endTime)})`
     : "";
 
   await notifyOwner(offerRepo, {

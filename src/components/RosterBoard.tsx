@@ -40,21 +40,22 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { avatarColor } from "@/lib/avatar";
-import { formatTimeOnly, formatDateOnly } from "@/lib/time";
+import { formatTimeOnly, formatTimeRange, formatDateOnly } from "@/lib/time";
 import {
   ASSIGNMENT_BREAK_OPTIONS,
   DAY_MINUTES,
   SNAP_STEP,
   defaultBreakStart,
+  extendedBreakStart,
+  extendedRange,
+  isOvernight,
   findMatchingShiftOnDate,
   formatDuration,
   minutesToTime,
-  normalizeTime,
   resolveSchedule,
   sameShiftTimes,
   scheduleSegments,
   snapMinutes,
-  timeToMinutes,
   validateSchedule,
   workedMinutes,
 } from "@/lib/assignment-schedule";
@@ -1050,10 +1051,7 @@ function AssignmentChip({
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-1 text-[11px] text-[var(--color-text-secondary)]">
-          <span>
-            {formatTimeOnly(schedule.startTime)} –{" "}
-            {formatTimeOnly(schedule.endTime)}
-          </span>
+          <span>{formatTimeRange(schedule.startTime, schedule.endTime)}</span>
           {overlaps ? (
             <span
               data-overlap
@@ -1109,7 +1107,7 @@ function AssignmentChip({
         type="button"
         onClick={() => onOpenEditor(pair)}
         className="block w-full text-left"
-        aria-label={`${member.name}, ${shift.label} ${formatTimeOnly(schedule.startTime)} to ${formatTimeOnly(schedule.endTime)} — change times or break`}
+        aria-label={`${member.name}, ${shift.label} ${formatTimeRange(schedule.startTime, schedule.endTime)} — change times or break`}
       >
         <div
           className="truncate pr-3 font-archivo text-[12.5px] font-bold tracking-[0.01em]"
@@ -1124,10 +1122,7 @@ function AssignmentChip({
             opacity: colorMode === "type" ? 0.8 : 1,
           }}
         >
-          <span>
-            {formatTimeOnly(schedule.startTime)} –{" "}
-            {formatTimeOnly(schedule.endTime)}
-          </span>
+          <span>{formatTimeRange(schedule.startTime, schedule.endTime)}</span>
           {schedule.overridden ? (
             <span className="rounded bg-white/70 px-1 text-[9.5px] font-bold text-[#4D7C0F]">
               Custom
@@ -1183,7 +1178,17 @@ function TimeBar({
   };
   color: string;
 }) {
-  const segments = scheduleSegments(schedule);
+  // Overnight segments run past minute 1440 on the extended axis — wrap them
+  // around the 24 h track so the after-midnight tail shows at the left edge.
+  const segments = scheduleSegments(schedule).flatMap((seg) => {
+    if (seg.end <= DAY_MINUTES) return [seg];
+    if (seg.start >= DAY_MINUTES)
+      return [{ start: seg.start - DAY_MINUTES, end: seg.end - DAY_MINUTES }];
+    return [
+      { start: seg.start, end: DAY_MINUTES },
+      { start: 0, end: seg.end - DAY_MINUTES },
+    ];
+  });
   return (
     <div
       aria-hidden="true"
@@ -1295,7 +1300,7 @@ function OpenBlock({
         Open · {shift.label}
       </div>
       <div className="text-[11px] text-[#94A3B8]">
-        {formatTimeOnly(shift.startTime)} – {formatTimeOnly(shift.endTime)}
+        {formatTimeRange(shift.startTime, shift.endTime)}
       </div>
       {shift.requiredStaff > 1 ? (
         <div className="text-[10.5px] font-bold text-[#B45309]">
@@ -1356,8 +1361,7 @@ function DragGhost({
         {staff ? staff.name : `Open · ${shift.label}`}
       </div>
       <div className="text-[11px] text-[#4B5563]">
-        {shift.label} · {formatTimeOnly(schedule.startTime)} –{" "}
-        {formatTimeOnly(schedule.endTime)}
+        {shift.label} · {formatTimeRange(schedule.startTime, schedule.endTime)}
       </div>
       <TimeBar schedule={schedule} color={scheme.bar} />
     </div>
@@ -1389,15 +1393,27 @@ function ScheduleEditor({
   onUnassign: () => void;
 }) {
   const initial = resolveSchedule(shift, assignment);
-  const [startMin, setStartMin] = useState(timeToMinutes(initial.startTime));
-  const [endMin, setEndMin] = useState(timeToMinutes(initial.endTime));
+  const initialRange = extendedRange(initial.startTime, initial.endTime);
+  // All positions live on the EXTENDED axis (end/break may exceed 1440 for
+  // overnight schedules); wall-clock strings are derived mod-1440. The axis
+  // window is picked once: a 24 h day view, or noon-to-noon when the shift
+  // crosses midnight, so an overnight block reads as one solid span.
+  const [axisStart] = useState(() =>
+    initialRange.end > DAY_MINUTES ||
+    isOvernight(shift.startTime, shift.endTime)
+      ? DAY_MINUTES / 2
+      : 0,
+  );
+  const axisEnd = axisStart + DAY_MINUTES;
+  const [startMin, setStartMin] = useState(initialRange.start);
+  const [endMin, setEndMin] = useState(initialRange.end);
   const [breakMinutes, setBreakMinutes] = useState(initial.breakMinutes);
   const [breakStartMin, setBreakStartMin] = useState(
-    initial.breakStart
-      ? timeToMinutes(initial.breakStart)
-      : timeToMinutes(
-          defaultBreakStart(initial.startTime, initial.endTime, 30),
-        ),
+    extendedBreakStart(
+      initial.breakStart ??
+        defaultBreakStart(initial.startTime, initial.endTime, 30),
+      initial.startTime,
+    ),
   );
   const trackRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{
@@ -1415,10 +1431,11 @@ function ScheduleEditor({
   }, [onClose]);
 
   const draft = {
-    startTime: minutesToTime(startMin),
-    endTime: minutesToTime(endMin),
+    startTime: minutesToTime(startMin % DAY_MINUTES),
+    endTime: minutesToTime(endMin % DAY_MINUTES),
     breakMinutes,
-    breakStart: breakMinutes > 0 ? minutesToTime(breakStartMin) : null,
+    breakStart:
+      breakMinutes > 0 ? minutesToTime(breakStartMin % DAY_MINUTES) : null,
   };
   const check = validateSchedule(draft);
   const worked = workedMinutes(draft);
@@ -1431,7 +1448,7 @@ function ScheduleEditor({
     if (!track) return 0;
     const rect = track.getBoundingClientRect();
     const frac = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
-    return snapMinutes(frac * DAY_MINUTES);
+    return snapMinutes(axisStart + frac * DAY_MINUTES);
   };
 
   const onTrackPointerMove = (e: React.PointerEvent) => {
@@ -1439,9 +1456,11 @@ function ScheduleEditor({
     if (!drag || drag.pointerId !== e.pointerId) return;
     const m = pxToMinutes(e.clientX);
     if (drag.which === "start") {
-      setStartMin(Math.min(m, endMin - SNAP_STEP));
+      setStartMin(
+        Math.min(Math.max(m, axisStart), endMin - SNAP_STEP, DAY_MINUTES - 1),
+      );
     } else if (drag.which === "end") {
-      setEndMin(Math.max(m, startMin + SNAP_STEP));
+      setEndMin(Math.min(Math.max(m, startMin + SNAP_STEP), axisEnd));
     } else {
       setBreakStartMin(
         Math.min(
@@ -1483,7 +1502,7 @@ function ScheduleEditor({
           −
         </button>
         <span className="w-[74px] text-center font-archivo text-[14px] font-bold text-[var(--color-ink)]">
-          {formatTimeOnly(minutesToTime(value))}
+          {formatTimeOnly(minutesToTime(value % DAY_MINUTES))}
         </span>
         <button
           type="button"
@@ -1498,7 +1517,18 @@ function ScheduleEditor({
   );
 
   const color = avatarColor(staff.id);
-  const hourMarks = [0, 6, 12, 18, 24];
+  // Gridline marks every 6 h across the axis window, labelled wall-clock.
+  const axisMarks = [0, 360, 720, 1080, 1440].map((m) => axisStart + m);
+  const markLabel = (m: number) => {
+    const h = Math.floor((m % DAY_MINUTES) / 60);
+    return h === 0
+      ? "12am"
+      : h === 12
+        ? "12pm"
+        : h < 12
+          ? `${h}am`
+          : `${h - 12}pm`;
+  };
 
   return (
     <div
@@ -1522,8 +1552,7 @@ function ScheduleEditor({
               </div>
               <div className="text-[12.5px] text-[var(--color-text-secondary)]">
                 {shift.label} · {formatDateOnly(shift.date)} · shift runs{" "}
-                {formatTimeOnly(shift.startTime)} –{" "}
-                {formatTimeOnly(shift.endTime)}
+                {formatTimeRange(shift.startTime, shift.endTime)}
               </div>
             </div>
           </div>
@@ -1546,12 +1575,12 @@ function ScheduleEditor({
             onPointerUp={releaseHandle}
             onPointerCancel={releaseHandle}
           >
-            {hourMarks.map((h) => (
+            {axisMarks.map((m) => (
               <span
-                key={h}
+                key={m}
                 aria-hidden="true"
                 className="absolute top-0 h-full w-px bg-black/[0.07]"
-                style={{ left: `${(h / 24) * 100}%` }}
+                style={{ left: `${((m - axisStart) / DAY_MINUTES) * 100}%` }}
               />
             ))}
             {/* Worked span (split by break) */}
@@ -1560,7 +1589,7 @@ function ScheduleEditor({
                 key={seg.start}
                 className="absolute inset-y-[8px] rounded-[6px]"
                 style={{
-                  left: `${(seg.start / DAY_MINUTES) * 100}%`,
+                  left: `${((seg.start - axisStart) / DAY_MINUTES) * 100}%`,
                   width: `${((seg.end - seg.start) / DAY_MINUTES) * 100}%`,
                   backgroundColor: color,
                   opacity: 0.5,
@@ -1573,7 +1602,7 @@ function ScheduleEditor({
               onPointerDown={grabHandle("start")}
               className="absolute inset-y-[4px] z-[2] w-[14px] cursor-ew-resize rounded-[5px] border-2 border-white shadow"
               style={{
-                left: `calc(${(startMin / DAY_MINUTES) * 100}% - 7px)`,
+                left: `calc(${((startMin - axisStart) / DAY_MINUTES) * 100}% - 7px)`,
                 backgroundColor: color,
               }}
             />
@@ -1583,7 +1612,7 @@ function ScheduleEditor({
               onPointerDown={grabHandle("end")}
               className="absolute inset-y-[4px] z-[2] w-[14px] cursor-ew-resize rounded-[5px] border-2 border-white shadow"
               style={{
-                left: `calc(${(endMin / DAY_MINUTES) * 100}% - 7px)`,
+                left: `calc(${((endMin - axisStart) / DAY_MINUTES) * 100}% - 7px)`,
                 backgroundColor: color,
               }}
             />
@@ -1594,7 +1623,7 @@ function ScheduleEditor({
                 onPointerDown={grabHandle("break")}
                 className="absolute inset-y-[8px] z-[1] cursor-grab rounded-[6px] border border-dashed border-[#9CA3AF] bg-white/90"
                 style={{
-                  left: `${(breakStartMin / DAY_MINUTES) * 100}%`,
+                  left: `${((breakStartMin - axisStart) / DAY_MINUTES) * 100}%`,
                   width: `${(breakMinutes / DAY_MINUTES) * 100}%`,
                 }}
                 title="Drag to move the break"
@@ -1602,18 +1631,8 @@ function ScheduleEditor({
             ) : null}
           </div>
           <div className="mt-1 flex justify-between text-[10.5px] text-[var(--color-text-muted)]">
-            {hourMarks.map((h) => (
-              <span key={h}>
-                {h === 0
-                  ? "12am"
-                  : h === 12
-                    ? "12pm"
-                    : h < 12
-                      ? `${h}am`
-                      : h === 24
-                        ? "12am"
-                        : `${h - 12}pm`}
-              </span>
+            {axisMarks.map((m) => (
+              <span key={m}>{markLabel(m)}</span>
             ))}
           </div>
         </div>
@@ -1624,15 +1643,15 @@ function ScheduleEditor({
             "Starts",
             startMin,
             (m) => setStartMin(m),
-            0,
-            endMin - SNAP_STEP,
+            axisStart,
+            Math.min(endMin - SNAP_STEP, DAY_MINUTES - 1),
           )}
           {stepper(
             "Finishes",
             endMin,
             (m) => setEndMin(m),
             startMin + SNAP_STEP,
-            DAY_MINUTES - SNAP_STEP,
+            axisEnd,
           )}
         </div>
 
@@ -1655,12 +1674,9 @@ function ScheduleEditor({
                   setBreakMinutes(mins);
                   if (mins > 0) {
                     setBreakStartMin(
-                      timeToMinutes(
-                        defaultBreakStart(
-                          minutesToTime(startMin),
-                          minutesToTime(endMin),
-                          mins,
-                        ),
+                      extendedBreakStart(
+                        defaultBreakStart(draft.startTime, draft.endTime, mins),
+                        draft.startTime,
                       ),
                     );
                   }
@@ -1696,11 +1712,10 @@ function ScheduleEditor({
               <strong className="text-[var(--color-ink)]">
                 {formatDuration(worked)}
               </strong>{" "}
-              ({formatTimeOnly(draft.startTime)} –{" "}
-              {formatTimeOnly(draft.endTime)}
+              ({formatTimeRange(draft.startTime, draft.endTime)}
               {breakMinutes > 0
                 ? `, ${breakMinutes} min break at ${formatTimeOnly(
-                    minutesToTime(breakStartMin),
+                    minutesToTime(breakStartMin % DAY_MINUTES),
                   )}`
                 : ""}
               ){isDefault ? " — the shift's own times." : ""}
@@ -1718,8 +1733,9 @@ function ScheduleEditor({
             <button
               type="button"
               onClick={() => {
-                setStartMin(timeToMinutes(normalizeTime(shift.startTime)));
-                setEndMin(timeToMinutes(normalizeTime(shift.endTime)));
+                const base = extendedRange(shift.startTime, shift.endTime);
+                setStartMin(base.start);
+                setEndMin(base.end);
                 setBreakMinutes(0);
               }}
               className="rounded-[9px] border border-[var(--color-border)] px-3.5 py-2 text-[12.5px] font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg)]"

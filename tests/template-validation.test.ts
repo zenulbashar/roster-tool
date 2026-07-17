@@ -36,6 +36,44 @@ describe("per-weekday override schemas accept partial maps", () => {
     expect(dayStaffOverridesSchema.safeParse({ "5": 21 }).success).toBe(false);
   });
 
+  it("overnight times are accepted; equal times are rejected (M34)", () => {
+    const overnight = templateSchema.safeParse({
+      label: "Close",
+      startTime: "18:00",
+      endTime: "02:00",
+      weekdays: [5, 6],
+      color: "",
+      dayTimeOverrides: null,
+      requiredStaff: "2",
+      dayStaffOverrides: null,
+    });
+    expect(overnight.success).toBe(true);
+
+    const zero = templateSchema.safeParse({
+      label: "Close",
+      startTime: "18:00",
+      endTime: "18:00",
+      weekdays: [5],
+      color: "",
+      dayTimeOverrides: null,
+      requiredStaff: "1",
+      dayStaffOverrides: null,
+    });
+    expect(zero.success).toBe(false);
+
+    // Per-day overrides follow the same rule.
+    expect(
+      dayTimeOverridesSchema.safeParse({
+        "5": { start: "20:00", end: "04:00" },
+      }).success,
+    ).toBe(true);
+    expect(
+      dayTimeOverridesSchema.safeParse({
+        "5": { start: "20:00", end: "20:00" },
+      }).success,
+    ).toBe(false);
+  });
+
   it("the full template form payload with a Friday-only override parses", () => {
     const r = templateSchema.safeParse({
       label: "Close",

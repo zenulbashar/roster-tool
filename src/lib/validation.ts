@@ -91,11 +91,15 @@ export const openShiftAssignSchema = z.object({
     .optional(),
 });
 
-/** One per-day time override: a start/end pair, end after start. */
+/**
+ * One per-day time override: a start/end pair. An end at or before the start
+ * means the shift finishes the NEXT day (overnight, M34); only identical
+ * times are rejected (a zero-length shift is always a typo).
+ */
 export const dayTimeOverrideSchema = z
   .object({ start: hhmm, end: hhmm })
-  .refine((o) => o.start < o.end, {
-    message: "End time must be after start time",
+  .refine((o) => o.start !== o.end, {
+    message: "A shift can't start and end at the same time",
     path: ["end"],
   });
 
@@ -163,8 +167,10 @@ export const templateSchema = z
     requiredStaff: requiredStaffSchema,
     dayStaffOverrides: dayStaffOverridesSchema,
   })
-  .refine((t) => t.startTime < t.endTime, {
-    message: "End time must be after start time",
+  // An end at or before the start = the shift finishes the NEXT day
+  // (overnight, M34 — "6 pm – 2 am"). Only identical times are rejected.
+  .refine((t) => t.startTime !== t.endTime, {
+    message: "A shift can't start and end at the same time",
     path: ["endTime"],
   });
 

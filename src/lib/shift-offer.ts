@@ -57,10 +57,11 @@ export function offerTransition(
 }
 
 /**
- * Whether a wall-clock time range [aStart, aEnd) overlaps [bStart, bEnd).
- * Times are "HH:MM" or "HH:MM:SS" strings, which sort lexically, so a plain
- * string compare is a correct time compare. Touching ends (one ends exactly
- * when the other starts) do NOT count as overlapping.
+ * Whether two same-day wall-clock ranges overlap, overnight-aware (M34): an
+ * end at or before its start wraps to the next day, so 18:00–02:00 and
+ * 22:00–06:00 DO overlap. Touching ends (one ends exactly when the other
+ * starts) do NOT count as overlapping. Both ranges are anchored to the same
+ * calendar day — cross-day comparisons live in roster-insights.
  */
 export function timesOverlap(
   aStart: TimeOnly,
@@ -68,7 +69,17 @@ export function timesOverlap(
   bStart: TimeOnly,
   bEnd: TimeOnly,
 ): boolean {
-  return aStart < bEnd && bStart < aEnd;
+  const toMin = (t: TimeOnly) => {
+    const [h = 0, m = 0] = t.split(":").map(Number);
+    return h * 60 + m;
+  };
+  const span = (s: number, e: number) =>
+    e === s ? 0 : e > s ? e - s : e + 1440 - s;
+  const aS = toMin(aStart);
+  const aE = aS + span(aS, toMin(aEnd));
+  const bS = toMin(bStart);
+  const bE = bS + span(bS, toMin(bEnd));
+  return aS < bE && bS < aE;
 }
 
 export type ClaimEligibility = { ok: true } | { ok: false; reason: string };

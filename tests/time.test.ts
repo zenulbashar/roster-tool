@@ -6,6 +6,7 @@ import {
   eachDate,
   isoWeekday,
   zonedDateTimeToUtc,
+  formatTimeRange,
 } from "@/lib/time";
 
 describe("formatDate", () => {
@@ -84,5 +85,19 @@ describe("isoWeekday", () => {
   it("maps Monday to 1 and Sunday to 7", () => {
     expect(isoWeekday("2025-06-09")).toBe(1); // Monday
     expect(isoWeekday("2025-06-15")).toBe(7); // Sunday
+  });
+});
+
+describe("formatTimeRange", () => {
+  it("formats a same-day range plainly", () => {
+    expect(formatTimeRange("09:00", "17:30")).toBe("9 am – 5:30 pm");
+    expect(formatTimeRange("09:00:00", "17:30:00")).toBe("9 am – 5:30 pm");
+  });
+
+  it("flags an overnight range (end at/before start = next day)", () => {
+    expect(formatTimeRange("18:00", "02:00")).toBe("6 pm – 2 am (next day)");
+    expect(formatTimeRange("22:00:00", "06:00:00")).toBe(
+      "10 pm – 6 am (next day)",
+    );
   });
 });

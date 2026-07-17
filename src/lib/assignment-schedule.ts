@@ -10,8 +10,12 @@
  * the person works the shift's own times — the original behaviour, so every
  * pre-existing assignment renders exactly as before.
  *
- * The app has no overnight shifts (template validation enforces start < end),
- * so all maths live on a single 0..1440-minute day axis.
+ * OVERNIGHT (M34): a shift stays anchored to the date it STARTS; an end time
+ * at or before the start means it finishes the NEXT day ("Friday close" =
+ * Fri 18:00 – Sat 02:00 lives on Friday). All maths run on an EXTENDED axis:
+ * minutes may exceed 1440 (end 02:00 after start 18:00 = minute 1560), and
+ * wall-clock fields store the mod-1440 "HH:MM". Same-day shifts behave
+ * exactly as before.
  */
 
 /** Break lengths the owner can drop into a shift: none, 30 min, or 1 hour. */
@@ -66,6 +70,49 @@ export function snapMinutes(mins: number, step: number = SNAP_STEP): number {
   return Math.round(mins / step) * step;
 }
 
+/** Does this range run past midnight? (end at/before start = next day). */
+export function isOvernight(startTime: string, endTime: string): boolean {
+  return timeToMinutes(endTime) <= timeToMinutes(startTime);
+}
+
+/**
+ * Length of a shift range in minutes, overnight-aware: end after start is a
+ * same-day span; end at/before start wraps to the next day (18:00 – 02:00 =
+ * 480). Equal times yield a degenerate 0 (rejected by validateSchedule).
+ */
+export function spanMinutes(startTime: string, endTime: string): number {
+  const start = timeToMinutes(startTime);
+  const end = timeToMinutes(endTime);
+  if (Number.isNaN(start) || Number.isNaN(end)) return NaN;
+  if (end === start) return 0;
+  return end > start ? end - start : end + DAY_MINUTES - start;
+}
+
+/**
+ * A schedule's [start, end) on the extended axis: start is minutes since the
+ * anchor day's midnight (< 1440), end may exceed 1440 for overnight ranges.
+ */
+export function extendedRange(
+  startTime: string,
+  endTime: string,
+): { start: number; end: number } {
+  const start = timeToMinutes(startTime);
+  return { start, end: start + spanMinutes(startTime, endTime) };
+}
+
+/**
+ * A break's start on the extended axis: a wall-clock at/after the shift's
+ * start is the same day; an earlier one (e.g. 01:00 in an 18:00 – 04:00
+ * shift) is after midnight, so it shifts up a day.
+ */
+export function extendedBreakStart(
+  breakStart: string,
+  shiftStartTime: string,
+): number {
+  const b = timeToMinutes(breakStart);
+  return b >= timeToMinutes(shiftStartTime) ? b : b + DAY_MINUTES;
+}
+
 /**
  * The schedule a person actually works on a shift: the assignment's override
  * when set, else the shift's own times. Break fields ride along unchanged.
@@ -95,8 +142,7 @@ export function workedMinutes(s: {
   endTime: string;
   breakMinutes: number;
 }): number {
-  const span = timeToMinutes(s.endTime) - timeToMinutes(s.startTime);
-  return Math.max(span - s.breakMinutes, 0);
+  return Math.max(spanMinutes(s.startTime, s.endTime) - s.breakMinutes, 0);
 }
 
 /** "7h 30m" / "12h" / "45m" — compact duration for chips and the editor. */
@@ -108,9 +154,10 @@ export function formatDuration(mins: number): string {
 }
 
 /**
- * The worked segments of a schedule, in minutes-since-midnight — one segment,
- * or two around the break gap. This is what the timeline bars draw. A break
- * that doesn't fully fit inside the span is intersected with it; a
+ * The worked segments of a schedule on the EXTENDED axis — one segment, or
+ * two around the break gap; overnight segments run past minute 1440 (the day
+ * bar wraps them, the editor's axis shows them directly). A break that
+ * doesn't fully fit inside the span is intersected with it; a
  * degenerate/missing break yields a single segment.
  */
 export function scheduleSegments(s: {
@@ -119,11 +166,10 @@ export function scheduleSegments(s: {
   breakMinutes: number;
   breakStart: string | null;
 }): Array<{ start: number; end: number }> {
-  const start = timeToMinutes(s.startTime);
-  const end = timeToMinutes(s.endTime);
+  const { start, end } = extendedRange(s.startTime, s.endTime);
   if (!(end > start)) return [];
   if (s.breakMinutes <= 0 || !s.breakStart) return [{ start, end }];
-  const bStart = Math.max(timeToMinutes(s.breakStart), start);
+  const bStart = Math.max(extendedBreakStart(s.breakStart, s.startTime), start);
   const bEnd = Math.min(bStart + s.breakMinutes, end);
   if (!(bEnd > bStart)) return [{ start, end }];
   const segments: Array<{ start: number; end: number }> = [];
@@ -141,11 +187,10 @@ export function defaultBreakStart(
   endTime: string,
   breakMinutes: number,
 ): string {
-  const start = timeToMinutes(startTime);
-  const end = timeToMinutes(endTime);
+  const { start, end } = extendedRange(startTime, endTime);
   const centred = snapMinutes(start + (end - start - breakMinutes) / 2);
   const clamped = Math.min(Math.max(centred, start), end - breakMinutes);
-  return minutesToTime(clamped);
+  return minutesToTime(clamped % DAY_MINUTES);
 }
 
 export type ScheduleValidation = { ok: true } | { ok: false; error: string };
@@ -166,12 +211,11 @@ export function validateSchedule(s: {
 }): ScheduleValidation {
   if (!HHMM.test(s.startTime) || !HHMM.test(s.endTime))
     return { ok: false, error: "Use times like 09:00." };
-  const start = timeToMinutes(s.startTime);
-  const end = timeToMinutes(s.endTime);
-  if (end - start < 15)
+  const span = spanMinutes(s.startTime, s.endTime);
+  if (span < 15)
     return {
       ok: false,
-      error: "The end time must be at least 15 minutes after the start.",
+      error: "The shift must run for at least 15 minutes.",
     };
   if (!(ASSIGNMENT_BREAK_OPTIONS as readonly number[]).includes(s.breakMinutes))
     return { ok: false, error: "Pick a break of none, 30 minutes, or 1 hour." };
@@ -182,7 +226,8 @@ export function validateSchedule(s: {
   }
   if (s.breakStart === null || !HHMM.test(s.breakStart))
     return { ok: false, error: "Choose where the break starts." };
-  const bStart = timeToMinutes(s.breakStart);
+  const { start, end } = extendedRange(s.startTime, s.endTime);
+  const bStart = extendedBreakStart(s.breakStart, s.startTime);
   if (bStart < start || bStart + s.breakMinutes > end)
     return {
       ok: false,

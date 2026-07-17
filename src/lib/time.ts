@@ -79,6 +79,18 @@ export function formatTimeOnly(time: TimeOnly): string {
 }
 
 /**
+ * Format a shift's start–end pair, flagging overnight ranges: an end at or
+ * before the start finishes the NEXT day (M34), so "18:00"/"02:00" renders
+ * "6 pm – 2 am (next day)". The one shared way to print a shift range —
+ * don't hand-roll `start – end` pairs.
+ */
+export function formatTimeRange(start: TimeOnly, end: TimeOnly): string {
+  const base = `${formatTimeOnly(start)} – ${formatTimeOnly(end)}`;
+  // HH:MM zero-padded strings compare correctly; Postgres returns HH:MM:SS.
+  return end.slice(0, 5) <= start.slice(0, 5) ? `${base} (next day)` : base;
+}
+
+/**
  * Format an inclusive date range of "YYYY-MM-DD" calendar dates for display,
  * e.g. "Tue 10/06 – Sat 14/06". A single-day range shows just the one date.
  */

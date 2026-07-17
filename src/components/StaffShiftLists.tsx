@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { formatDateOnly, formatTimeOnly } from "@/lib/time";
+import { formatDateOnly, formatTimeRange } from "@/lib/time";
 import { kioskCls, KioskNotice } from "@/components/KioskForm";
 
 /**
@@ -85,7 +85,7 @@ export function StaffShiftBackLinks({
 }
 
 function shiftLine(s: ShiftLineInput): string {
-  return `${formatDateOnly(s.date)} · ${s.label} · ${formatTimeOnly(s.startTime)} – ${formatTimeOnly(s.endTime)}`;
+  return `${formatDateOnly(s.date)} · ${s.label} · ${formatTimeRange(s.startTime, s.endTime)}`;
 }
 
 const rowCard =

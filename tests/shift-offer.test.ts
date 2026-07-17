@@ -56,6 +56,15 @@ describe("timesOverlap", () => {
   it("is false for disjoint ranges", () => {
     expect(timesOverlap("09:00", "11:00", "13:00", "15:00")).toBe(false);
   });
+
+  it("is overnight-aware: an end at/before the start wraps to the next day", () => {
+    // 18:00–02:00 runs into 22:00–06:00.
+    expect(timesOverlap("18:00", "02:00", "22:00", "06:00")).toBe(true);
+    // …but not into the same day's morning.
+    expect(timesOverlap("18:00", "02:00", "08:00", "14:00")).toBe(false);
+    // A day shift ending exactly when the night shift starts doesn't clash.
+    expect(timesOverlap("10:00", "18:00", "18:00", "02:00")).toBe(false);
+  });
 });
 
 describe("claimEligibility", () => {
