@@ -6,6 +6,8 @@ import {
   resolveOrgForUser,
   resolveActiveLocation,
 } from "@/lib/tenant/org-access";
+import { resolveImpersonation } from "@/lib/admin/impersonation-session";
+import { isPlatformAdmin } from "@/lib/admin/repository";
 
 /**
  * Server-side guards for the owner area. These derive the tenant from the
@@ -48,12 +50,50 @@ export async function requireSession() {
  *   select another org's business. Every existing owner page uses this as its
  *   tenant, so switching location re-scopes them all with no page changes.
  */
-export async function requireOwner() {
+export interface OwnerContext {
+  userId: string;
+  orgId: string;
+  businessId: string;
+  email: string | null;
+  /**
+   * Set when a Zale IT admin is acting inside this tenant via "view as venue"
+   * (M37). The owner layout uses it to render the persistent red banner + inset
+   * frame + write-confirm guard. Null for a real owner session.
+   */
+  impersonation: { adminUserId: string; venueName: string } | null;
+}
+
+export async function requireOwner(): Promise<OwnerContext> {
+  // M37: an admin impersonating a tenant resolves the org from the signed
+  // impersonation grant (re-validated in resolveImpersonation), NOT from an
+  // org_membership — an admin has none. The active-location cookie still
+  // applies, so the in-app location switcher works while impersonating.
+  const imp = await resolveImpersonation();
+  if (imp) {
+    const businessId = await resolveActiveLocation(imp.orgId, imp.businessId);
+    if (!businessId) redirect("/admin/clients");
+    return {
+      userId: imp.adminUserId,
+      orgId: imp.orgId,
+      businessId,
+      email: null,
+      impersonation: {
+        adminUserId: imp.adminUserId,
+        venueName: imp.venueName,
+      },
+    };
+  }
+
   const session = await auth();
   if (!session?.user) redirect("/sign-in");
   const userId = session.user.id;
   const orgId = await resolveOrgForUser(userId);
-  if (!orgId) redirect("/onboarding");
+  if (!orgId) {
+    // A platform admin who isn't impersonating has no org — send them to the
+    // console rather than the owner onboarding flow.
+    if (await isPlatformAdmin(userId)) redirect("/admin/clients");
+    redirect("/onboarding");
+  }
   const businessId = await resolveActiveLocation(
     orgId,
     session.user.businessId ?? null,
@@ -64,6 +104,7 @@ export async function requireOwner() {
     orgId,
     businessId,
     email: session.user.email ?? null,
+    impersonation: null,
   };
 }
 

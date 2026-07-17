@@ -4,6 +4,8 @@ import { signOut } from "@/lib/auth";
 import { OwnerNav } from "@/components/OwnerNav";
 import { LocationSwitcher } from "@/components/LocationSwitcher";
 import { NotificationBell } from "@/components/NotificationBell";
+import { ImpersonationBanner } from "@/components/ImpersonationBanner";
+import { ImpersonationWriteGuard } from "@/components/ImpersonationWriteGuard";
 import { relativeTime } from "@/lib/notifications";
 
 export default async function OwnerLayout({
@@ -14,7 +16,7 @@ export default async function OwnerLayout({
   // Tenant-scoped via the session. The unread count + recent list are read per
   // request (owner pages are dynamic), so they refresh on navigation/refresh.
   // The org's locations feed the header location switcher (M29).
-  const { repo, org, businessId } = await ownerContext();
+  const { repo, org, businessId, impersonation } = await ownerContext();
   const [unreadCount, recent, locations] = await Promise.all([
     repo.countUnreadNotifications(),
     repo.listRecentNotifications(10),
@@ -36,10 +38,28 @@ export default async function OwnerLayout({
     await signOut({ redirectTo: "/" });
   }
 
+  const impersonating = impersonation !== null;
+
   return (
-    <div className="min-h-screen bg-[var(--color-bg)]">
+    <div
+      className={`min-h-screen bg-[var(--color-bg)] ${impersonating ? "pt-[52px]" : ""}`}
+    >
+      {/* M37: an admin acting inside this tenant gets a persistent red banner, a
+          full-viewport inset frame, and a write-confirm guard over page writes. */}
+      {impersonating ? (
+        <>
+          <ImpersonationBanner venueName={impersonation.venueName} />
+          <div
+            aria-hidden="true"
+            className="pointer-events-none fixed inset-0 z-[55] border-4 border-[#DC2626]"
+          />
+          <ImpersonationWriteGuard venueName={impersonation.venueName} />
+        </>
+      ) : null}
       {/* Dark top nav — the real global chrome (single 60px row). */}
-      <header className="sticky top-0 z-50 bg-[var(--color-header)] shadow-[0_1px_0_#1F2937]">
+      <header
+        className={`sticky ${impersonating ? "top-[52px]" : "top-0"} z-50 bg-[var(--color-header)] shadow-[0_1px_0_#1F2937]`}
+      >
         <div className="flex h-[60px] items-center gap-0 pl-5 pr-4">
           <Link
             href="/app"
