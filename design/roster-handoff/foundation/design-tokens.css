@@ -1,0 +1,90 @@
+/* Roster — design tokens as CSS custom properties.
+   Exact values from the Forest-brand prototype. Adapt to the app's real
+   styling layer (Tailwind theme keys, CSS vars, etc). See design-tokens.md
+   for usage notes — that file is the written source of truth. */
+
+:root {
+  /* ---- brand / accent ---- */
+  --forest:            #13301F;  /* accent fill on light surfaces */
+  --forest-hover:      #1D4A2E;
+  --on-forest:         #FFFFFF;
+  --leaf:              #5FA875;  /* accent on DARK surfaces */
+  --leaf-hover:        #4E9666;
+  --green-text:        #13301F;
+  --green-text-2:      #2E7D4E;
+
+  /* ---- neutrals / surfaces ---- */
+  --ink:               #111827;
+  --text-secondary:    #374151;
+  --text-muted:        #6B7280;
+  --text-faint:        #9CA3AF;
+  --border:            #E5E7EB;
+  --border-faint:      #F1F3F5;
+  --border-faint-2:    #F3F4F6;
+  --bg:                #F9FAFB;
+  --surface:           #FFFFFF;
+  --surface-faint:     #FAFBFC;
+
+  /* dark-surface dividers */
+  --dark-border:       #1F2937;
+  --dark-border-2:     #374151;
+  --dark-border-3:     #2A3344;
+
+  /* ---- forest tints ---- */
+  --tint:              #ECF3EE;
+  --tint-2:            #E3EEE7;
+  --tint-border:       #CFE3D6;
+  --tint-hover:        #E0EDE4;
+  --grid-hover:        #EDF4EF;
+  --grid-empty-hover:  #7DA98A;
+
+  /* ---- semantic status (text / bg / border) ---- */
+  --ok-text:    #15803D; --ok-bg:    #ECFDF3; --ok-border:    #BBF7D0;
+  --warn-text:  #B45309; --warn-bg:  #FEF3E2; --warn-border:  #FED7AA;
+  --danger-text:#B91C1C; --danger-bg:#FEECEC; --danger-border:#FECACA;
+  --info-text:  #1D4ED8; --info-bg:  #EFF6FF; --info-border:  #BFDBFE;
+  --neutral-text:#6B7280;--neutral-bg:#F3F4F6;--neutral-border:#E5E7EB;
+  --alert-red:  #DC2626;   /* icons, dot ping, GPS block, impersonation frame */
+  --warn-accent:#D97706;   /* inline "+18h pending", estimate warnings */
+
+  /* ---- shift types (stripe / tint / label / time) ---- */
+  --shift-morning-stripe:#2E7D4E; --shift-morning-bg:#ECF3EE; --shift-morning-label:#1D4A2E; --shift-morning-time:#2E7D4E;
+  --shift-arvo-stripe:   #7C5CBF; --shift-arvo-bg:   #F2EEFB; --shift-arvo-label:   #5B43A6; --shift-arvo-time:   #6E57B8;
+  --shift-close-stripe:  #1E293B; --shift-close-bg:  #EEF1F5; --shift-close-label:  #1E293B; --shift-close-time:  #566476;
+  --shift-split-stripe:  #D97706; --shift-split-bg:  #FDF2E3; --shift-split-label:  #B45309; --shift-split-time:  #C26A0C;
+
+  /* availability dots */
+  --avail-yes:#16A34A; --avail-partial:#D97706; --avail-off:#9CA3AF; --avail-none:#E5E7EB;
+
+  /* ---- sub-brands ---- */
+  --kiosk-bg-a:#1a2335; --kiosk-bg-b:#0E1320; --kiosk-tile:#1C2433; --kiosk-tile-border:#2A3344;
+  --kiosk-ok-bg:#14532D; --kiosk-ok-border:#166534; --kiosk-danger-bg:#3B1414; --kiosk-danger-border:#7F1D1D;
+
+  --admin-nav-bg:#1E1B4B; --admin-2:#312E81; --admin-3:#4338CA; --admin-wordmark:#A5B4FC; --admin-light:#C7D2FE;
+
+  --imp-banner:#B91C1C; --imp-frame:#DC2626; --imp-confirm-hover:#991B1B;
+
+  --xero-blue:#13B5EA; --xero-tint:#E0F5FC;
+
+  /* ---- radius ---- */
+  --r-input:10px; --r-card:14px; --r-panel:16px; --r-panel-lg:18px; --r-pill:20px; --r-chip:6px;
+
+  /* ---- shadow ---- */
+  --shadow-card:  0 1px 2px rgba(17,24,39,.04);
+  --shadow-menu:  0 18px 40px rgba(17,24,39,.20);
+  --shadow-bell:  0 22px 52px rgba(17,24,39,.24);
+  --shadow-modal: 0 30px 70px rgba(0,0,0,.4);
+  --shadow-toast: 0 16px 40px rgba(0,0,0,.28);
+  --shadow-lift:  0 5px 14px rgba(17,24,39,.11);
+  --focus-forest: 0 0 0 3px rgba(19,48,31,.20);
+  --focus-blue:   0 0 0 3px rgba(29,78,216,.45);
+
+  /* ---- layout ---- */
+  --content-max:1340px;
+  --page-pad:26px 30px 80px;
+
+  /* ---- type ---- */
+  --font-display:'Archivo', sans-serif;
+  --font-body:'Public Sans', sans-serif;
+  --font-mono: ui-monospace, monospace;
+}

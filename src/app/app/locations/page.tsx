@@ -104,7 +104,7 @@ export default async function LocationsPage({
             <select
               name="timezone"
               defaultValue="Australia/Sydney"
-              className="block w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-[14px] py-[11px] text-[14.5px] text-[var(--color-ink)] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.16)]"
+              className="block w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-[14px] py-[11px] text-[14.5px] text-[var(--color-ink)] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(19,48,31,0.18)]"
             >
               {AU_TIMEZONES.map((tz) => (
                 <option key={tz} value={tz}>

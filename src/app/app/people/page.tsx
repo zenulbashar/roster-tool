@@ -164,7 +164,7 @@ export default async function PeoplePage({
                                 />
                                 <button
                                   type="submit"
-                                  className="inline-flex items-center gap-1 rounded-full border border-dashed border-[var(--color-line)] px-2.5 py-1 text-[12px] font-medium text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-button)] hover:text-[#3F6212]"
+                                  className="inline-flex items-center gap-1 rounded-full border border-dashed border-[var(--color-line)] px-2.5 py-1 text-[12px] font-medium text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-button)] hover:text-[#13301F]"
                                 >
                                   <span className="material-symbols-rounded text-[15px]">
                                     add
@@ -318,7 +318,7 @@ export default async function PeoplePage({
 }
 
 const selectCls =
-  "block w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-[14px] py-[11px] text-[14.5px] text-[var(--color-ink)] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.16)]";
+  "block w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-[14px] py-[11px] text-[14.5px] text-[var(--color-ink)] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(19,48,31,0.18)]";
 
 /** A location the person is a member of: green chip; removable unless it's home. */
 function LocationChip({

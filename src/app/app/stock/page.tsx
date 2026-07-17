@@ -197,7 +197,7 @@ export default async function StockPage({
                               <span className="text-[#9CA3AF]">—</span>
                             )}
                             {reminderSent ? (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#5A7D17]">
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#2E7D4E]">
                                 <Icon
                                   name="mark_email_read"
                                   className="text-[13px]"

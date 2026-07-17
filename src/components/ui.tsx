@@ -8,8 +8,9 @@ import { avatarColor, initials as toInitials } from "@/lib/avatar";
  *
  * Type system: Archivo (--font-display, via .font-archivo) for headings,
  * numbers, badges and primary buttons; Public Sans (--font-sans, the body
- * default) for everything else. Green (`#76b900`) is reserved for primary
- * actions and active states; blue (`--color-brand`) for links/focus/info.
+ * default) for everything else. Forest (`--color-button`, #13301F) is the
+ * primary action on light surfaces (Leaf #5FA875 on dark chrome); blue
+ * (`--color-brand`) for links/focus/info.
  */
 
 // ---------------------------------------------------------------------------
@@ -20,7 +21,7 @@ const buttonBase =
   "inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] min-h-11 whitespace-nowrap transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
 
 const variants = {
-  // Primary actions: Zaleit green with dark text (links/info stay blue).
+  // Primary actions: Forest fill with white text (links/info stay blue).
   primary:
     "font-archivo font-bold text-[13.5px] tracking-[0.01em] px-[17px] py-[11px] bg-[var(--color-button)] text-[var(--color-button-ink)] hover:bg-[var(--color-accent-dark)] shadow-[0_1px_2px_rgba(17,24,39,0.10)]",
   secondary:
@@ -205,7 +206,7 @@ export function TextInput({
 }: ComponentProps<"input">) {
   return (
     <input
-      className={`block w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-[14px] py-[11px] text-[14.5px] text-[var(--color-ink)] outline-none placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.16)] ${className}`}
+      className={`block w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-[14px] py-[11px] text-[14.5px] text-[var(--color-ink)] outline-none placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(19,48,31,0.18)] ${className}`}
       {...props}
     />
   );
@@ -414,7 +415,7 @@ const badgeTones = {
   danger: "text-[#B91C1C] bg-[#FEECEC] border-[#FECACA]",
   info: "text-[#1D4ED8] bg-[#EFF6FF] border-[#BFDBFE]",
   draft: "text-[#6B7280] bg-[#F3F4F6] border-[#E5E7EB]",
-  ok: "text-[#5A7D17] bg-[#F0F6E2] border-[#D6E8B0]",
+  ok: "text-[#13301F] bg-[#E3EEE7] border-[#CFE3D6]",
 } as const;
 
 export type BadgeTone = keyof typeof badgeTones;

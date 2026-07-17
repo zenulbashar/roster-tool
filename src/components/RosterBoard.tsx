@@ -590,7 +590,7 @@ export function RosterBoard(props: Props) {
                           {h.num}
                         </span>
                       </span>
-                      <span className="rounded-full bg-[#F0F6E2] px-2 py-0.5 font-archivo text-[10.5px] font-bold text-[#5A7D17]">
+                      <span className="rounded-full bg-[#E3EEE7] px-2 py-0.5 font-archivo text-[10.5px] font-bold text-[#2E7D4E]">
                         {dayCounts[i]}
                       </span>
                     </div>
@@ -1124,7 +1124,7 @@ function AssignmentChip({
         >
           <span>{formatTimeRange(schedule.startTime, schedule.endTime)}</span>
           {schedule.overridden ? (
-            <span className="rounded bg-white/70 px-1 text-[9.5px] font-bold text-[#4D7C0F]">
+            <span className="rounded bg-white/70 px-1 text-[9.5px] font-bold text-[#2E7D4E]">
               Custom
             </span>
           ) : null}
@@ -1307,7 +1307,7 @@ function OpenBlock({
           {filled} of {shift.requiredStaff} filled · needs {needed} more
         </div>
       ) : null}
-      <div className="mt-auto text-[10.5px] font-bold text-[#4D7C0F]">
+      <div className="mt-auto text-[10.5px] font-bold text-[#2E7D4E]">
         {suggestedNames.length > 0
           ? `Suggested: ${suggestedNames.join(", ")}`
           : "Drag onto a person to assign"}

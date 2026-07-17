@@ -156,7 +156,7 @@ export default async function ReportsPage({
         <KpiTile
           label="Total approved hours"
           value={hoursText(report.totals.approvedHours)}
-          valueColor="#3F6212"
+          valueColor="#13301F"
           sub={`across ${report.perStaff.length} staff`}
         />
         <KpiTile
@@ -236,7 +236,7 @@ export default async function ReportsPage({
                         className="h-full rounded-[7px]"
                         style={{
                           width: `${pct}%`,
-                          background: isCurrent ? "#76b900" : "#C5DC8C",
+                          background: isCurrent ? "#2E7D4E" : "#CFE3D6",
                         }}
                       />
                     </div>

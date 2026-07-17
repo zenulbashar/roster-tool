@@ -88,7 +88,7 @@ export default async function OnboardingPage() {
       className="flex min-h-screen items-center justify-center px-5 py-10"
       style={{
         backgroundImage:
-          "radial-gradient(circle at 50% 0, #F4F8E9, #F9FAFB 60%)",
+          "radial-gradient(circle at 50% 0, #ECF3EE, #F9FAFB 60%)",
       }}
     >
       <div className="w-full max-w-[460px]">
@@ -100,7 +100,7 @@ export default async function OnboardingPage() {
             aria-hidden="true"
             className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[#111827]"
           >
-            <span className="material-symbols-rounded text-[20px] text-[#76b900]">
+            <span className="material-symbols-rounded text-[20px] text-[#13301F]">
               grid_view
             </span>
           </span>
@@ -119,7 +119,7 @@ export default async function OnboardingPage() {
               <form action={signOutToSignIn}>
                 <button
                   type="submit"
-                  className="whitespace-nowrap text-[12.5px] font-semibold text-[#4D7C0F] hover:underline"
+                  className="whitespace-nowrap text-[12.5px] font-semibold text-[#2E7D4E] hover:underline"
                 >
                   Sign out
                 </button>
@@ -128,7 +128,7 @@ export default async function OnboardingPage() {
           </div>
 
           <div className="p-[30px]">
-            <div className="font-archivo text-[11.5px] font-bold uppercase tracking-[0.08em] text-[#76b900]">
+            <div className="font-archivo text-[11.5px] font-bold uppercase tracking-[0.08em] text-[#13301F]">
               Step 1 of 1 — almost there
             </div>
             <h1 className="mt-2.5 font-archivo text-[25px] font-extrabold tracking-[-0.01em] text-[#111827]">
@@ -153,7 +153,7 @@ export default async function OnboardingPage() {
                 maxLength={120}
                 placeholder="e.g. Brew & Bite Café"
                 autoFocus
-                className="w-full rounded-[11px] border border-[#D1D5DB] px-3.5 py-[13px] text-[14.5px] text-[#111827] outline-none focus:border-[#76b900] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.16)]"
+                className="w-full rounded-[11px] border border-[#D1D5DB] px-3.5 py-[13px] text-[14.5px] text-[#111827] outline-none focus:border-[#13301F] focus:ring-[3px] focus:ring-[rgba(19,48,31,0.18)]"
               />
 
               <label
@@ -166,7 +166,7 @@ export default async function OnboardingPage() {
                 id="business-tz"
                 name="timezone"
                 defaultValue="Australia/Sydney"
-                className="w-full rounded-[11px] border border-[#D1D5DB] bg-white px-3.5 py-[13px] text-[14.5px] text-[#111827] outline-none focus:border-[#76b900] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.16)]"
+                className="w-full rounded-[11px] border border-[#D1D5DB] bg-white px-3.5 py-[13px] text-[14.5px] text-[#111827] outline-none focus:border-[#13301F] focus:ring-[3px] focus:ring-[rgba(19,48,31,0.18)]"
               >
                 {AU_TIMEZONES.map((tz) => (
                   <option key={tz} value={tz}>
@@ -177,7 +177,7 @@ export default async function OnboardingPage() {
 
               <button
                 type="submit"
-                className="mt-4 flex w-full items-center justify-center gap-2 rounded-[11px] bg-[#76b900] py-3.5 font-archivo text-[15px] font-bold text-[#111827] hover:bg-[#6aa600]"
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-[11px] bg-[#13301F] py-3.5 font-archivo text-[15px] font-bold text-white hover:bg-[#1D4A2E]"
               >
                 Create my business
                 <span className="material-symbols-rounded text-[20px]">

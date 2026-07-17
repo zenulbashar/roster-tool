@@ -134,7 +134,7 @@ export default async function DashboardPage() {
         </h1>
         <p className="mb-6 mt-2 text-[15px] leading-[1.5] text-[#4B5563]">
           You&rsquo;re{" "}
-          <strong className="text-[#3F6212]">
+          <strong className="text-[#13301F]">
             {remaining} step{remaining === 1 ? "" : "s"}
           </strong>{" "}
           away from your first published roster. Knock these out and
@@ -165,7 +165,7 @@ export default async function DashboardPage() {
           label="Hours this week"
           icon="schedule"
           value={`${report.totals.approvedHours}h`}
-          valueColor="#3F6212"
+          valueColor="#13301F"
           sub={
             <>
               approved
@@ -244,7 +244,7 @@ export default async function DashboardPage() {
           </h2>
           <Link
             href="/app/notifications"
-            className="text-[12.5px] font-semibold text-[#4D7C0F] hover:underline"
+            className="text-[12.5px] font-semibold text-[#2E7D4E] hover:underline"
           >
             View all →
           </Link>

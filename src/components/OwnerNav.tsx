@@ -159,9 +159,9 @@ export function OwnerNav() {
                         key={item.href}
                         href={item.href}
                         role="menuitem"
-                        className={`flex items-center gap-2.5 rounded-[8px] px-[11px] py-[9px] text-[13px] hover:bg-[var(--color-accent-faint)] hover:text-[#3F6212] ${
+                        className={`flex items-center gap-2.5 rounded-[8px] px-[11px] py-[9px] text-[13px] hover:bg-[var(--color-accent-faint)] hover:text-[#13301F] ${
                           itemActive
-                            ? "bg-[var(--color-accent-faint)] font-semibold text-[#3F6212]"
+                            ? "bg-[var(--color-accent-faint)] font-semibold text-[#13301F]"
                             : "text-[#374151]"
                         }`}
                       >

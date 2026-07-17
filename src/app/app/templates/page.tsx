@@ -123,7 +123,7 @@ function DayStaffOverrides({ overrides }: { overrides?: DayStaff | null }) {
   const has = overrides != null && Object.keys(overrides).length > 0;
   return (
     <details open={has} className="rounded-[9px] bg-[var(--color-bg)] p-3">
-      <summary className="cursor-pointer text-[13px] font-semibold text-[#4D7C0F]">
+      <summary className="cursor-pointer text-[13px] font-semibold text-[#2E7D4E]">
         More staff on some days?
       </summary>
       <p className="mt-2 text-[12px] text-[var(--color-text-muted)]">
@@ -162,7 +162,7 @@ function DayTimeOverrides({ overrides }: { overrides?: DayTimes | null }) {
   const has = overrides != null && Object.keys(overrides).length > 0;
   return (
     <details open={has} className="rounded-[9px] bg-[var(--color-bg)] p-3">
-      <summary className="cursor-pointer text-[13px] font-semibold text-[#4D7C0F]">
+      <summary className="cursor-pointer text-[13px] font-semibold text-[#2E7D4E]">
         Different times on some days?
       </summary>
       <p className="mt-2 text-[12px] text-[var(--color-text-muted)]">
@@ -436,7 +436,7 @@ export default async function TemplatesPage({
                     ) : null}
                   </div>
                   <details className="group">
-                    <summary className="flex cursor-pointer list-none items-center gap-1 text-[12.5px] font-semibold text-[#4D7C0F] [&::-webkit-details-marker]:hidden">
+                    <summary className="flex cursor-pointer list-none items-center gap-1 text-[12.5px] font-semibold text-[#2E7D4E] [&::-webkit-details-marker]:hidden">
                       <Icon name="edit" className="text-[16px]" />
                       Edit
                     </summary>
@@ -600,11 +600,11 @@ export default async function TemplatesPage({
 
         <a
           href="#add-form"
-          className="flex flex-col items-start gap-3 rounded-[var(--radius-card)] border-[1.5px] border-dashed border-[#D1D5DB] bg-[#FAFBFC] p-[18px] text-left transition-colors hover:border-[#76b900] hover:bg-[#F8FAF4]"
+          className="flex flex-col items-start gap-3 rounded-[var(--radius-card)] border-[1.5px] border-dashed border-[#D1D5DB] bg-[#FAFBFC] p-[18px] text-left transition-colors hover:border-[#13301F] hover:bg-[#ECF3EE]"
         >
           <div className="flex items-center gap-2.5">
-            <span className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] bg-[#F4F8E9]">
-              <Icon name="add" className="text-[20px] text-[#5A7D17]" />
+            <span className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] bg-[#ECF3EE]">
+              <Icon name="add" className="text-[20px] text-[#2E7D4E]" />
             </span>
             <span className="font-archivo text-[15px] font-bold text-[var(--color-text)]">
               New shift type

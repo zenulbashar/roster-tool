@@ -33,7 +33,7 @@ export function StaffHeader({
         </span>
       </div>
       {eyebrow ? (
-        <div className="font-archivo text-[11px] font-bold uppercase tracking-[0.08em] text-[#76b900]">
+        <div className="font-archivo text-[11px] font-bold uppercase tracking-[0.08em] text-[#13301F]">
           {eyebrow}
         </div>
       ) : null}

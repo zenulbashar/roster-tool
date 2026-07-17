@@ -490,7 +490,7 @@ export default async function StaffPage({
           className="flex flex-wrap items-center gap-3 p-[14px]"
         >
           <span className="inline-flex items-center gap-1.5 font-archivo text-[13px] font-bold text-[var(--color-ink)]">
-            <span className="material-symbols-rounded text-[19px] text-[#5A7D17]">
+            <span className="material-symbols-rounded text-[19px] text-[#2E7D4E]">
               person_add
             </span>
             Add someone
@@ -607,7 +607,7 @@ export default async function StaffPage({
 
               {/* Edit details + remove */}
               <details className="border-b border-[var(--color-border-subtle)] px-[22px] py-[14px]">
-                <summary className="inline-flex cursor-pointer items-center gap-1.5 text-[13px] font-semibold text-[#4D7C0F]">
+                <summary className="inline-flex cursor-pointer items-center gap-1.5 text-[13px] font-semibold text-[#2E7D4E]">
                   <span className="material-symbols-rounded text-[18px]">
                     edit
                   </span>
@@ -693,7 +693,7 @@ export default async function StaffPage({
                     </span>
                   </div>
                   <details className="mt-2">
-                    <summary className="cursor-pointer text-[12.5px] font-semibold text-[#4D7C0F]">
+                    <summary className="cursor-pointer text-[12.5px] font-semibold text-[#2E7D4E]">
                       Edit rate
                     </summary>
                     <form action={setRate} className="mt-2 space-y-2">
@@ -782,7 +782,7 @@ export default async function StaffPage({
                     <input type="hidden" name="id" value={selected.id} />
                     <button
                       type="submit"
-                      className="inline-flex items-center gap-1.5 rounded-[9px] border border-[#D6E8B0] bg-[var(--color-accent-faint)] px-[13px] py-[9px] text-[13px] font-semibold text-[#3F6212] hover:bg-[#EAF3D8]"
+                      className="inline-flex items-center gap-1.5 rounded-[9px] border border-[#CFE3D6] bg-[var(--color-accent-faint)] px-[13px] py-[9px] text-[13px] font-semibold text-[#13301F] hover:bg-[#EAF3D8]"
                     >
                       <span className="material-symbols-rounded text-[17px]">
                         link
@@ -867,7 +867,7 @@ export default async function StaffPage({
                   <Eyebrow>Certifications</Eyebrow>
                   <Link
                     href="/app/certifications"
-                    className="text-[12px] font-semibold text-[#4D7C0F] hover:underline"
+                    className="text-[12px] font-semibold text-[#2E7D4E] hover:underline"
                   >
                     Manage →
                   </Link>
@@ -903,7 +903,7 @@ export default async function StaffPage({
                     No certifications recorded.{" "}
                     <Link
                       href="/app/certifications"
-                      className="text-[#4D7C0F] hover:underline"
+                      className="text-[#2E7D4E] hover:underline"
                     >
                       Add one →
                     </Link>
@@ -948,7 +948,7 @@ export default async function StaffPage({
                     Google Drive needs reconnecting — fix it in{" "}
                     <Link
                       href="/app/settings"
-                      className="text-[#4D7C0F] underline underline-offset-2"
+                      className="text-[#2E7D4E] underline underline-offset-2"
                     >
                       Settings
                     </Link>{" "}
@@ -981,7 +981,7 @@ export default async function StaffPage({
                               href={d.driveWebLink}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#4D7C0F]"
+                              className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#2E7D4E]"
                             >
                               <span className="material-symbols-rounded text-[15px]">
                                 open_in_new
@@ -1055,7 +1055,7 @@ export default async function StaffPage({
                         </select>
                       </label>
                       <Button type="submit" variant="secondary">
-                        <span className="material-symbols-rounded text-[17px] text-[#5A7D17]">
+                        <span className="material-symbols-rounded text-[17px] text-[#2E7D4E]">
                           upload_file
                         </span>
                         Upload document

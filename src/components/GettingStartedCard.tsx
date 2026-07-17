@@ -42,7 +42,7 @@ function StepRow({ step }: { step: GettingStartedStep }) {
       <span className="flex-1 text-[14.5px] font-medium text-[var(--color-text)]">
         {step.title}
       </span>
-      <span className="inline-flex items-center gap-1 text-[13px] font-semibold text-[#4D7C0F]">
+      <span className="inline-flex items-center gap-1 text-[13px] font-semibold text-[#2E7D4E]">
         Start
         <span
           aria-hidden="true"
@@ -100,7 +100,7 @@ export function GettingStartedCard({ data }: { data: GettingStarted }) {
               style={{ width: `${pct}%` }}
             />
           </span>
-          <span className="font-archivo text-[13px] font-bold text-[#3F6212]">
+          <span className="font-archivo text-[13px] font-bold text-[#13301F]">
             {pct}%
           </span>
         </div>

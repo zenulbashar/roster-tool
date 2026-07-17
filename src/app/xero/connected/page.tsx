@@ -20,7 +20,7 @@ export default async function XeroConnectedPage({
       className="flex min-h-screen items-center justify-center px-5 py-10"
       style={{
         backgroundImage:
-          "radial-gradient(circle at 50% 0, #F4F8E9, #F9FAFB 60%)",
+          "radial-gradient(circle at 50% 0, #ECF3EE, #F9FAFB 60%)",
       }}
     >
       <div className="w-full max-w-[460px]">
@@ -32,7 +32,7 @@ export default async function XeroConnectedPage({
             aria-hidden="true"
             className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[#111827]"
           >
-            <span className="material-symbols-rounded text-[20px] text-[#76b900]">
+            <span className="material-symbols-rounded text-[20px] text-[#13301F]">
               grid_view
             </span>
           </span>

@@ -11,7 +11,7 @@ import { nameFromEmail } from "@/lib/name-from-email";
  * surrounding server-action <form> exactly as before.
  */
 const INPUT_CLASS =
-  "min-w-[150px] flex-1 rounded-[9px] border border-[var(--color-line)] px-3 py-[9px] text-[13.5px] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(118,185,0,0.15)]";
+  "min-w-[150px] flex-1 rounded-[9px] border border-[var(--color-line)] px-3 py-[9px] text-[13.5px] outline-none focus:border-[var(--color-button)] focus:ring-[3px] focus:ring-[rgba(19,48,31,0.18)]";
 
 export function AddStaffFields() {
   const nameRef = useRef<HTMLInputElement>(null);

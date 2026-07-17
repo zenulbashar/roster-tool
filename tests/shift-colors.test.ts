@@ -58,9 +58,9 @@ describe("shiftSchemeOf", () => {
 describe("shiftColorScheme", () => {
   it("returns the bg/bar/text triple for a scheme", () => {
     expect(shiftColorScheme("Morning")).toEqual({
-      bg: "#F4F8E9",
-      bar: "#76b900",
-      text: "#3F6212",
+      bg: "#ECF3EE",
+      bar: "#2E7D4E",
+      text: "#1D4A2E",
     });
   });
 

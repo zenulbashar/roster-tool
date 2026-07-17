@@ -141,7 +141,7 @@ export default async function NoticesPage() {
           <form action={markAllNoticesReadAction}>
             <button
               type="submit"
-              className="text-[12.5px] font-semibold text-[#4D7C0F] hover:underline"
+              className="text-[12.5px] font-semibold text-[#2E7D4E] hover:underline"
             >
               Mark all read
             </button>
@@ -198,7 +198,7 @@ export default async function NoticesPage() {
                       <input type="hidden" name="id" value={n.id} />
                       <button
                         type="submit"
-                        className="whitespace-nowrap text-[12.5px] font-semibold text-[#4D7C0F] hover:underline"
+                        className="whitespace-nowrap text-[12.5px] font-semibold text-[#2E7D4E] hover:underline"
                         aria-label={`Mark "${n.title}" as read`}
                       >
                         Mark read

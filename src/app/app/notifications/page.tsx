@@ -25,7 +25,7 @@ const TYPE_ICONS: Record<string, { icon: string; bg: string; fg: string }> = {
   stock_needs_order: {
     icon: "inventory_2",
     bg: "var(--color-accent-faint)",
-    fg: "#3F6212",
+    fg: "#13301F",
   },
   cert_expiring: {
     icon: "workspace_premium",
@@ -73,7 +73,7 @@ export default async function NotificationsPage() {
           <form action={markAllNotificationsReadAction} className="mt-1">
             <button
               type="submit"
-              className="text-[12.5px] font-semibold text-[#4D7C0F] hover:underline"
+              className="text-[12.5px] font-semibold text-[#2E7D4E] hover:underline"
             >
               Mark all read ({unreadCount})
             </button>

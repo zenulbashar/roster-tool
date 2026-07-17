@@ -244,7 +244,7 @@ export default async function XeroRulesPage({
                           className={`rounded-[7px] border px-[10px] py-[6px] text-[11.5px] font-semibold ${
                             r.isActive
                               ? "border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F9FAFB]"
-                              : "border-[var(--color-button)] bg-[#F3FAE7] text-[#3F6212]"
+                              : "border-[var(--color-button)] bg-[#F3FAE7] text-[#13301F]"
                           }`}
                         >
                           {r.isActive ? "Turn off" : "Turn on"}

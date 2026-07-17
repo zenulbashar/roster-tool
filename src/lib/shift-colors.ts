@@ -20,7 +20,8 @@ export type ShiftColors = {
 };
 
 const SCHEMES: Record<ShiftScheme, ShiftColors> = {
-  morning: { bg: "#F4F8E9", bar: "#76b900", text: "#3F6212" },
+  // Morning collapses to the Forest family (green stripe #2E7D4E, label #1D4A2E).
+  morning: { bg: "#ECF3EE", bar: "#2E7D4E", text: "#1D4A2E" },
   arvo: { bg: "#F2EEFB", bar: "#7C5CBF", text: "#5B21B6" },
   close: { bg: "#EEF1F5", bar: "#1E293B", text: "#1E293B" },
   split: { bg: "#FDF2E3", bar: "#D97706", text: "#92400E" },
@@ -72,7 +73,7 @@ export function shiftColorScheme(name: string): ShiftColors {
  * key off it.
  */
 export const SHIFT_PALETTE: (ShiftColors & { name: string })[] = [
-  { name: "Green", bar: "#76b900", bg: "#F4F8E9", text: "#3F6212" },
+  { name: "Green", bar: "#2E7D4E", bg: "#ECF3EE", text: "#1D4A2E" },
   { name: "Purple", bar: "#7C5CBF", bg: "#F2EEFB", text: "#5B21B6" },
   { name: "Slate", bar: "#1E293B", bg: "#EEF1F5", text: "#1E293B" },
   { name: "Amber", bar: "#D97706", bg: "#FDF2E3", text: "#92400E" },

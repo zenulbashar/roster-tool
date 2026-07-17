@@ -45,7 +45,7 @@ const TYPE_ICONS: Record<string, { icon: string; bg: string; fg: string }> = {
   stock_needs_order: {
     icon: "inventory_2",
     bg: "var(--color-accent-faint)",
-    fg: "#3F6212",
+    fg: "#13301F",
   },
   cert_expiring: {
     icon: "workspace_premium",
@@ -147,7 +147,7 @@ export function NotificationBell({
               <form action={markAllNotificationsReadAction}>
                 <button
                   type="submit"
-                  className="text-[12.5px] font-semibold text-[#4D7C0F] hover:underline"
+                  className="text-[12.5px] font-semibold text-[#2E7D4E] hover:underline"
                 >
                   Mark all read
                 </button>
@@ -221,7 +221,7 @@ export function NotificationBell({
 
           <Link
             href="/app/notifications"
-            className="block border-t border-[var(--color-border-subtle)] bg-[var(--color-bg)] px-3 py-3 text-center text-[12.5px] font-semibold text-[#4D7C0F] hover:underline"
+            className="block border-t border-[var(--color-border-subtle)] bg-[var(--color-bg)] px-3 py-3 text-center text-[12.5px] font-semibold text-[#2E7D4E] hover:underline"
             onClick={() => setOpen(false)}
           >
             See all notifications →
