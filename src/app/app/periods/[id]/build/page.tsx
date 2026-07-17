@@ -15,10 +15,16 @@ import { CopyButton } from "@/components/CopyButton";
 import { resolveShiftColors } from "@/lib/shift-colors";
 import {
   findMatchingShiftOnDate,
+  formatDuration,
   normalizeTime,
   sameShiftTimes,
   validateSchedule,
 } from "@/lib/assignment-schedule";
+import {
+  estimateRosterCost,
+  findAssignmentOverlaps,
+} from "@/lib/roster-insights";
+import { formatAudCents, LABOUR_COST_DISCLAIMER } from "@/lib/labour-report";
 import {
   assignmentMoveSchema,
   assignmentPairSchema,
@@ -636,6 +642,22 @@ export default async function BuildRosterPage({
     0,
   );
 
+  // Double-booked people (two chips at the same time on the same day) — a
+  // warning, never a block; the same maths flag the chips on the board.
+  const staffNameById = new Map(staff.map((m) => [m.id, m.name]));
+  const overlapMentions = [
+    ...new Set(
+      findAssignmentOverlaps({ shifts, assignments }).map(
+        (p) =>
+          `${staffNameById.get(p.staffMemberId) ?? "Someone"} (${formatDateOnly(p.date)})`,
+      ),
+    ),
+  ];
+
+  // The week's labour cost AS ROSTERED — confirmed shifts × the entered rate,
+  // net of unpaid breaks. An ESTIMATE for planning, never a payroll figure.
+  const costEstimate = estimateRosterCost({ shifts, assignments, staff });
+
   return (
     <>
       {/* Header — title + status, week label + counts, primary actions. */}
@@ -722,6 +744,48 @@ export default async function BuildRosterPage({
             more people ({shortfallTotal} more in total). You can publish anyway
             — unfilled spots stay in the Open shifts row.
           </Banner>
+        </div>
+      ) : null}
+      {overlapMentions.length > 0 ? (
+        <div className="mb-4">
+          <Banner tone="warn">
+            Double-booked: {overlapMentions.slice(0, 4).join(", ")}
+            {overlapMentions.length > 4
+              ? ` and ${overlapMentions.length - 4} more`
+              : ""}{" "}
+            — on two shifts at the same time. Adjust their times or move one of
+            the shifts.
+          </Banner>
+        </div>
+      ) : null}
+      {costEstimate.assignmentCount > 0 ? (
+        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-[12px] border border-[var(--color-border)] bg-white px-4 py-3 shadow-[0_1px_3px_rgba(17,24,39,0.05)]">
+          <span className="flex items-center gap-1.5 text-[13px] text-[var(--color-text-secondary)]">
+            <span className="material-symbols-rounded text-[18px] text-[var(--color-accent)]">
+              payments
+            </span>
+            Rostered so far:{" "}
+            <strong className="text-[var(--color-ink)]">
+              {formatDuration(costEstimate.totalMinutes)}
+            </strong>
+          </span>
+          <span className="text-[13px] text-[var(--color-text-secondary)]">
+            Estimated cost:{" "}
+            <strong className="text-[var(--color-ink)]">
+              {formatAudCents(costEstimate.costCents)}
+            </strong>
+          </span>
+          {costEstimate.unratedMinutes > 0 ? (
+            <span className="text-[12px] text-[#B45309]">
+              + {formatDuration(costEstimate.unratedMinutes)} not costed —{" "}
+              {costEstimate.unratedStaffNames.join(", ")}{" "}
+              {costEstimate.unratedStaffNames.length === 1 ? "has" : "have"} no
+              rate set
+            </span>
+          ) : null}
+          <span className="basis-full text-[11px] text-[var(--color-text-muted)]">
+            {LABOUR_COST_DISCLAIMER}
+          </span>
         </div>
       ) : null}
       {isPublished && published ? (
