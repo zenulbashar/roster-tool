@@ -82,6 +82,15 @@ const baseEnvSchema = z.object({
   XERO_CLIENT_ID: z.string().optional(),
   XERO_CLIENT_SECRET: z.string().optional(),
   XERO_OAUTH_REDIRECT_URI: z.string().url().optional(),
+
+  // Zale IT platform admin console (M37). Comma/whitespace-separated allow-list
+  // of emails that may bootstrap into /admin: on first magic-link sign-in, a
+  // matching email is provisioned a `platform_admin` row (a ROLE grant on top
+  // of the ordinary owner login — NOT a separate login method). OPTIONAL and
+  // FAIL CLOSED — unset means no NEW admin can bootstrap (existing
+  // `platform_admin` rows still work). Admins are Zale IT staff, unrelated to
+  // tenant ownership; they reach live tenants only through impersonation.
+  ADMIN_ALLOWLIST: z.string().optional(),
 });
 
 const envSchema = baseEnvSchema.superRefine((val, ctx) => {

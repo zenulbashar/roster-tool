@@ -43,6 +43,14 @@ const bytea = customType<{ data: Buffer; default: false }>({
  * — pre-M29 every business gets its own org 1:1 at migration time, so existing
  * single-location owners see no change. See docs/multi-location-plan.md.
  */
+/**
+ * Vendor-set account-lifecycle label for the Zale IT admin console (M37). This
+ * is NOT billing or wage data — Zale IT simply marks whether a client account
+ * is live, on trial, or paused. It drives the admin client filters + KPIs only
+ * and never changes any tenant-facing behaviour.
+ */
+export const planStatus = pgEnum("plan_status", ["active", "trial", "paused"]);
+
 export const organisations = pgTable("organisation", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
@@ -50,6 +58,9 @@ export const organisations = pgTable("organisation", {
   defaultTimezone: text("default_timezone")
     .notNull()
     .default("Australia/Sydney"),
+  // Account lifecycle for the vendor admin console (M37). Default `active`; the
+  // admin can mark an account trial/paused. Purely a label — no billing maths.
+  planStatus: planStatus("plan_status").notNull().default("active"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -259,6 +270,75 @@ export const ssoConsumedTokens = pgTable(
     seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("sso_consumed_tokens_seen_at_idx").on(t.seenAt)],
+);
+
+/* -------------------------------------------------------------------------- */
+/* Zale IT platform admin (vendor back-office — M37)                          */
+/* NON-TENANT: these two tables belong to the vendor, not any one business.   */
+/* They are reachable ONLY behind requireAdmin(); the cross-tenant admin repo  */
+/* is the single, explicit exception to the per-business scoping rule.        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A Zale IT staff member allowed into the admin console. Keyed to an Auth.js
+ * `user` — an admin still signs in with the ordinary email magic link, so this
+ * is a ROLE grant, NOT a separate login. A row is provisioned on first sign-in
+ * for any email in ADMIN_ALLOWLIST (or seeded directly). Being an admin is
+ * independent of owning a business: an admin has no org membership and reaches
+ * live tenants only through impersonation.
+ */
+export const platformAdmins = pgTable("platform_admin", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: text("user_id")
+    .notNull()
+    .unique()
+    .references(() => users.id, { onDelete: "cascade" }),
+  // Display name shown in the admin chrome ("Priya · Zale IT"); falls back to
+  // the user's name/email when null.
+  name: text("name"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+/**
+ * Append-only audit log of every admin action across clients — the
+ * accountability record behind impersonation. Writes made while impersonating a
+ * tenant are flagged (`is_write`), alongside the enter/exit of each live-account
+ * session. Admin name + venue are SNAPSHOTTED so a row stays legible even after
+ * the admin or business is deleted (the FKs null out but the text remains).
+ */
+export const adminActivities = pgTable(
+  "admin_activity",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    adminUserId: text("admin_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    adminName: text("admin_name").notNull(),
+    // Free-text action title, e.g. "Entered live account" / "Publish roster".
+    action: text("action").notNull(),
+    detail: text("detail"),
+    // True for a write made to a tenant's live data while impersonating; false
+    // for reads / navigation (enter + exit of a live-account session).
+    isWrite: boolean("is_write").notNull().default(false),
+    // The affected client (organisation) + location, snapshotted by name so the
+    // log reads correctly even after either is deleted.
+    orgId: uuid("org_id").references(() => organisations.id, {
+      onDelete: "set null",
+    }),
+    businessId: uuid("business_id").references(() => businesses.id, {
+      onDelete: "set null",
+    }),
+    venueName: text("venue_name"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("admin_activity_created_idx").on(t.createdAt),
+    index("admin_activity_org_idx").on(t.orgId),
+  ],
 );
 
 /* -------------------------------------------------------------------------- */

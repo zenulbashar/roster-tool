@@ -159,6 +159,54 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
     and a current/upcoming loans list. Pure status logic in `src/lib/staff-loan.ts`.
   - **Follow-ups (NOT built)**: cross-**org** anything; multi-owner org
     governance beyond a single `owner` role. See the plan doc §7.
+- **Zale IT admin console + impersonation (M37)**: the vendor's platform-operations
+  back-office at `/admin`, separate from every tenant. Plan + invariants:
+  `docs/admin-console-plan.md`; design: `design/roster-handoff/05-admin`.
+  - **A "client" = an `organisation`** (the M29 account boundary). The console
+    reads across ALL clients — clients overview (`/admin/clients`: KPI tiles +
+    search + status filters + a table of sites/staff/integrations/last-active),
+    client detail (`/admin/clients/[id]`: plan/status + per-location Xero/Drive +
+    recent admin activity), and an audit log (`/admin/log`).
+  - **The SINGLE, EXPLICIT exception to per-business tenant scoping.** Every
+    cross-tenant read lives in ONE place — `createAdminRepo` in
+    `src/lib/admin/repository.ts`, reachable only behind `requireAdmin()` — and it
+    exposes only counts / integration-presence / last-active signals + the admin
+    audit log, NEVER a tenant's operational rows (rosters, timesheets, pay). No
+    other module reads across tenants.
+  - **Admins are Zale IT staff, NOT owners.** Access is a `platform_admin` row,
+    never an `org_membership`; an admin has no org and reaches a tenant only
+    through impersonation. They still sign in with the ordinary owner email magic
+    link — a ROLE grant on top of the existing login, never a separate login
+    method. An email in `ADMIN_ALLOWLIST` (env) is provisioned a row on first
+    sign-in; **FAIL CLOSED** — an unset/empty allow-list provisions nobody
+    (existing rows still work). `requireAdmin()` 404s a signed-in non-admin (the
+    area doesn't exist for them). Pure allow-list logic in `src/lib/admin/allowlist.ts`.
+  - **Impersonation ("view as venue")** — a red-headed entry-confirm modal spells
+    out FULL read/write to the client's LIVE account, then sets a **signed, 2 h,
+    httpOnly `roster_impersonation` cookie** (HMAC over adminUserId+org+location,
+    `src/lib/admin/impersonation.ts`, mirroring the notices proof) bound to
+    (admin, org, entry location). `resolveImpersonation` re-validates EVERY request:
+    HMAC + freshness, the acting user is STILL a `platform_admin` (revoking admin
+    instantly ends it), and the bound location still belongs to the bound org.
+    `requireOwner` then resolves the org from the GRANT (not a membership) — while
+    the in-app location switcher still works, since the active-location cookie is
+    honoured on top. Nothing is stored server-side; it can't be refreshed without
+    the console. A non-impersonating admin who hits `/app` is redirected to `/admin`.
+  - **Ever-present safety framing (owner layout)** — a fixed **52px red striped
+    banner** ("Acting as {venue} — changes save to their LIVE account", "Exit to
+    admin"), a fixed **4px `#DC2626` inset frame**, and content pushed down 52px.
+    Plus a **write-confirm guard** (`ImpersonationWriteGuard`): ONE capturing
+    `submit` listener on the `<main>` content region intercepts POST (server-action)
+    form writes and gates them behind a "Save to live account" modal. Chrome forms
+    (nav, sign-out, exit, location switcher, bell) live OUTSIDE `<main>`, so
+    they're never intercepted — no per-form annotation needed; GET search/filter
+    forms pass through. **Known limit**: a few JS-driven server actions (e.g. the
+    drag-drop board) aren't gated by the modal, but the banner/frame + the logged
+    enter/exit session bracket every action. Every enter/exit/confirmed-write is
+    snapshotted into the append-only `admin_activity` log (writes flagged `is_write`).
+  - **`organisation.plan_status`** (`active`/`trial`/`paused`) is a vendor
+    account-lifecycle label the admin sets — **NOT billing/wage data**; billing
+    stays out of scope (client detail states payments are handled outside Roster).
 - **Shifts**: business defines reusable **shift templates** (label + start/end +
   weekday flags + an optional owner-chosen **colour** + a **staffing target**,
   `required_staff`, default 1 — hospitality shifts often need several people).
@@ -849,6 +897,14 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
   `business_id` from body/query/params.
 - All domain reads/writes go through the tenant-scoped data-access layer in
   `src/lib/tenant/`. Don't query domain tables directly from routes.
+- **Admin exception (M37)** — the Zale IT admin console is the ONLY place that
+  reads across tenants, and it is quarantined: every cross-tenant read lives in
+  `src/lib/admin/repository.ts` (`createAdminRepo`), reachable only behind
+  `requireAdmin()`, and returns only aggregates (counts, integration-presence,
+  last-active) + the admin audit log — never a tenant's operational rows. Admin
+  identity is a `platform_admin` row (never an `org_membership`), and an admin
+  operates inside a tenant only through the signed, re-validated impersonation
+  grant (see the M37 decision above). Do NOT add cross-tenant reads anywhere else.
 - **Org layer (M29)** — a `business` is now one **location** under an
   **`organisation`**; staff are org-level (see Multi-location under Key product
   decisions). Additional invariants (`docs/multi-location-plan.md` §5):
@@ -997,9 +1053,11 @@ staff↔location membership), `staff_loan` (M29 date-ranged lend), `user` (owner
   `xero_employee_map`, `xero_timesheet_push`, `xero_connect_invite`, `pay_rule`.
   Work-record domain tables are business-scoped; `staff_member` is org-scoped
   (reached per location via `staff_location`); `organisation`/`org_membership`/
-  `staff_location` are org-scoped. Plus one non-tenant infrastructure table:
+  `staff_location` are org-scoped. Plus non-tenant infrastructure tables:
   `sso_consumed_tokens` (the inbound prompt2eat SSO replay guard — no `business_id`,
-  like the Auth.js `session`/`verificationToken` tables).
+  like the Auth.js `session`/`verificationToken` tables), and the M37 vendor
+  admin tables `platform_admin` + `admin_activity` (the Zale IT console — no
+  `business_id`; the console is the single explicit cross-tenant exception).
 
 Notable columns / conventions:
 
@@ -1008,10 +1066,25 @@ Notable columns / conventions:
   case-variant duplicate accounts; every sign-in path already lowercases, so
   the index can only reject rows the app itself could never create).
 - `organisation` (M29) — the account boundary. `name`, `default_timezone`
-  (seeds a new location's tz). Onboarding creates one per new owner; the M29
+  (seeds a new location's tz), `plan_status` (M37 — `plan_status` enum
+  `active`/`trial`/`paused`, NOT NULL default `active`: a vendor account-lifecycle
+  label the Zale IT admin sets; drives the admin filters/KPIs only, **NOT
+  billing/wage data**). Onboarding creates one per new owner; the M29
   backfill created one per pre-existing business (**reusing the business id as
   the org id** for a linkable 1:1 — see `drizzle/0023` + the mirrored, tested
   `backfillOrgs` in `src/lib/tenant/org-backfill.ts`).
+- `platform_admin` (M37) — a Zale IT staff member allowed into the `/admin`
+  console. `user_id` → `user` (**unique**, cascade) + optional display `name`.
+  A ROLE grant on top of the ordinary owner login (NOT a separate login, NOT an
+  `org_membership`). Provisioned on first magic-link sign-in for any email in
+  `ADMIN_ALLOWLIST` (fail-closed), or seeded directly. Non-tenant infra table.
+- `admin_activity` (M37) — append-only audit log of every admin action across
+  clients (the accountability record behind impersonation). `admin_name`/`action`/
+  `detail`/`is_write` (writes made while impersonating are flagged) + snapshotted
+  `org_id`/`business_id`/`venue_name` (FKs **ON DELETE SET NULL** so a row stays
+  legible after either is deleted). Indexed on `created_at` + `org_id`. Written by
+  the admin actions (enter/exit) + the best-effort `logImpersonatedWrite`.
+  Non-tenant infra table.
 - `org_membership` (M29) — which owners can reach which org. `org_id` (cascade),
   `user_id` → `user` (cascade), `role` (`org_role`, v1 `owner` only), unique
   `(org_id, user_id)`. The source of "what can this signed-in owner reach",
@@ -1453,4 +1526,5 @@ charset=utf-8` + attachment with a slugified filename. **Buffered, newest-10k
 - [x] M33 — Builder insights: double-booking flags + a rostered labour-cost estimate, both read-only over existing data (pure `src/lib/roster-insights.ts`; no schema change). Overlaps use each chip's EFFECTIVE times (per-assignment overrides included), flag on the chips (live under drag/resize via the board's optimistic state), warn in the drop preview, and list the people/days in a banner — never blocking. The cost strip totals confirmed assignments at net hours x the entered rate with unrated staff named (hours, never $0), server-rendered with LABOUR_COST_DISCLAIMER; suggestions cost nothing. Also de-flaked the cert-reminder notification test (cross-file race on the all-business sweep).
 - [x] M34 — Overnight shifts: an end time at or before the start means the shift finishes the NEXT day ("6 pm – 2 am"), anchored to its start date — no schema change. Extended-axis maths in `assignment-schedule.ts` (`spanMinutes`/`extendedRange`/`extendedBreakStart`; validate/segments/worked-minutes/carry all overnight-aware, breaks can sit after midnight); template + day-override validation rejects only equal times, with a "runs into the next day" hint on the forms; `timesOverlap` wraps; M33 overlap detection compares absolute date+minute ranges (cross-midnight clashes caught); every surface prints ranges via the shared `formatTimeRange` ("(next day)" suffix) — builder board/chips/editor, tap editor, templates, public roster, availability, kiosk/clock swap lists, emails, staff reminders. The board's day bar wraps the after-midnight tail; the schedule editor uses a noon-to-noon axis for overnight schedules. Timesheets/CSV/report/Xero untouched (they read clock timestamps, which always handled overnight).
 - [x] M35 — Daily form-response email digest (the phase M23 deferred): a `form-response-digest` pg-boss cron (21:00 UTC ≈ 7–8 am Sydney) emails each owner ONE consolidated summary of form responses since the last digest — SAME privacy rule as the bell (counts + form titles + links only; never answer content or respondent identity, identical wording for public/attributed/anonymous), and only on days something actually arrived. Idempotent via the `business.form_digest_last_at` cursor: the window is `(lastAt, now]`, the cursor advances only AFTER a successful send (retries re-send the window; re-runs count only newer), and a never-sent business starts from the last 24 h so a rollout never emails historic counts. Settings → Notifications toggle (`form_digest_enabled`, default on); owner-less businesses skipped. Additive migration `0031`; pure maths in `src/lib/form-digest.ts`; emails still ADDITIVE to the in-app bell.
-- [x] M36 — Forest rebrand (design/roster-handoff): retired the lime `#76b900` for **Forest `#13301F` + white** on light surfaces and **Leaf `#5FA875` + ink** on dark chrome (top nav, kiosk, phone clock-in, landing hero), per the new Claude-design handoff. Token-first migration in `globals.css` `@theme` (Forest/Leaf brand tokens, forest tints, Morning shift → green `#2E7D4E`, `rosterShimmer` keyframe, `prefers-reduced-motion` guard); `ui.tsx` primary Button → Forest fill + white text and the OK badge → Forest tint; `shift-colors.ts` Morning + palette "Green" → forest green; a context-aware sweep of every hardcoded lime across all owner/kiosk/staff/public surfaces (light green text → Forest family, dark-surface fills/accents → Leaf, tints → `#ECF3EE`/`#E3EEE7`). Blue (`--color-brand`) and the semantic status colours are unchanged. Verified at desktop/tablet/mobile + kiosk + landing; 714 tests green. Admin (Zale IT indigo) console + impersonation from the handoff are net-new and NOT built (no admin area exists yet).
+- [x] M36 — Forest rebrand (design/roster-handoff): retired the lime `#76b900` for **Forest `#13301F` + white** on light surfaces and **Leaf `#5FA875` + ink** on dark chrome (top nav, kiosk, phone clock-in, landing hero), per the new Claude-design handoff. Token-first migration in `globals.css` `@theme` (Forest/Leaf brand tokens, forest tints, Morning shift → green `#2E7D4E`, `rosterShimmer` keyframe, `prefers-reduced-motion` guard); `ui.tsx` primary Button → Forest fill + white text and the OK badge → Forest tint; `shift-colors.ts` Morning + palette "Green" → forest green; a context-aware sweep of every hardcoded lime across all owner/kiosk/staff/public surfaces (light green text → Forest family, dark-surface fills/accents → Leaf, tints → `#ECF3EE`/`#E3EEE7`). Blue (`--color-brand`) and the semantic status colours are unchanged. Verified at desktop/tablet/mobile + kiosk + landing; 714 tests green. Admin (Zale IT indigo) console + impersonation from the handoff are built separately in M37.
+- [x] M37 — Zale IT admin console + impersonation (`design/roster-handoff/05-admin`, plan in `docs/admin-console-plan.md`): the vendor platform-operations back-office. Indigo chrome (`#1E1B4B`) at `/admin` — `/admin/clients` (KPI tiles + search + status filters + a cross-tenant clients table), `/admin/clients/[id]` (one client's plan/status + per-location Xero/Drive integrations + recent admin activity), `/admin/log` (paginated audit table). A "client" = an **`organisation`** (M29 account boundary); each has locations + an org-wide staff pool. **The admin console is the SINGLE, EXPLICIT exception to per-business tenant scoping** — all cross-tenant reads live in ONE place (`createAdminRepo`), reachable only behind `requireAdmin()`, and never expose operational rows (rosters/timesheets/pay), only counts/integration-presence/last-active + the audit log. Admins are Zale IT staff, NOT owners: access is a `platform_admin` row (bootstrapped from `ADMIN_ALLOWLIST` on first magic-link sign-in, FAIL CLOSED), never an `org_membership`; an admin has no org and reaches a tenant only via impersonation. **Impersonation ("view as venue")**: a red-headed entry-confirm modal → a signed, 2 h, httpOnly `roster_impersonation` cookie bound to (admin, org, entry location), re-validated EVERY request by `resolveImpersonation` (HMAC + freshness + STILL a platform_admin + location still in org); `requireOwner` then resolves the org from the grant (not a membership) while the in-app location switcher still works. The owner layout renders the ever-present safety framing — a fixed 52px red striped banner ("Acting as {venue} — changes save to their LIVE account", Exit to admin), a 4px `#DC2626` inset frame, content pushed down — plus a **write-confirm guard**: one capturing `submit` listener on `<main>` intercepts POST (server-action) form writes and gates them behind a "Save to live account" modal (chrome forms live outside `<main>` so they're never intercepted; GET search/filter forms pass through), best-effort logging each confirmed write. Every enter/exit/write is snapshotted into the append-only `admin_activity` audit log. Additive migration `0032` (`platform_admin`, `admin_activity`, `organisation.plan_status` — a vendor lifecycle label `active`/`trial`/`paused`, NOT billing/wage data). Billing itself stays out of scope (client detail states payments are handled outside Roster). Pure libs unit-tested (`admin-allowlist`, `admin-impersonation` token); cross-tenant reads + audit log flow-tested (`admin-repository-flow`); full impersonation loop verified in a real browser. 730 tests green.
