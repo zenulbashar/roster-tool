@@ -124,7 +124,11 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
      * several locations is instead added once and given memberships via the org
      * People page.
      */
-    async addStaff(input: { name: string; email: string }) {
+    async addStaff(input: {
+      name: string;
+      email: string;
+      role?: string | null;
+    }) {
       const [biz] = await database
         .select({ orgId: businesses.orgId })
         .from(businesses)
@@ -150,6 +154,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       input: Partial<{
         name: string;
         email: string;
+        role: string | null;
         active: boolean;
         notifyByDefault: boolean;
         payRateCents: number | null;
@@ -1295,6 +1300,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .select({
           staffName: staffMembers.name,
           staffEmail: staffMembers.email,
+          role: staffMembers.role,
           clockInAt: timesheetEntries.clockInAt,
           clockOutAt: timesheetEntries.clockOutAt,
           breakMinutes: timesheetEntries.breakMinutes,

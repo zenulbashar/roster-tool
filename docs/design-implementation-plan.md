@@ -86,9 +86,10 @@ follow-ups**, not silent omissions:
   empty/open cells. The design's staff×day matrix grid is now the builder's hero
   (read view); the full interactive assignment editor is kept below it. Richer
   inline assign-on-click directly in the grid is a follow-up.
-- **Staff "role"** (Chef/Griller/…): the `staff_member` table has no `role`
-  column, so the design's "role · email" sub-line shows the email (and the rate
-  label where set). A future migration can add `staff_member.role`.
+- **Staff "role"** (Chef/Griller/…): ✅ **built (M38)** — `staff_member.role`
+  (optional free text) now backs the design's "role · email" sub-line on the
+  staff page, the roster builder's staff column, and the approved-hours CSV.
+  Informational only (never gates rostering).
 - **Roster periods "N staff · N replied" meta / Timesheets status filter /
   Leave denied-history rows / "Used in N shifts" per shift type**: these design
   details need aggregates or reads the current model doesn't expose; the real

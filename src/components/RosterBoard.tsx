@@ -79,7 +79,12 @@ export type BoardShift = {
   offer: { status: string; claimedByName: string | null } | null;
 };
 
-export type BoardStaff = { id: string; name: string; rateLabel: string | null };
+export type BoardStaff = {
+  id: string;
+  name: string;
+  role: string | null;
+  rateLabel: string | null;
+};
 
 export type BoardAssignment = {
   shiftId: string;
@@ -823,9 +828,9 @@ function StaffRow({
           <div className="truncate text-[13px] font-semibold text-[var(--color-ink)]">
             {member.name}
           </div>
-          {member.rateLabel ? (
-            <div className="text-[11px] text-[var(--color-text-secondary)]">
-              {member.rateLabel}
+          {member.role || member.rateLabel ? (
+            <div className="truncate text-[11px] text-[var(--color-text-secondary)]">
+              {[member.role, member.rateLabel].filter(Boolean).join(" · ")}
             </div>
           ) : null}
         </div>

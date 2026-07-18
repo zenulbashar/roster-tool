@@ -605,6 +605,7 @@ export default async function BuildRosterPage({
   const boardStaff = staff.map((m) => ({
     id: m.id,
     name: m.name,
+    role: m.role ?? null,
     rateLabel: m.rateLabel ?? null,
   }));
   const boardAssignments = assignments.map((a) => ({

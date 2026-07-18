@@ -6,6 +6,14 @@ import { SHIFT_COLOR_VALUES } from "@/lib/shift-colors";
 export const staffSchema = z.object({
   name: z.string().trim().min(1, "Please enter a name").max(120),
   email: z.string().trim().toLowerCase().email("Enter a valid email").max(200),
+  // Optional free-text position label (Barista / Chef / Floor / Manager …).
+  // Empty/absent normalises to null. Informational only — never gates rostering.
+  role: z
+    .string()
+    .trim()
+    .max(60)
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : null)),
 });
 
 const hhmm = z

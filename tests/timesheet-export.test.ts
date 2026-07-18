@@ -15,6 +15,7 @@ function row(over: Partial<ExportRow> = {}): ExportRow {
   return {
     staffName: "Ava Nguyen",
     staffEmail: "ava@example.com",
+    role: null,
     clockInAt: new Date("2026-06-08T23:00:00Z"), // 09:00 Sydney 09/06 (UTC+10)
     clockOutAt: new Date("2026-06-09T07:00:00Z"), // 17:00 Sydney 09/06
     breakMinutes: 0,
@@ -92,7 +93,7 @@ describe("buildApprovedHoursCsv", () => {
     expect(lines[0]).toBe("Corner Cafe — Approved hours");
     expect(lines[1]).toBe(csvCellOf(APPROVED_HOURS_DISCLAIMER));
     expect(lines[2]).toBe("");
-    expect(lines[3]).toContain("Staff name,Staff email,Date,Clock in");
+    expect(lines[3]).toContain("Staff name,Staff email,Role,Date,Clock in");
     expect(lines[3]).toContain("Clock out,Break (min),Total hours");
     expect(lines[3]).toContain("Estimated amount,Location verified");
   });
@@ -104,7 +105,17 @@ describe("buildApprovedHoursCsv", () => {
     });
     const dataLine = csv.split("\r\n")[4]!;
     expect(dataLine).toBe(
-      "Ava Nguyen,ava@example.com,09/06/2026,09:00,17:00,0,8.00,flat,28.50,228.00,",
+      "Ava Nguyen,ava@example.com,,09/06/2026,09:00,17:00,0,8.00,flat,28.50,228.00,",
+    );
+  });
+
+  it("includes the role column when set", () => {
+    const csv = buildApprovedHoursCsv([row({ role: "Barista" })], {
+      timezone: TZ,
+      businessName: "Corner Cafe",
+    });
+    expect(csv.split("\r\n")[4]!).toBe(
+      "Ava Nguyen,ava@example.com,Barista,09/06/2026,09:00,17:00,0,8.00,flat,28.50,228.00,",
     );
   });
 
@@ -115,7 +126,7 @@ describe("buildApprovedHoursCsv", () => {
     });
     // 8h gross − 30m break = 7.5h net; 7.5 × 28.50 = 213.75.
     expect(csv.split("\r\n")[4]!).toBe(
-      "Ava Nguyen,ava@example.com,09/06/2026,09:00,17:00,30,7.50,flat,28.50,213.75,",
+      "Ava Nguyen,ava@example.com,,09/06/2026,09:00,17:00,30,7.50,flat,28.50,213.75,",
     );
   });
 
@@ -135,7 +146,7 @@ describe("buildApprovedHoursCsv", () => {
     }).split("\r\n")[4]!;
     // 09:00 then empty clock out, break 0, empty hours, flat, empty rate/estimate.
     expect(dataLine).toBe(
-      "Ava Nguyen,ava@example.com,09/06/2026,09:00,,0,,flat,,,",
+      "Ava Nguyen,ava@example.com,,09/06/2026,09:00,,0,,flat,,,",
     );
   });
 

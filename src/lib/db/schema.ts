@@ -474,6 +474,12 @@ export const staffMembers = pgTable(
       .references(() => businesses.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     email: text("email").notNull(),
+    // Optional free-text position label (Barista / Chef / Floor / Manager …).
+    // Informational only — shown on the staff page, roster builder and hours
+    // CSV so the owner can see the floor mix. It never constrains rostering or
+    // clock-in (no role-gated shifts); it's a flag, matching the app's
+    // flag-not-block philosophy. Null = no role set.
+    role: text("role"),
     active: boolean("active").notNull().default(true),
     // Whether this person is pre-checked when the owner asks for availability.
     // Owners can still override per-send; this is just the default.

@@ -180,6 +180,7 @@ export default async function StaffPage({
     const parsed = staffSchema.safeParse({
       name: formData.get("name"),
       email: formData.get("email"),
+      role: formData.get("role"),
     });
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Please check the form";
@@ -206,6 +207,7 @@ export default async function StaffPage({
     const parsed = staffSchema.safeParse({
       name: formData.get("name"),
       email: formData.get("email"),
+      role: formData.get("role"),
     });
     if (!parsed.success) {
       const msg = parsed.error.issues[0]?.message ?? "Please check the form";
@@ -216,6 +218,7 @@ export default async function StaffPage({
       updated = await repo.updateStaff(id, {
         name: parsed.data.name,
         email: parsed.data.email,
+        role: parsed.data.role,
       });
     } catch (err) {
       if (isUniqueViolation(err)) {
@@ -536,6 +539,7 @@ export default async function StaffPage({
                       {s.name}
                     </div>
                     <div className="truncate text-[12px] text-[var(--color-text-secondary)]">
+                      {s.role ? `${s.role} · ` : ""}
                       {s.rateLabel ? `${s.rateLabel} · ` : ""}
                       {s.email}
                     </div>
@@ -589,6 +593,12 @@ export default async function StaffPage({
                     ) : null}
                   </div>
                   <div className="text-[13px] text-[var(--color-text-secondary)]">
+                    {selected.role ? (
+                      <span className="font-semibold text-[var(--color-ink)]">
+                        {selected.role}
+                      </span>
+                    ) : null}
+                    {selected.role ? " · " : ""}
                     {selected.email}
                   </div>
                 </div>
@@ -641,6 +651,18 @@ export default async function StaffPage({
                       maxLength={200}
                       defaultValue={selected.email}
                       aria-label="Email address"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-[12px] font-semibold">
+                      Role
+                    </span>
+                    <TextInput
+                      name="role"
+                      maxLength={60}
+                      defaultValue={selected.role ?? ""}
+                      placeholder="e.g. Barista"
+                      aria-label="Role"
                     />
                   </label>
                   <Button type="submit" variant="secondary">
