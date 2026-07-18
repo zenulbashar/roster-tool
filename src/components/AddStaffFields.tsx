@@ -43,6 +43,13 @@ export function AddStaffFields() {
         }}
         className={`${INPUT_CLASS} min-w-[170px]`}
       />
+      <input
+        name="role"
+        maxLength={60}
+        placeholder="Role (optional)"
+        aria-label="Role, e.g. Barista (optional)"
+        className={`${INPUT_CLASS} min-w-[130px]`}
+      />
     </>
   );
 }

@@ -12,6 +12,8 @@ import { formatDate } from "@/lib/time";
 export type ExportRow = {
   staffName: string;
   staffEmail: string;
+  /** Optional position label (Barista / Chef …); "" when unset. */
+  role: string | null;
   clockInAt: Date;
   clockOutAt: Date | null;
   /** Unpaid break minutes deducted from the total-hours column. */
@@ -29,6 +31,7 @@ export const APPROVED_HOURS_DISCLAIMER =
 const HEADER = [
   "Staff name",
   "Staff email",
+  "Role",
   "Date",
   "Clock in",
   "Clock out",
@@ -127,6 +130,7 @@ export function buildApprovedHoursCsv(
       csvRow([
         r.staffName,
         r.staffEmail,
+        r.role ?? "",
         formatDate(r.clockInAt, opts.timezone),
         timeInTz(r.clockInAt, opts.timezone),
         r.clockOutAt ? timeInTz(r.clockOutAt, opts.timezone) : "",

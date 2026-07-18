@@ -1,0 +1,1 @@
+ALTER TABLE "staff_member" ADD COLUMN "role" text;
