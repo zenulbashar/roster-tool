@@ -698,6 +698,116 @@ path is the default one rather than a convention.
 
 ---
 
+## A8c — `UX-02` / `UX-03`: the two confirmed WCAG failures
+
+Both are small and both are single-point fixes, which is why they are P1.
+
+**`UX-02` — keyboard drag.** `src/components/RosterBoard.tsx:389`
+
+```ts
+import {
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+
+const sensors = useSensors(
+  useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  // Without this, the chips still receive dnd-kit's `attributes` — role="button",
+  // tabIndex=0, aria-roledescription — so a keyboard/screen-reader user is TOLD
+  // the chip is draggable and then nothing happens on Space/Enter. WCAG 2.1.1 (A).
+  useSensor(KeyboardSensor, { coordinateGetter: gridCoordinateGetter }),
+);
+```
+
+Write `gridCoordinateGetter` against the staff × day grid: arrow keys step one cell
+horizontally (day) or vertically (person), matching what a drag can express. Then add
+announcements so moves are spoken:
+
+```tsx
+<DndContext
+  sensors={sensors}
+  accessibility={{
+    screenReaderInstructions: {
+      draggable:
+        "Press Space to pick up this shift, arrow keys to choose a person and day, Space to drop, Escape to cancel.",
+    },
+    announcements: {
+      onDragStart: ({ active }) => `Picked up ${labelFor(active.id)}.`,
+      onDragOver: ({ over }) => (over ? `Over ${labelFor(over.id)}.` : "No drop target."),
+      onDragEnd: ({ over }) =>
+        over ? `Moved to ${labelFor(over.id)}.` : "Move cancelled.",
+      onDragCancel: () => "Move cancelled.",
+    },
+  }}
+>
+```
+
+**`UX-03` — live regions.** `aria-live` appears nowhere in the codebase, and every action result
+already routes through the shared `Banner` primitive, so one component closes ~50 surfaces:
+
+```tsx
+// src/components/ui.tsx
+export function Banner({ tone = "info", children, ...rest }: BannerProps) {
+  // Errors interrupt; success/info wait for a pause. role=alert and role=status
+  // carry implicit aria-live values, so no extra attribute is needed.
+  const liveRole = tone === "danger" ? "alert" : "status";
+  return (
+    <div role={liveRole} className={…} {...rest}>
+      {children}
+    </div>
+  );
+}
+```
+
+Then check the kiosk and `/clock` result surfaces specifically — they are the ones where the result
+is the _only_ feedback, and they may render their own markup rather than `Banner`.
+
+**Tests**
+
+```ts
+it("renders success banners with role=status and errors with role=alert", …);
+it("registers a KeyboardSensor so chips are operable without a pointer", …);
+```
+
+Add `axe-core` to CI over `/app`, `/app/periods/[id]/build`, `/kiosk`, `/clock`, `/me`, `/f/[slug]`
+and gate on serious/critical violations.
+
+---
+
+## A8d — `UX-04`: extend the existing confirm, and stop hard-deleting pay records
+
+The two-step confirm in `staff/page.tsx:466` and `forms/page.tsx:88` is the right pattern — better
+than `window.confirm` — it is simply not applied to the other seven destructive actions
+(`deleteCert`, `deleteEntry`, `deleteItem`, `deleteLeave`, `deleteSupplier`, `deleteTemplate`,
+`deleteDocumentAction`).
+
+`deleteEntry` is the one that matters: it destroys the wage evidence for a shift, in one click, with
+no audit trail. Soft-delete it instead.
+
+```sql
+ALTER TABLE timesheet_entry ADD COLUMN deleted_at timestamptz;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS timesheet_entry_active_idx
+  ON timesheet_entry (business_id, clock_in_at) WHERE deleted_at IS NULL;
+```
+
+```ts
+/** Soft-delete: a timesheet entry is a wage record, so it is retired, never removed. */
+async deleteEntry(id: string) {
+  await database
+    .update(timesheetEntries)
+    .set({ deletedAt: new Date(), updatedAt: new Date() })
+    .where(and(eq(timesheetEntries.id, id), eq(timesheetEntries.businessId, businessId)));
+}
+```
+
+Add `isNull(timesheetEntries.deletedAt)` to `listEntriesBetween`,
+`listApprovedEntriesForExport`, `listEntriesForLabourReport` and the Xero push query — miss one and
+deleted hours reappear in payroll. A test per read path is the guard.
+
+---
+
 ## A9 — Suggested CI additions
 
 **`.github/dependabot.yml`**

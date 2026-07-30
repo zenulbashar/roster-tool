@@ -67,17 +67,25 @@ it is **spending another 38 milestones on features while the platform layer — 
 API, i18n — stays unbuilt**, because each additional feature built against a single-role,
 single-region, unobserved substrate raises the cost of adding that substrate later.
 
-**Status of this document.** This is **revision 1 — a first pass, not exhaustive file coverage.**
-About 35 of 192 source files were opened; depth was allocated by risk, so the tenancy, auth, admin,
-job and schema layers were read completely and every Critical/High finding rests on a file read in
-full. But 38 of 42 pages, 26 of 28 components (including the 1,785-line `RosterBoard.tsx`) and all
-but one test file were **not opened**, which is why §2 scores UX and accessibility with explicitly
-**low confidence** and why `UX-01`, `UX-02` and `PERF-12` are hypotheses rather than established
-findings. §3 gives the full ledger and §3.1 the prioritised remainder. That remainder is not a
-formality: a short second pass over four previously-unread files produced `SEC-16` (a staff→owner
-phishing path through unescaped email templates), `PERF-13` (a quadratic query on the People page)
-and `COR-07`. Expect further findings of that class — concentrated in payroll arithmetic, the
-submission cores and the UX surface — and read the current severity distribution as a floor.
+**Status of this document — revision 2.** Revision 1 was a risk-weighted first pass over ~35 of 192
+source files. Revision 2 closed the highest-priority items of §3.1: the email layer, the payroll
+classifier and push path, the PIN-gated submission cores, the remaining crypto primitives, the
+drag-and-drop board's interaction surface, and a programmatic UX/accessibility census across **all 42
+pages**. That work added **eight findings** and, importantly, **promoted two hypotheses to confirmed
+defects and withdrew one suspected vector as unfounded**:
+
+- `UX-02` (accessibility) was a hypothesis; it is now **confirmed** — the board registers only a
+  `PointerSensor`, so drag is keyboard-inoperable while dnd-kit's `attributes` advertise it as an
+  operable button to assistive tech (WCAG 2.1.1, Level A).
+- `UX-03` is new and **confirmed by exhaustive census**: `aria-live` appears **nowhere** in the
+  codebase, so no server-action result on any page is announced (WCAG 4.1.3, Level AA).
+- A suspected **email header-injection** vector was investigated and **ruled out** — Resend is a JSON
+  API and nodemailer encodes headers. It is not reported as a finding.
+
+Coverage is now roughly **55 of 192 files**, with the remaining gap concentrated in the 94 test files,
+the page bodies (censused but not read line-by-line), `google-drive/*`, `sso/*`, and the untouched
+half of `repository.ts`. §3 has the current ledger; §3.1 the remainder. The pattern held again — every
+newly-opened file yielded something — so **continue to read the severity distribution as a floor.**
 
 ---
 
@@ -86,35 +94,35 @@ submission cores and the UX surface — and read the current severity distributi
 Scored against what a Series-A-to-B workforce management platform is expected to demonstrate in
 technical due diligence. "Trajectory" reflects whether current practice is improving or accruing debt.
 
-| Domain                              |    Score | Trajectory | One-line assessment                                                       |
-| ----------------------------------- | -------: | ---------- | ------------------------------------------------------------------------- |
-| Domain modelling                    | **8/10** | ↗          | Genuinely thoughtful; snapshot-vs-reference discipline is excellent       |
-| Code quality & readability          | **8/10** | ↗          | Comment quality is exceptional; pure-core/impure-shell separation is real |
-| Tenant isolation (design)           | **8/10** | →          | One choke point, named exceptions, documented invariants                  |
-| Tenant isolation (defence in depth) | **4/10** | →          | App-layer only; no RLS; repo methods trust caller-supplied FKs            |
-| Testing (logic)                     | **8/10** | ↗          | 94 files, integration tests against real Postgres, boundary guard tests   |
-| Testing (system)                    | **2/10** | →          | No E2E, no a11y automation, no load test, no visual regression            |
-| Database design                     | **6/10** | →          | Sound schema, **critically under-indexed**, no partitioning strategy      |
-| Query & read performance            | **4/10** | ↘          | Missing tenant-key indexes; no memoization; no caching layer at all       |
-| Background jobs                     | **4/10** | ↘          | Idempotency is excellent; topology is a scaling dead end                  |
-| Security — secrets & crypto         | **8/10** | →          | AES-256-GCM, fail-closed, hash-only tokens, timing-safe compares          |
-| Security — auth & session           | **4/10** | ↘          | Impersonation unbound to session; no MFA; no SSO; weak PIN policy         |
-| Security — hardening                | **2/10** | →          | Zero security headers; no CSP; no robots/noindex on public pages          |
-| Supply chain                        | **2/10** | ↘          | 2 critical + 9 high CVEs; beta auth dependency; no SCA, no SBOM           |
-| Permissions / RBAC                  | **1/10** | →          | Exactly one role exists; no manager, no employee account                  |
-| Observability                       | **1/10** | →          | Structured logs only. No errors, metrics, traces, health, alerts          |
-| Reliability & DR                    | **2/10** | →          | Single worker, single region, no documented RTO/RPO or restore drill      |
-| CI/CD                               | **5/10** | →          | Clean gates; no staging, no approval on prod migrations, no flags         |
-| Accessibility                       | **6/10** | ↗          | Semantic HTML and real ARIA usage; unverified, no automated checks        |
-| UX craft                            | **7/10** | ↗          | Design system is coherent; empty/error/loading states incomplete          |
-| Internationalisation                | **1/10** | →          | AU timezone enum, hardcoded AUD, hardcoded `en-AU`                        |
-| API & extensibility (DX)            | **0/10** | →          | No public API, no webhooks, no API keys, no ecosystem surface             |
-| Mobile / offline                    | **2/10** | →          | Responsive web only; no PWA, no push, no offline clock-in                 |
-| Compliance readiness                | **3/10** | →          | No tenant audit log; no data-subject export/erasure workflow              |
-| AI capability                       | **0/10** | →          | None built; the data foundation for it is largely present                 |
-| Documentation                       | **9/10** | ↗          | `CLAUDE.md` + plan docs are the best artefact in the repository           |
+| Domain                              |    Score | Trajectory | One-line assessment                                                                                      |
+| ----------------------------------- | -------: | ---------- | -------------------------------------------------------------------------------------------------------- |
+| Domain modelling                    | **8/10** | ↗          | Genuinely thoughtful; snapshot-vs-reference discipline is excellent                                      |
+| Code quality & readability          | **8/10** | ↗          | Comment quality is exceptional; pure-core/impure-shell separation is real                                |
+| Tenant isolation (design)           | **8/10** | →          | One choke point, named exceptions, documented invariants                                                 |
+| Tenant isolation (defence in depth) | **4/10** | →          | App-layer only; no RLS; repo methods trust caller-supplied FKs                                           |
+| Testing (logic)                     | **8/10** | ↗          | 94 files, integration tests against real Postgres, boundary guard tests                                  |
+| Testing (system)                    | **2/10** | →          | No E2E, no a11y automation, no load test, no visual regression                                           |
+| Database design                     | **6/10** | →          | Sound schema, **critically under-indexed**, no partitioning strategy                                     |
+| Query & read performance            | **4/10** | ↘          | Missing tenant-key indexes; no memoization; no caching layer at all                                      |
+| Background jobs                     | **4/10** | ↘          | Idempotency is excellent; topology is a scaling dead end                                                 |
+| Security — secrets & crypto         | **8/10** | →          | AES-256-GCM, fail-closed, hash-only tokens, timing-safe compares                                         |
+| Security — auth & session           | **4/10** | ↘          | Impersonation unbound to session; no MFA; no SSO; weak PIN policy                                        |
+| Security — hardening                | **2/10** | →          | Zero security headers; no CSP; no robots/noindex on public pages                                         |
+| Supply chain                        | **2/10** | ↘          | 2 critical + 9 high CVEs; beta auth dependency; no SCA, no SBOM                                          |
+| Permissions / RBAC                  | **1/10** | →          | Exactly one role exists; no manager, no employee account                                                 |
+| Observability                       | **1/10** | →          | Structured logs only. No errors, metrics, traces, health, alerts                                         |
+| Reliability & DR                    | **2/10** | →          | Single worker, single region, no documented RTO/RPO or restore drill                                     |
+| CI/CD                               | **5/10** | →          | Clean gates; no staging, no approval on prod migrations, no flags                                        |
+| Accessibility                       | **3/10** | →          | Good semantics, but **no `aria-live` anywhere** + keyboard-inoperable drag — two confirmed WCAG failures |
+| UX craft                            | **6/10** | ↗          | Coherent design system; no loading/error states, 7 of 9 destructive actions unconfirmed                  |
+| Internationalisation                | **1/10** | →          | AU timezone enum, hardcoded AUD, hardcoded `en-AU`                                                       |
+| API & extensibility (DX)            | **0/10** | →          | No public API, no webhooks, no API keys, no ecosystem surface                                            |
+| Mobile / offline                    | **2/10** | →          | Responsive web only; no PWA, no push, no offline clock-in                                                |
+| Compliance readiness                | **3/10** | →          | No tenant audit log; no data-subject export/erasure workflow                                             |
+| AI capability                       | **0/10** | →          | None built; the data foundation for it is largely present                                                |
+| Documentation                       | **9/10** | ↗          | `CLAUDE.md` + plan docs are the best artefact in the repository                                          |
 
-**Composite: 4.4/10** — strong product engineering on an unbuilt platform substrate.
+**Composite: 4.2/10** — strong product engineering on an unbuilt platform substrate.
 
 ---
 
@@ -151,20 +159,31 @@ coverage (one apparent gap found and cleared as a false positive); the 34 migrat
 `error.tsx`/`loading.tsx`/`Suspense` census; TODO/`any`/`@ts-ignore` census; retention/GC
 verification per unbounded table; `dangerouslySetInnerHTML` sinks (none).
 
-**Not covered — read no part of:** `RosterBoard.tsx` (1,785 lines, the largest file in the app);
-38 of 42 `page.tsx` files; 26 of 28 components; **all 94 test files** except the one cited;
-`src/lib/xero/{pay-rules,push,resolve,service,tokens,idempotency}.ts`; `src/lib/google-drive/*`;
-`src/lib/sso/*`; the four staff submission cores (`leave-`, `stock-check-`, `shift-offer-`,
-`internal-form-`); the pure libs `draft.ts`, `labour-report.ts`, `assignment-schedule.ts`,
-`roster-insights.ts`, `form-report.ts`, `item-import.ts`, `crypto.ts`, `notices-verification.ts`,
-`turnstile.ts`, `geo.ts`, `clock.ts`; the migration bodies; the 7 plan docs in `docs/`.
+**Added in revision 2 (read in full):** `src/lib/email/templates.ts` + `transport.ts`;
+`src/lib/xero/pay-rules.ts`; `src/lib/xero/push.ts`; `src/lib/crypto.ts`;
+`src/lib/notices-verification.ts`; `src/lib/leave-submission.ts`;
+`src/lib/stock-check-submission.ts`; `src/lib/validation.ts`; the `hoursWorked` choke point in
+`timesheet-export.ts`. Plus a full **interaction and accessibility census of `RosterBoard.tsx`**
+(sensors, dnd-kit attributes, ARIA and role inventory) and a **programmatic UX census of all 42
+pages** (live regions, empty states, error surfaces, confirmation dialogs, destructive actions).
 
-**Confidence by area.** High: tenancy, auth/session, admin/impersonation, background jobs, schema and
-indexing, supply chain, configuration. Medium: the repository layer (sampled), payroll/Xero
-(boundary verified structurally, logic unread), validation (sampled). **Low: UX, accessibility and
-the drag-and-drop board** — `UX-01`, `UX-02` and `PERF-12` are inferred from page-level data loading
-and an attribute census, **not** from reading the board or the pages, and should be treated as
-hypotheses to confirm rather than established findings.
+**Still not covered — read no part of:** the **94 test files** except
+`tests/pay-rules-boundary.test.ts`; the _bodies_ of the 38 unread pages (censused, not read — so
+copy, layout and per-field validation are unreviewed even where the a11y findings are now solid);
+24 of 28 components; `src/lib/google-drive/*`; `src/lib/sso/*`;
+`src/lib/xero/{resolve,service,tokens,idempotency}.ts`; `shift-offer-submission.ts` and
+`internal-form-submission.ts`; the pure libs `draft.ts`, `labour-report.ts`,
+`assignment-schedule.ts`, `roster-insights.ts`, `form-report.ts`, `item-import.ts`, `turnstile.ts`,
+`geo.ts`, `clock.ts`; ~3,850 lines of `repository.ts`; the migration bodies; the 7 plan docs.
+
+**Confidence by area (revision 2).** High: tenancy, auth/session, admin/impersonation, background
+jobs, schema and indexing, supply chain, configuration, the email layer, the pay-rule classifier and
+push path, and — now — **accessibility of the board and of action results** (both confirmed by direct
+reading and exhaustive census). Medium: the repository layer (sampled), the PIN-gated write paths (two
+of four cores read), validation. **Low: page-level UX copy and layout** — the census establishes the
+_structural_ findings (`UX-03`, `UX-04`) with confidence, but the 38 unread page bodies mean per-screen
+copy, empty-state quality and field-level validation remain unreviewed. `PERF-12` (board payload at
+scale) is still an inference from the page's data loading and should be confirmed by measurement.
 
 **Out of scope by nature:** runtime behaviour under load (no profiling or `EXPLAIN ANALYZE` was run —
 performance findings are read from query shape against the verified index inventory and should be
@@ -178,15 +197,23 @@ Ordered by expected yield. The second-pass evidence for doing this is direct: re
 unopened files produced `SEC-16`, `PERF-13` and `COR-07` below, and one of those is a staff→owner
 privilege crossing.
 
-1. `email/templates.ts` in full, plus every call site, for further untrusted-input paths (`SEC-16`).
-2. `RosterBoard.tsx` + the 38 unread pages — closes the Low-confidence UX/a11y section.
-3. `xero/pay-rules.ts` and `push.ts` — payroll correctness; the boundary is verified, the arithmetic
-   is not.
-4. The four staff submission cores — the PIN-gated write paths, adjacent to `SEC-06`.
-5. `crypto.ts`, `notices-verification.ts`, `turnstile.ts`, `sso/*`, `google-drive/*` — remaining
-   security primitives.
-6. The 94 test files — to substantiate rather than infer the testing scores in §2.
-7. Migration bodies — to verify constraints and defaults, not just indexes.
+Items 1–4 of the revision-1 list are **done** (and produced `SEC-16`, `SEC-17`, `COR-08`, `COR-09`,
+`OPS-07`, `UX-02` confirmed, `UX-03`, `UX-04`, `UX-05`). What remains, in priority order:
+
+1. **The 94 test files** — to substantiate rather than infer the testing scores in §2. The one test
+   read (`pay-rules-boundary`) was excellent, but "94 files exist" is not evidence of coverage; the
+   specific question is whether the flow tests assert _tenant isolation_ and _multi-location_ cases,
+   since `COR-01` and `COR-02` both survived a suite of this size.
+2. **`shift-offer-submission.ts` + `internal-form-submission.ts`** — the two unread PIN-gated write
+   paths. The two that were read were clean, so expect less here, but they are write paths.
+3. **`google-drive/*` and `sso/*`** — remaining security primitives; the SSO route is an
+   unauthenticated public endpoint and deserves a full read.
+4. **The 38 page bodies** — per-screen copy, empty states, field validation and mobile layout. Large,
+   low defect-density, but it is the only way to close the brief's UX scope.
+5. **The remaining ~3,850 lines of `repository.ts`** — forms, Xero, Drive and stock sections.
+6. **Migration bodies** — to verify constraints, defaults and backfill correctness, not just indexes.
+7. **`draft.ts`, `roster-insights.ts`, `labour-report.ts`, `assignment-schedule.ts`** — the pure
+   scheduling maths. Well-tested by name; unverified by reading.
 
 **Severity** = exploitability or blast radius today. **Priority** = severity weighted by strategic
 cost of delay. Findings are `SEC` (security), `COR` (correctness), `PERF`, `OPS`, `ARCH`, `PROD`
@@ -1066,7 +1093,76 @@ active loan to that location. **Migration:** pure code. **Effort:** 0.5 day. **P
 **Industry comparison:** n/a — internal consistency. **Operational impact:** removes a confusing
 support case.
 
+**COR-08 · Pay-rule hour thresholds cumulate on gross clock span, so unpaid break time pushes hours onto higher-paid pay items · Medium (NEW, rev 2)**
+In `classifyEntries` (`src/lib/xero/pay-rules.ts:296-341`) the `daily_hours_beyond` and
+`weekly_hours_beyond` breakpoints are computed from `exactHours` — the **gross** clock span — while the
+emitted line units are scaled by `paidFactor` (gross minus break ÷ gross). The header comment states
+this is deliberate: "the break is unpaid time, not a change to when a shift crosses a daily/weekly
+hours threshold." **The consequence:** a 9-hour shift with a 1-hour unpaid break is 8 paid hours, but
+a rule of "beyond 8 in a day" still fires — the crossing instant is placed at gross hour 8, so roughly
+0.89 paid hours are routed to the owner's overtime/penalty pay item **even though the employee worked
+only 8 paid hours.** **Root cause:** two defensible conventions exist for what a threshold counts, and
+one was chosen in code without surfacing it. **Business impact:** hours land on a higher-paid Xero pay
+item earlier than most overtime rules intend (Fair Work overtime is conventionally on hours _worked_),
+so the draft timesheet over-allocates penalty hours. It is small per shift and systematic across every
+shift with a break — the profile of an error that is invisible until an audit. Roster's own boundary
+("the owner's rules decide") is undermined when a materially rule-changing semantic is neither visible
+nor configurable. **Technical impact:** the split still reconciles to the correct day total, so the
+_total_ hours are right and only the _distribution between pay items_ is affected — which is precisely
+what the owner is paying for. **Industry comparison:** Tanda and Deputy apply overtime thresholds to
+worked hours net of unpaid breaks. **Fix:** make it explicit and owner-selectable — a per-business
+setting, or a per-rule toggle, "count unpaid breaks toward hour thresholds: yes/no", defaulting to
+**no** (net) as the conventional reading; state the choice on `/app/xero/rules` and in the pre-push
+preview. **Migration:** additive column; default the existing behaviour for current tenants if any are
+live, then prompt them once — never silently change how someone's pay is classified.
+**Dependencies:** none. **Effort:** 2 days including tests at the threshold boundary.
+**Priority:** P1 — it is small, it changes money, and it is currently invisible.
+**Customer impact:** penalty allocation matches what owners expect. **Operational impact:** removes a
+class of "why is my Xero draft different from my spreadsheet" support case.
+
+**COR-09 · `timesheet_entry` records break length but not break position, so time-of-day rules can only approximate · Low-Medium (NEW, rev 2)**
+`roster_assignment` carries both `break_minutes` **and** `break_start` (`schema.ts:786-789`), but
+`timesheet_entry` carries only `break_minutes` (`:847`). So the plan side knows _when_ a break sits and
+the actual side does not. `classifyEntries` therefore shrinks **every** sub-block by the same
+`paidFactor` (`:305-307`, `:403`). **Impact:** with a time-of-day rule (e.g. "after 10 pm → penalty"),
+a break actually taken at 22:30 is spread proportionally across both the ordinary and the penalty
+segments, so the split is systematically approximate — and the approximation moves money between pay
+items. **Root cause:** an asymmetry between the two break models, plausibly because the timesheet break
+was added for net-hours reporting before pay rules existed. **Fix:** add `break_start` to
+`timesheet_entry` (mirroring the roster field and the existing UI pattern), let the owner set it on the
+Timesheets edit form, and subtract the break from the sub-blocks it actually overlaps; fall back to the
+proportional model when it is null, so nothing regresses. **Migration:** one nullable column, additive;
+the classifier branches on null. **Dependencies:** pairs naturally with `COR-08`. **Effort:** 3 days.
+**Priority:** P2 — only material for tenants using time-of-day rules, but that is the main reason to
+use rules at all.
+
 ### Security
+
+**SEC-17 · The availability magic link is reusable for 21 days while the email tells staff it works once · Medium (NEW, rev 2)**
+`findRequestByToken` (`src/lib/tenant/public-access.ts:33-45`) gates only on
+`expiresAt > now()`. `availability_request.respondedAt` **is recorded** (`/a/[token]` calls
+`markRequestResponded` after saving) but **is never checked**, and `TOKEN_TTL_DAYS = 21`
+(`src/app/app/periods/[id]/request/page.tsx:24`). Meanwhile both the request and reminder emails carry
+the footer: _"This link is just for you. Please don't forward it. **It works once and expires.**"_
+**Root cause:** `CLAUDE.md` accurately hedges these as "single-use-**ish**", but the customer-facing
+copy states a stronger property than the code enforces. **Business impact:** the product makes a
+security promise it does not keep, to the people least able to verify it. A staff member who forwards
+the link — reasonably believing it is spent — hands over a 21-day capability to **read and overwrite
+their availability for the entire roster period**. Anyone with inbox access has the same. Availability
+is the input that drives rostering, so tampering is an integrity attack on the schedule: mark a
+colleague unavailable for every shift, or available for shifts they cannot work. **Technical impact:**
+unlimited replay for three weeks; no reuse signal, no notification to the staff member that their
+availability changed, and no audit trail (`OPS-04`). **Industry comparison:** capability links of this
+kind are normally either genuinely single-use or short-lived with a visible re-request flow.
+**Fix:** pick one and make the copy match. Preferred: keep the link re-openable (staff legitimately
+revise availability) but **change the email copy** to say so, add a shorter TTL, notify the staff
+member on each change, and log revisions. Alternative: honour the promise — refuse the token once
+`respondedAt` is set and offer a "send me a new link" button. Either is fine; the current mismatch is
+not. **Migration:** copy change is trivial; gating on `respondedAt` is one predicate but would break
+legitimate revision, so decide the product question first. **Dependencies:** none. **Effort:** 0.5 day
+for the copy + TTL; 2 days for notification and revision logging. **Priority:** **P1** for the copy —
+shipping a false security claim is the part that is not defensible. **Customer impact:** staff are told
+the truth about a link they are being asked to protect.
 
 **SEC-16 · Email templates interpolate untrusted values into HTML with no escaping; one path is staff-controlled · Medium-High**
 `src/lib/email/templates.ts` builds every message by template-literal interpolation directly into
@@ -1091,13 +1187,18 @@ with contextual auto-escaping (or React Email / MJML) is standard, and hand-roll
 concatenation for outbound mail is a known anti-pattern. **Fix:** add an`escapeHtml`helper and apply
 it to **every** interpolation in the HTML variants (the plain-text variants are unaffected);
 allow-list and encode`ctaUrl`(assert it starts with`env.APP_URL`); add a test that a payload like
-`<a href=x>` survives round-trip escaped. Longer term, move to a templating layer that escapes by
+`<a href=x>`survives round-trip escaped. Longer term, move to a templating layer that escapes by
 default so this cannot regress. **Migration:** pure code, no schema; escaping changes rendered output
 only where markup was present, which is only the attack case. **Dependencies:** none.
 **Effort:** 1 day for escaping + tests; 3 days for a templating migration. **Priority:** **P1** — a
 staff-controlled path into owner mail is a real boundary crossing and the fix is cheap.
 **Customer impact:** none visible. **Operational impact:** closes a phishing vector that would be
 attributed to Roster.
+**Rev-2 refinements, in fairness to the code:** (a) the staff-controlled`quantity` is capped at 40
+characters (`stock-check-submission.ts`—`.slice(0, 40)`), which constrains but does not prevent a
+payload (`<a href=//x.co>Pay</a>`is 22 characters), so severity stays Medium-High rather than High;
+(b) a suspected **subject-line header-injection** vector was investigated and **ruled out** —`trim()`does not strip interior newlines, so a name *can* carry`\r\n`, but Resend is a JSON API and nodemailer
+encodes headers, so neither transport is injectable. It is not a finding; the HTML body is.
 
 **SEC-03 · Impersonation write-guard is client-side and incomplete · Medium**
 Covered under `SEC-02`; recorded separately because `CLAUDE.md` presents the write-confirm modal as
@@ -1350,6 +1451,29 @@ for `SEC-02` — one mechanism, two consumers — plus a per-record history view
 **Effort:** 1.5 weeks (shared with `SEC-02`). **Priority:** P1. **Industry comparison:** every
 payroll-adjacent platform has immutable timesheet audit history.
 
+**OPS-07 · The Xero push swallows both failure paths with no logging · Medium (NEW, rev 2)**
+`pushEmployeeTimesheet` (`src/lib/xero/push.ts:180` and `:226`) uses bare `catch {}` — the caught error
+is discarded entirely, with no `logger.error` and no persisted detail. A delete failure returns
+`{status: "failed", reason: "delete_failed"}` and a create failure returns
+`{status: "failed", reason: "no_draft_exists"}`, and **that is the only trace that anything went
+wrong.** **Root cause:** the code correctly focuses on holding the `xero_timesheet_id` invariant under
+failure, and the error object was treated as noise once the state was safe. **Impact:** on the single
+most business-critical integration — the one that moves hours toward someone's pay — a failure is
+**undiagnosable.** The owner sees "failed"; the Xero API's status code, error body and validation
+message are gone. Combined with `OPS-01` (no error tracking) there is no way to distinguish an expired
+token from a deleted pay item from a malformed line from a Xero outage, so every failure becomes a
+support conversation that starts from zero. Note this also weakens the M28 promise that a pay item
+deleted in Xero "blocks the push with a named, fixable error": if that validation is ever bypassed, the
+real Xero 400 is silently reduced to a generic reason. **Industry comparison:** integration failures are
+normally logged with the provider's error payload (redacted) and surfaced to the user with a
+correlation id. **Fix:** `catch (err) { logger.error({ err, staffMemberId, periodStart }, "Xero push
+failed") }` in both places, persist a `last_error` summary on `xero_timesheet_push` for the UI, and
+report to Sentry once `OPS-01` lands. Keep the invariant logic exactly as it is — it is correct.
+**Migration:** logging is additive; `last_error` is one nullable column. **Dependencies:** `OPS-01` for
+reporting. **Effort:** 1 day. **Priority:** **P1** — cheap, and it converts a blind spot on the payroll
+path into a diagnosable event. **Operational impact:** first-line support can resolve push failures
+without escalation.
+
 **OPS-05 · No feature flags · Medium**
 Every change is a big-bang deploy; there is no way to dark-launch, canary, or kill a
 misbehaving feature without a revert. Several recommendations in this report (RBAC audit mode, CSP
@@ -1394,15 +1518,76 @@ already — extend its spirit), skeletons, and inline field-level validation. Se
 `return` silently on validation failure (e.g. `toggleAssign`), leaving the user with no feedback at
 all. **Effort:** 1.5 wks. **Priority:** P2.
 
-**UX-02 · Accessibility is unverified · Medium** — 97 `aria-label`, 77 `aria-hidden`, plus
-`role="switch"/"menu"/"dialog"/"status"/"alert"`: the intent and the fundamentals are clearly there,
-which is better than most. But there is **no automated a11y check and no screen-reader
-verification**, and the highest-risk surface — the drag-and-drop board — is exactly the kind of
-interaction that fails WCAG without a tested keyboard path. The tap-a-name editor is retained as the
-keyboard path, which is the right instinct; it needs proving. **Fix:** `axe-core` in CI on key
-routes, a manual VoiceOver/NVDA pass on the board, kiosk and `/me`, and an accessibility statement.
-**Effort:** 1 wk + 3 days/quarter. **Priority:** P2 (P1 if any public-sector or enterprise buyer is
-in the pipeline — VPAT requests arrive early).
+**UX-02 · The roster board advertises a drag affordance that keyboard users cannot operate · Medium-High (CONFIRMED, rev 2)**
+`src/components/RosterBoard.tsx:389-390` registers **only** `useSensor(PointerSensor, …)`. dnd-kit's
+`KeyboardSensor` — which exists precisely to make drag keyboard-operable — is **not registered**.
+Meanwhile the draggable chips spread `{...listeners} {...attributes}` (`:1095-1096`, `:1289-1290`),
+and dnd-kit's `attributes` add `role="button"`, `tabIndex={0}`, `aria-roledescription` and
+`aria-describedby` pointing at its screen-reader drag instructions. **Root cause:** the sensor list
+was written for mouse/touch and the accessibility attributes come free with the library, so the
+affordance was advertised without the mechanism. **Impact:** the worst combination available — a
+keyboard or screen-reader user reaches a chip, is told it is a draggable button with instructions, and
+**pressing Space/Enter moves nothing.** That is a **WCAG 2.1.1 Keyboard (Level A) failure**, the
+threshold most procurement checklists and every VPAT test against. The tap-a-name editor below the
+board is a genuine alternative path for _assignment_ (credit where due — that was deliberate), so the
+task is achievable; the broken advertised control is the defect. **Fix:** register `KeyboardSensor`
+with `sortableKeyboardCoordinates` (or a custom coordinate getter for the grid), add dnd-kit
+`announcements` so moves are spoken, and add `screenReaderInstructions` describing the grid. That is
+roughly a day. Then add `axe-core` to CI on key routes and do a manual VoiceOver/NVDA pass on the
+board, kiosk and `/me`. **Migration:** additive; no behaviour change for pointer users.
+**Dependencies:** none. **Effort:** 1 day for the sensor + announcements; 1 wk for CI axe + the manual
+pass + an accessibility statement. **Priority:** **P1** — Level A, cheap, and a blocker for
+public-sector or enterprise buyers who request a VPAT early. **Customer impact:** the board becomes
+operable without a mouse. **Operational impact:** removes the highest-risk accessibility claim.
+
+**UX-03 · No live regions: no server-action result is ever announced · Medium-High (NEW, rev 2)**
+`aria-live` appears **nowhere in the codebase** (exhaustive grep). `role="status"`/`role="alert"` —
+which carry implicit live semantics — appear in only **three components** (`RosterBoard`, `ui.tsx`'s
+toast, `ImpersonationBanner`), against ~50 surfaces that render an action result. A census of all 42
+pages found **zero** live regions on any page. **Root cause:** results are rendered as ordinary
+banners; nothing marks them as status messages. **Impact:** a screen-reader user submits a form and
+hears nothing — success, validation error, "That PIN didn't match", "Couldn't save" are all silent.
+This is worst on the **kiosk and `/clock`**, where the entire interaction is submit-then-read-result
+and there is no other feedback channel; a blind staff member cannot tell whether they clocked in.
+**WCAG 4.1.3 Status Messages (Level AA) failure.** **Industry comparison:** baseline; a `Banner`
+component is the natural single place to fix it. **Fix:** give `Banner` (and the kiosk/clock result
+surfaces) `role="status"` for success/info and `role="alert"` for errors — because every result
+already routes through the shared `ui.tsx` primitives, this is close to a one-component change. Add an
+axe rule and a test asserting result banners carry a live role. **Migration:** additive, presentational
+only. **Dependencies:** none. **Effort:** 2 days including the kiosk surfaces and tests.
+**Priority:** **P1** — one component, Level AA, and it fixes ~50 surfaces at once.
+**Customer impact:** the product becomes usable with a screen reader on the surfaces staff use most.
+
+**UX-04 · Seven of nine destructive actions have no confirmation; one destroys payroll evidence in a single click · Medium (NEW, rev 2)**
+Nine `delete*` server actions exist across the owner area. `window.confirm` appears **nowhere**;
+instead `staff/page.tsx:466-476` and `forms/page.tsx:88` implement a **server-rendered, count-aware
+two-step confirm** ("Deleting permanently removes N entries" → "Delete permanently"). That pattern is
+better than a native `confirm()` and deserves credit — but it is applied to only **2 of 9** paths.
+`deleteCert`, `deleteEntry`, `deleteItem`, `deleteLeave`, `deleteSupplier`, `deleteTemplate` and
+`deleteDocumentAction` are all single-click, irreversible. **The serious one is `deleteEntry`** — a
+timesheet record, i.e. the wage evidence for a shift worked. Combined with `OPS-04` (no tenant audit
+log), a mis-click **permanently destroys a pay record with no trail, no undo and no way to prove what
+was deleted.** **Root cause:** the confirm pattern was built per-feature where the author judged the
+risk high, rather than derived from a rule about destructive actions. **Business impact:** an
+accidental timesheet deletion becomes an unresolvable wage dispute — Roster is the system of record
+and would have no answer. **Industry comparison:** payroll-adjacent records are normally soft-deleted
+and audited, never hard-deleted from a list view. **Fix:** extend the existing two-step confirm to all
+nine; **soft-delete `timesheet_entry`** (`deleted_at`) rather than removing the row, and log every
+deletion via the `OPS-04` audit mechanism. **Migration:** the confirm is presentational and additive;
+soft delete is one nullable column plus a filter in the reads — additive, and reversible.
+**Dependencies:** `OPS-04` for the trail. **Effort:** 2 days for the confirms; 3 days for timesheet
+soft delete. **Priority:** **P1 for `deleteEntry`**, P2 for the rest. **Operational impact:** removes
+the most damaging single-click mistake available in the product.
+
+**UX-05 · Six page components exceed 500 lines with inline server actions · Low (NEW, rev 2)**
+`staff` (1,099), `build` (1,111), `settings` (958), `templates` (699), `xero/push` (533) and
+`timesheets` (530) each mix layout, data loading and ~5–10 inline `"use server"` closures.
+Generalises `ARCH-06` beyond the builder. **Impact:** these are the hardest files to review and the
+most merge-contended; each action re-derives its own context (compounding `PERF-04`), and the actions
+cannot be unit-tested independently. **Fix:** extract to a per-route `actions.ts`, which
+`locations/` and `items/import/` already do — the convention exists, it is just not applied to the
+large pages. **Effort:** 3 days. **Priority:** P3 — maintainability only, but it grows with every
+milestone.
 
 **DX-01 · No API, no SDK, no sandbox, no developer docs · High** — see `PROD-09`. The audit brief
 names developer experience as a differentiator; today there is no external surface at all.
@@ -1665,17 +1850,21 @@ where behaviour changes for existing tenants.
 
 ### Phase 0 — Stop the bleeding (weeks 1–6)
 
-| #   | Milestone                                                                       | Findings         | Tests required                                                | Docs                              |
-| --- | ------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------- | --------------------------------- |
-| 0.1 | Bind impersonation to session; clear on sign-out/sign-in; TTL → 30 min          | SEC-01           | Session-mismatch rejected; sign-out clears; expiry            | `CLAUDE.md` M37 invariants        |
-| 0.2 | Dependency remediation + Dependabot + `npm audit` gate + CodeQL + SBOM          | SEC-04           | Full suite on upgrade; auth/kiosk/board smoke                 | Security policy + remediation SLA |
-| 0.3 | Security headers + `robots`/`noindex` + `Referrer-Policy` (CSP report-only)     | SEC-05, SEC-08   | Header-assertion test per route class                         | README security section           |
-| 0.4 | Index pack (`CONCURRENTLY`, outside the migration runner) + pool/timeout config | PERF-01, PERF-08 | `EXPLAIN` assertions; verify plans in prod                    | Appendix + runbook                |
-| 0.5 | Fix job owner resolution (org membership) + cross-location notices              | COR-01, COR-02   | Two-location org receives both; cross-location notice visible | `CLAUDE.md` job section           |
-| 0.6 | Health + readiness endpoints, worker heartbeat + staleness alert                | OPS-01 (1–2)     | Endpoint tests; simulated stale heartbeat                     | Ops runbook                       |
-| 0.7 | PIN escalating backoff + weak-PIN blocklist + async scrypt + kiosk rate limit   | SEC-06, SEC-07   | Lockout escalation; blocklist; DoS regression                 | `CLAUDE.md` clock-in section      |
-| 0.8 | Escape all email-template interpolation + allow-list `ctaUrl`                   | SEC-16           | Markup payload round-trips escaped; staff `quantity` path     | `CLAUDE.md` email section         |
-| 0.9 | Second-pass audit over the unread surface (§3.1) — findings, not fixes          | §3.1             | n/a (review milestone)                                        | Audit revision 2                  |
+| #    | Milestone                                                                       | Findings         | Tests required                                                | Docs                              |
+| ---- | ------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------- | --------------------------------- |
+| 0.1  | Bind impersonation to session; clear on sign-out/sign-in; TTL → 30 min          | SEC-01           | Session-mismatch rejected; sign-out clears; expiry            | `CLAUDE.md` M37 invariants        |
+| 0.2  | Dependency remediation + Dependabot + `npm audit` gate + CodeQL + SBOM          | SEC-04           | Full suite on upgrade; auth/kiosk/board smoke                 | Security policy + remediation SLA |
+| 0.3  | Security headers + `robots`/`noindex` + `Referrer-Policy` (CSP report-only)     | SEC-05, SEC-08   | Header-assertion test per route class                         | README security section           |
+| 0.4  | Index pack (`CONCURRENTLY`, outside the migration runner) + pool/timeout config | PERF-01, PERF-08 | `EXPLAIN` assertions; verify plans in prod                    | Appendix + runbook                |
+| 0.5  | Fix job owner resolution (org membership) + cross-location notices              | COR-01, COR-02   | Two-location org receives both; cross-location notice visible | `CLAUDE.md` job section           |
+| 0.6  | Health + readiness endpoints, worker heartbeat + staleness alert                | OPS-01 (1–2)     | Endpoint tests; simulated stale heartbeat                     | Ops runbook                       |
+| 0.7  | PIN escalating backoff + weak-PIN blocklist + async scrypt + kiosk rate limit   | SEC-06, SEC-07   | Lockout escalation; blocklist; DoS regression                 | `CLAUDE.md` clock-in section      |
+| 0.8  | Escape all email-template interpolation + allow-list `ctaUrl`                   | SEC-16           | Markup payload round-trips escaped; staff `quantity` path     | `CLAUDE.md` email section         |
+| 0.9  | Live regions on result banners + `KeyboardSensor` on the board                  | UX-03, UX-02     | axe on key routes; keyboard drag; banner role assertions      | Accessibility statement           |
+| 0.10 | Confirm all destructive actions + soft-delete `timesheet_entry`                 | UX-04            | Confirm-required per action; soft-delete filter               | `CLAUDE.md` timesheets            |
+| 0.11 | Availability-link copy + TTL; log Xero push failures                            | SEC-17, OPS-07   | Copy assertion; failure logged with Xero payload              | `CLAUDE.md` availability + Xero   |
+| 0.12 | Owner-visible break-vs-threshold semantics for pay rules                        | COR-08, COR-09   | Threshold boundary tests both ways                            | `docs/pay-rules-plan.md`          |
+| 0.13 | Third-pass audit over the remaining surface (§3.1) — findings, not fixes        | §3.1             | n/a (review milestone)                                        | Audit revision 3                  |
 
 ### Phase 1 — Foundations (weeks 7–18)
 
