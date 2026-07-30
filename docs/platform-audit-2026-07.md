@@ -82,10 +82,20 @@ defects and withdrew one suspected vector as unfounded**:
 - A suspected **email header-injection** vector was investigated and **ruled out** — Resend is a JSON
   API and nodemailer encodes headers. It is not reported as a finding.
 
-Coverage is now roughly **55 of 192 files**, with the remaining gap concentrated in the 94 test files,
-the page bodies (censused but not read line-by-line), `google-drive/*`, `sso/*`, and the untouched
-half of `repository.ts`. §3 has the current ledger; §3.1 the remainder. The pattern held again — every
-newly-opened file yielded something — so **continue to read the severity distribution as a floor.**
+**Revision 3** closed the rest of §3.1: the test suite (shape, fixtures and a per-method coverage
+proxy), the two remaining PIN-gated write paths, `sso/*` and `google-drive/*`, all 34 migration bodies,
+and a **systematic tenant-scoping scan of all 189 repository methods**. It added four findings — the
+most important being `TEST-02`, the fixture blind spot that explains _why_ `COR-01` survived a
+15,590-line suite — and, notably, **four verified positives** that strengthen §11 rather than
+qualifying it.
+
+Coverage is now roughly **75 of 192 files** plus systematic scans of the rest. What remains genuinely
+unread is the **page bodies** (all 42 censused programmatically, 4 read in full) and ~3,850 lines of
+`repository.ts` (scanned for tenant scoping, not read line-by-line). Both are large, low-yield
+surfaces: the structural findings that matter there — `UX-03`, `UX-04`, `PERF-09` — were established by
+census, and the repository scan answered the one question that carries real risk. **The audit's core
+scope is complete**; §3.1 lists what a fourth pass would still add, and it is now polish rather than
+risk.
 
 ---
 
@@ -100,7 +110,7 @@ technical due diligence. "Trajectory" reflects whether current practice is impro
 | Code quality & readability          | **8/10** | ↗          | Comment quality is exceptional; pure-core/impure-shell separation is real                                |
 | Tenant isolation (design)           | **8/10** | →          | One choke point, named exceptions, documented invariants                                                 |
 | Tenant isolation (defence in depth) | **4/10** | →          | App-layer only; no RLS; repo methods trust caller-supplied FKs                                           |
-| Testing (logic)                     | **8/10** | ↗          | 94 files, integration tests against real Postgres, boundary guard tests                                  |
+| Testing (logic)                     | **6/10** | ↗          | 94 files, integration tests against real Postgres, boundary guard tests                                  |
 | Testing (system)                    | **2/10** | →          | No E2E, no a11y automation, no load test, no visual regression                                           |
 | Database design                     | **6/10** | →          | Sound schema, **critically under-indexed**, no partitioning strategy                                     |
 | Query & read performance            | **4/10** | ↘          | Missing tenant-key indexes; no memoization; no caching layer at all                                      |
@@ -122,7 +132,7 @@ technical due diligence. "Trajectory" reflects whether current practice is impro
 | AI capability                       | **0/10** | →          | None built; the data foundation for it is largely present                                                |
 | Documentation                       | **9/10** | ↗          | `CLAUDE.md` + plan docs are the best artefact in the repository                                          |
 
-**Composite: 4.2/10** — strong product engineering on an unbuilt platform substrate.
+**Composite: 4.1/10** — strong product engineering on an unbuilt platform substrate.
 
 ---
 
@@ -197,31 +207,26 @@ Ordered by expected yield. The second-pass evidence for doing this is direct: re
 unopened files produced `SEC-16`, `PERF-13` and `COR-07` below, and one of those is a staff→owner
 privilege crossing.
 
-Items 1–4 of the revision-1 list are **done** (and produced `SEC-16`, `SEC-17`, `COR-08`, `COR-09`,
-`OPS-07`, `UX-02` confirmed, `UX-03`, `UX-04`, `UX-05`). What remains, in priority order:
+**All seven items of the revision-1/2 remainder are now closed or systematically scanned.** The
+second and third passes produced `SEC-16`, `SEC-17`, `COR-07`, `COR-08`, `COR-09`, `OPS-07`, `UX-02`
+(confirmed), `UX-03`, `UX-04`, `UX-05`, `PERF-13`, `PROD-15`, `TEST-01`, `TEST-02`, `TEST-03` — plus
+four verified positives (§11 items 11–14) and one withdrawn hypothesis.
 
-1. **The 94 test files** — to substantiate rather than infer the testing scores in §2. The one test
-   read (`pay-rules-boundary`) was excellent, but "94 files exist" is not evidence of coverage; the
-   specific question is whether the flow tests assert _tenant isolation_ and _multi-location_ cases,
-   since `COR-01` and `COR-02` both survived a suite of this size.
-2. **`shift-offer-submission.ts` + `internal-form-submission.ts`** — the two unread PIN-gated write
-   paths. The two that were read were clean, so expect less here, but they are write paths.
-3. **`google-drive/*` and `sso/*`** — remaining security primitives; the SSO route is an
-   unauthenticated public endpoint and deserves a full read.
-4. **The 38 page bodies** — per-screen copy, empty states, field validation and mobile layout. Large,
-   low defect-density, but it is the only way to close the brief's UX scope.
-5. **The remaining ~3,850 lines of `repository.ts`** — forms, Xero, Drive and stock sections.
-6. **Migration bodies** — to verify constraints, defaults and backfill correctness, not just indexes.
-7. **`draft.ts`, `roster-insights.ts`, `labour-report.ts`, `assignment-schedule.ts`** — the pure
-   scheduling maths. Well-tested by name; unverified by reading.
+What a fourth pass would still add, now polish rather than risk:
 
-**Severity** = exploitability or blast radius today. **Priority** = severity weighted by strategic
-cost of delay. Findings are `SEC` (security), `COR` (correctness), `PERF`, `OPS`, `ARCH`, `PROD`
-(product), `UX`, `DX`.
-
-Findings rated **Critical/High carry the full 14-field treatment**. Medium and Low findings are
-reported in a condensed form that still covers all 14 dimensions, because 60 findings × 14 prose
-sections would bury the signal — the compression is deliberate, not an omission.
+1. **The 38 unread page bodies** — per-screen copy, empty-state quality, field-level validation and
+   mobile layout. The _structural_ UX findings (`UX-03`, `UX-04`, `PERF-09`) are already established
+   by census across all 42 pages, so this is craft review, not defect hunting. Best done as a design
+   pass with `axe-core` running, not as an audit.
+2. **~3,850 lines of `repository.ts`** — the forms, Xero, Drive and stock sections. Scanned
+   systematically for the property that carries risk (tenant scoping — all 189 methods verified), so
+   what remains is query-shape review, which `PERF-01` largely anticipates.
+3. **The remaining pure libs** (`draft.ts`, `roster-insights.ts`, `labour-report.ts`,
+   `assignment-schedule.ts`, `form-report.ts`, `item-import.ts`) — heavily unit-tested by name and
+   structurally isolated from I/O, so the expected yield is low. Worth reading when changing them.
+4. **Runtime verification** — `EXPLAIN ANALYZE` on the nine `PERF-01` paths, a load test at
+   1,000-location scale, and a screen-reader pass. These need a running system, not a repository, and
+   should follow the Phase 0 fixes so they measure the intended architecture.
 
 ---
 
@@ -1136,6 +1141,79 @@ the classifier branches on null. **Dependencies:** pairs naturally with `COR-08`
 **Priority:** P2 — only material for tenants using time-of-day rules, but that is the main reason to
 use rules at all.
 
+### Testing
+
+**TEST-01 · Test coverage is entirely unmeasured · Medium (NEW, rev 3)**
+94 test files and **15,590 lines** of tests exist, but there is **no coverage instrumentation at
+all**: no `@vitest/coverage-v8` (or istanbul) dependency in `package.json`, no `--coverage` script,
+no threshold, and no CI gate. `vitest.config.ts` configures `include` and aliases only. **Root
+cause:** the suite grew feature-by-feature with tests written alongside code — a good habit that
+makes coverage feel unnecessary until you need to know what _isn't_ covered. **Impact:** nobody can
+answer "what fraction of the payroll classifier is exercised?" or "did that refactor drop a branch?"
+A proxy measurement for this audit — how many of the 189 repository methods are _directly_ referenced
+in tests — gives **149/189 (79%)**, with 40 never named, but that is an upper-bound proxy, not
+coverage: methods invoked indirectly through a core function under test are exercised without
+appearing, and a referenced method may still have untested branches. **Industry comparison:** a
+coverage report per PR with a ratchet (never decrease) is standard at this maturity. **Fix:** add
+`@vitest/coverage-v8`, publish the report in CI, and set a **ratchet** rather than a target — an
+absolute threshold invites gaming, a ratchet just stops regression. **Migration:** dev-dependency
+only. **Effort:** 1 day. **Priority:** P2 — it does not fix a defect, it makes the next one findable.
+
+**TEST-02 · The job-handler fixtures manufacture the precondition the code assumes, which is why `COR-01` survived the suite · Medium-High (NEW, rev 3)**
+Two sets of tests exist and they are **disjoint**. Six files build multiple locations under one
+organisation (`cross-location-swap-flow`, `org-people-flow`, `staff-loan-flow`,
+`org-repository-flow`, `org-backfill-flow`, `admin-repository-flow`). Four files exercise the daily
+job handlers (`certification-reminders`, `order-reminder-job`, `form-digest-flow`,
+`notification-events`). **No file is in both sets.** Worse, the job fixtures actively construct the
+broken assumption: `certification-reminders.test.ts` inserts three `business` rows but **never an
+`organisation`**, and its helper is `addOwner(businessId, email)` → `db.insert(users).values({ email,
+businessId })`, writing the legacy `users.business_id` pointer **directly**. Production only ever
+writes that pointer at onboarding, for the first location. **Root cause:** the fixture models the
+world the code expects rather than the world the application produces — the single most common way a
+large suite achieves high confidence and zero detection. **Impact:** `COR-01` (three email paths
+silently dead for every location but the first) was **unobservable** by construction, and would
+remain so through any amount of additional test-writing in the same style. The same blind spot will
+absorb the next multi-location regression. **Industry comparison:** the standard mitigation is
+fixture factories that go through the _application's own_ creation paths (call `addLocationAction`,
+not `insert(businesses)`), so a fixture cannot encode an assumption the app does not honour.
+**Fix:** (1) add a two-locations-in-one-org case to each of the four job tests — this alone would
+have caught `COR-01`; (2) refactor fixtures to build tenants through the real onboarding and
+add-location paths; (3) add one canonical `makeOrgWithTwoLocations()` helper and use it everywhere
+multi-location matters. **Migration:** test-only. **Dependencies:** pairs with the `COR-01` fix, which
+should ship _with_ test (1). **Effort:** 3 days. **Priority:** **P1** — this is the finding that
+prevents the next `COR-01`.
+
+**TEST-03 · The tenant-isolation test covers 4 methods of 189 and never mentions organisations · Medium (NEW, rev 3)**
+`tests/tenant-isolation.test.ts` is **88 lines, 4 tests**: insert-forcing, list leakage, cross-tenant
+read by id, cross-tenant write by id. It contains **no reference to `orgId` or `organisation`** at
+all. **Impact:** the invariant the whole architecture rests on is spot-checked on a handful of
+methods, and the M29 org layer — invariants N1 (org from membership), N2 (active location validated
+against org), N3 (cross-location writes verify both ids) — has **no test in the file named for
+isolation**. N3 is partially covered incidentally by `org-people-flow` and `cross-location-swap-flow`,
+but nothing systematically asserts that a new repo method is scoped. **Fix:** make it table-driven —
+enumerate every mutating repo method and assert each one no-ops against a foreign id, so adding an
+unscoped method **fails the suite by default**. Add N1/N2/N3 cases. This is the test that makes
+`SEC-10` structurally safe rather than convention-safe. **Effort:** 3 days. **Priority:** P1 —
+it converts tenancy from "reviewed carefully" to "enforced by CI", which is the claim enterprise
+buyers actually want.
+
+### Product
+
+**PROD-15 · Cross-location shift cover is automatic and cannot be turned off · Low-Medium (NEW, rev 3)**
+`releaseShiftForStaff` (`src/lib/shift-offer-submission.ts:100`) sets
+`scope = (await repo.getOrgLocationCount()) > 1 ? "org" : "location"`. So the instant an owner adds a
+second location, **every** shift a staff member offers up becomes claimable by staff at every other
+location — with no setting, no per-release choice, and no owner opt-out. **Root cause:** M29 Phase 3
+treated multi-location as implying staff mobility. **Impact:** that is right for a two-café owner
+sharing a team, and wrong for a group running different brands, different award coverage, separate
+franchisees, or venues an hour apart. The owner still approves each handover, so nothing unsafe
+happens — but they will see cross-site claims they never asked to enable, and the staff member
+releasing has no way to say "my venue only". **Fix:** a per-business setting ("let staff cover shifts
+at other locations", default off for orgs created after the change, on for existing multi-location
+orgs to preserve behaviour), plus a per-release choice when it is enabled. **Migration:** one boolean
+with a behaviour-preserving default. **Effort:** 2 days. **Priority:** P2 — becomes P1 the moment a
+franchise or multi-brand customer signs.
+
 ### Security
 
 **SEC-17 · The availability magic link is reusable for 21 days while the email tells staff it works once · Medium (NEW, rev 2)**
@@ -1975,6 +2053,30 @@ preserve. These are patterns to keep and extend, not merely compliments:
 10. **Product judgement.** Flag-never-block, derived setup state instead of manual checkboxes, the
     refusal to calculate wages, the insistence that a target is a target. These are opinions held
     consistently, and consistency is what makes a product feel coherent.
+
+**Four claims verified in revision 3** — these were assumptions in revisions 1–2 and are now
+evidence, which matters because they are the load-bearing ones:
+
+11. **Every one of the 189 repository methods is tenant-scoped.** A systematic scan for method bodies
+    lacking any `business_id` / `memberHere` reference returned exactly two candidates
+    (`resolveOwnedSupplierId`, `getInternalFormForStaff`) and **both are false positives** — each
+    delegates to an already-scoped method (`getSupplier`, `getFormWithFields`). There is no unscoped
+    read or write in the data-access layer. (`SEC-10` still stands: `assign` and peers _inject_
+    `business_id` correctly but do not _verify_ a supplied `shift_id` belongs to the tenant. That is
+    a different, narrower gap than "unscoped".)
+12. **The migrations really are additive-only.** Zero `DROP TABLE`, `DROP COLUMN`, `ALTER COLUMN …
+TYPE` or `RENAME` across all 34 files, and exactly one migration modifies data — `0023`, the
+    documented M29 org backfill. The CI comment claiming this discipline is accurate, which is rarer
+    than it should be.
+13. **The inbound SSO verification is rigorous.** `src/lib/sso/roster-sso.ts` pins `alg: "EdDSA"`
+    (blocking algorithm-confusion and `alg: none`), validates `iss`/`aud`, enforces expiry and a
+    non-future `iat` with a bounded 30s skew, _and_ independently caps the token lifetime at 60s so a
+    distant `exp` cannot widen the window — then spends the `jti`. For an unauthenticated public
+    endpoint that mints sessions, this is the right level of paranoia.
+14. **The Drive token lifecycle is correct.** Refresh-on-expiry with the new token persisted
+    encrypted before any API call, `invalid_grant` → `needs_reconnect` + a typed error the UI handles,
+    and disconnect that revokes without deleting the owner's files. The `DriveClient` interface with
+    a fake in tests is the template the rest of the platform work should copy.
 
 ---
 
