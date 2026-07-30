@@ -61,11 +61,23 @@ locations**, not millions of employees.
 **Verdict.** The foundations are sound enough that none of this requires a rewrite. Every finding in
 this report is addressable additively on the existing architecture — which is a direct credit to the
 tenant-repo pattern, the pure-function discipline and the migration hygiene already in place. The
-work is roughly **8–10 engineer-months** to reach enterprise-credible, sequenced below into 26
+work is roughly **8–10 engineer-months** to reach enterprise-credible, sequenced below into 28
 independently deployable milestones of two weeks or less. The strategic risk is not technical debt;
 it is **spending another 38 milestones on features while the platform layer — roles, observability,
 API, i18n — stays unbuilt**, because each additional feature built against a single-role,
 single-region, unobserved substrate raises the cost of adding that substrate later.
+
+**Status of this document.** This is **revision 1 — a first pass, not exhaustive file coverage.**
+About 35 of 192 source files were opened; depth was allocated by risk, so the tenancy, auth, admin,
+job and schema layers were read completely and every Critical/High finding rests on a file read in
+full. But 38 of 42 pages, 26 of 28 components (including the 1,785-line `RosterBoard.tsx`) and all
+but one test file were **not opened**, which is why §2 scores UX and accessibility with explicitly
+**low confidence** and why `UX-01`, `UX-02` and `PERF-12` are hypotheses rather than established
+findings. §3 gives the full ledger and §3.1 the prioritised remainder. That remainder is not a
+formality: a short second pass over four previously-unread files produced `SEC-16` (a staff→owner
+phishing path through unescaped email templates), `PERF-13` (a quadratic query on the People page)
+and `COR-07`. Expect further findings of that class — concentrated in payroll arithmetic, the
+submission cores and the UX surface — and read the current severity distribution as a floor.
 
 ---
 
@@ -112,29 +124,69 @@ This was a first-principles read of the repository, not a summary of its own doc
 below are grounded in specific files and line ranges, and several assertions in `CLAUDE.md` were
 independently verified against code (two were found not to hold — see `COR-01` and `SEC-03`).
 
-**Reviewed in full:** `src/lib/db/schema.ts` (2,104 lines, all 39 tables); all 34 migrations
-(index inventory extracted directly from DDL); `src/lib/auth/*`; `src/lib/admin/*`;
-`src/lib/tenant/*access*.ts`; `src/lib/jobs/*`; `src/lib/env.ts`; `src/lib/time.ts`;
-`src/lib/pin.ts`; `src/lib/tokens.ts`; `src/lib/rate-limit.ts`; `src/lib/logger.ts`;
-`src/lib/db/index.ts`; `src/lib/form-response-submission.ts`; `next.config.ts`; `vercel.json`;
-`Dockerfile`; `.github/workflows/ci.yml`; `scripts/worker.ts`; `package.json` + full `npm audit`.
+**This is a first-pass audit, not exhaustive file coverage.** Roughly **35 of 192 source files** were
+opened. Depth was allocated by risk — the architecture-critical spine was read completely, and every
+Critical/High finding rests on a file read in full — but the brief's ambition of reviewing every file,
+page and component is **not met by this revision**. The per-area confidence below is the honest
+statement of that, and §3.1 lists what remains.
+
+**Reviewed in full:** `src/lib/db/schema.ts` (2,104 lines, all 39 tables); `src/lib/auth/*`;
+`src/lib/admin/*` (context, allowlist, impersonation, impersonation-session, repository, actions);
+all four `src/lib/tenant/*access*.ts` resolvers; `src/lib/tenant/org-repository.ts`;
+`src/lib/jobs/*`; `src/lib/env.ts`; `src/lib/time.ts`; `src/lib/pin.ts`; `src/lib/tokens.ts`;
+`src/lib/rate-limit.ts`; `src/lib/logger.ts`; `src/lib/db/index.ts`;
+`src/lib/form-response-submission.ts`; `next.config.ts`; `vercel.json`; `Dockerfile`;
+`.github/workflows/ci.yml`; `scripts/worker.ts`; `package.json` + full `npm audit`.
 
 **Reviewed in relevant part:** `src/lib/tenant/repository.ts` (4,752 lines — all 189 method
 signatures enumerated; staff, availability, assignment, timesheet, notification and photo sections
-read in full); the roster builder page (1,111 lines) and its inline server actions; the owner
-dashboard; `src/components/ui.tsx`; `src/lib/xero/client.ts`; `src/lib/admin/repository.ts`.
+read in full, ~900 lines total); the roster builder page (~370 of 1,111 lines) and its inline server
+actions; `src/lib/validation.ts` (~120 lines); `src/lib/email/templates.ts` (interpolation audit
+only); the owner dashboard; `src/components/ui.tsx` (~120 of 495 lines); `src/lib/xero/client.ts`
+(method surface); `tests/pay-rules-boundary.test.ts`.
 
-**Surveyed systematically:** all 62 route/page/layout files (auth-guard coverage checked
-programmatically — one gap found and cleared as a false positive); all 28 components; ARIA and
-`role` attribute census; `error.tsx`/`loading.tsx`/`Suspense` census; TODO/`any`/`@ts-ignore`
-census; retention/GC verification per unbounded table.
+**Surveyed systematically** (grep/census, not read): all 62 route/page/layout files for auth-guard
+coverage (one apparent gap found and cleared as a false positive); the 34 migrations for their
+`CREATE INDEX` inventory; ARIA and `role` attribute census across all components;
+`error.tsx`/`loading.tsx`/`Suspense` census; TODO/`any`/`@ts-ignore` census; retention/GC
+verification per unbounded table; `dangerouslySetInnerHTML` sinks (none).
 
-**Not covered** (and therefore explicitly out of confidence): runtime behaviour under load (no
-profiling or `EXPLAIN ANALYZE` was run — performance findings are read from query shape against the
-verified index inventory, and should be confirmed with production plans); the visual design handoff
-in `design/`; browser-level accessibility verification against a screen reader; penetration testing;
-actual Neon/Vercel/Railway account configuration, which is outside the repository and where several
-reliability findings can only be _partly_ assessed from code.
+**Not covered — read no part of:** `RosterBoard.tsx` (1,785 lines, the largest file in the app);
+38 of 42 `page.tsx` files; 26 of 28 components; **all 94 test files** except the one cited;
+`src/lib/xero/{pay-rules,push,resolve,service,tokens,idempotency}.ts`; `src/lib/google-drive/*`;
+`src/lib/sso/*`; the four staff submission cores (`leave-`, `stock-check-`, `shift-offer-`,
+`internal-form-`); the pure libs `draft.ts`, `labour-report.ts`, `assignment-schedule.ts`,
+`roster-insights.ts`, `form-report.ts`, `item-import.ts`, `crypto.ts`, `notices-verification.ts`,
+`turnstile.ts`, `geo.ts`, `clock.ts`; the migration bodies; the 7 plan docs in `docs/`.
+
+**Confidence by area.** High: tenancy, auth/session, admin/impersonation, background jobs, schema and
+indexing, supply chain, configuration. Medium: the repository layer (sampled), payroll/Xero
+(boundary verified structurally, logic unread), validation (sampled). **Low: UX, accessibility and
+the drag-and-drop board** — `UX-01`, `UX-02` and `PERF-12` are inferred from page-level data loading
+and an attribute census, **not** from reading the board or the pages, and should be treated as
+hypotheses to confirm rather than established findings.
+
+**Out of scope by nature:** runtime behaviour under load (no profiling or `EXPLAIN ANALYZE` was run —
+performance findings are read from query shape against the verified index inventory and should be
+confirmed with production plans); the visual design handoff in `design/`; browser-level screen-reader
+verification; penetration testing; actual Neon/Vercel/Railway account configuration, which is outside
+the repository and where several reliability findings can only be _partly_ assessed from code.
+
+### 3.1 Remaining work to close coverage
+
+Ordered by expected yield. The second-pass evidence for doing this is direct: reading four previously
+unopened files produced `SEC-16`, `PERF-13` and `COR-07` below, and one of those is a staff→owner
+privilege crossing.
+
+1. `email/templates.ts` in full, plus every call site, for further untrusted-input paths (`SEC-16`).
+2. `RosterBoard.tsx` + the 38 unread pages — closes the Low-confidence UX/a11y section.
+3. `xero/pay-rules.ts` and `push.ts` — payroll correctness; the boundary is verified, the arithmetic
+   is not.
+4. The four staff submission cores — the PIN-gated write paths, adjacent to `SEC-06`.
+5. `crypto.ts`, `notices-verification.ts`, `turnstile.ts`, `sso/*`, `google-drive/*` — remaining
+   security primitives.
+6. The 94 test files — to substantiate rather than infer the testing scores in §2.
+7. Migration bodies — to verify constraints and defaults, not just indexes.
 
 **Severity** = exploitability or blast radius today. **Priority** = severity weighted by strategic
 cost of delay. Findings are `SEC` (security), `COR` (correctness), `PERF`, `OPS`, `ARCH`, `PROD`
@@ -1000,7 +1052,52 @@ offset at the target local time and handle the gap/overlap explicitly, or adopt 
 available. **Effort:** 1 day. **Priority:** P3 now; P1 before shift _start times_ are ever stored as
 instants.
 
+**COR-07 · `removePersonFromLocation` hard-deletes a membership the loan machinery expects to deactivate · Low**
+`createOrgRepo.removePersonFromLocation` (`src/lib/tenant/org-repository.ts:206-214`) issues a
+`DELETE` on `staff_location`, while `addPersonToLocation` (`:174-180`) upserts with `active: true` and
+`createLoan`/`endLoan`/`handleStaffLoanExpiry` all reason about deactivating a row tagged with
+`loan_id`. **Root cause:** two mental models for "remove" — soft for loans, hard for manual removal —
+in the same table. **Impact:** removing a person from a location while a loan to that location is
+active leaves an `active` loan row with no membership, so `/app/people` shows an "On loan to X" marker
+for someone who is not a member there, and `endLoan` later finds nothing to deactivate. Cosmetic
+today; misleading in exactly the situation the owner is trying to reason about. **Fix:** make manual
+removal a deactivation (`active: false`, `loan_id: null`) for symmetry, and have it also end any
+active loan to that location. **Migration:** pure code. **Effort:** 0.5 day. **Priority:** P3.
+**Industry comparison:** n/a — internal consistency. **Operational impact:** removes a confusing
+support case.
+
 ### Security
+
+**SEC-16 · Email templates interpolate untrusted values into HTML with no escaping; one path is staff-controlled · Medium-High**
+`src/lib/email/templates.ts` builds every message by template-literal interpolation directly into
+`bodyHtml`, and **no escaping helper exists anywhere in the email layer** (verified by grep).
+Examples: `heading: \`Hi ${staffName},\``; `<strong>${periodLabel}</strong>`;
+`<li><strong>${s.dayText}</strong> — ${s.label}, ${s.timeText}</li>`; and
+`<a href="${opts.ctaUrl}">` interpolating a URL into an attribute. Most of these fields are
+owner-authored, which is a lower bar — but **`orderReminderEmail` (`:268-277`) interpolates
+`quantity`**, and `stock_check_entry.quantity`is **free text typed by a staff member** at the
+PIN-gated kiosk (the schema documents it as "record-only, never parsed"). **Root cause:** templates
+were written as trusted-string formatting; the trust boundary moved when staff-entered fields began
+flowing into owner-facing mail, and there was no escaping primitive to catch it. **Business impact:**
+a staff member can inject markup — most usefully a link — into an email the **account holder**
+receives from Roster's own domain, correctly DKIM/SPF-signed and therefore maximally trusted. The
+natural payload is a supplier-payment-change link, which is the single most successful business email
+compromise pattern. It is a staff→owner privilege crossing laundered through a trusted channel.
+**Technical impact:** script execution is largely mitigated by modern mail clients, so this is
+content and link spoofing rather than XSS — but the layer is structurally exposed, so any future
+untrusted field (a leave note in a decision email, form content in the digest — explicitly a deferred
+feature) becomes an injection with no code change. **Industry comparison:** below baseline; templating
+with contextual auto-escaping (or React Email / MJML) is standard, and hand-rolled HTML string
+concatenation for outbound mail is a known anti-pattern. **Fix:** add an`escapeHtml`helper and apply
+it to **every** interpolation in the HTML variants (the plain-text variants are unaffected);
+allow-list and encode`ctaUrl`(assert it starts with`env.APP_URL`); add a test that a payload like
+`<a href=x>` survives round-trip escaped. Longer term, move to a templating layer that escapes by
+default so this cannot regress. **Migration:** pure code, no schema; escaping changes rendered output
+only where markup was present, which is only the attack case. **Dependencies:** none.
+**Effort:** 1 day for escaping + tests; 3 days for a templating migration. **Priority:** **P1** — a
+staff-controlled path into owner mail is a real boundary crossing and the fix is cheap.
+**Customer impact:** none visible. **Operational impact:** closes a phishing vector that would be
+attributed to Roster.
 
 **SEC-03 · Impersonation write-guard is client-side and incomplete · Medium**
 Covered under `SEC-02`; recorded separately because `CLAUDE.md` presents the write-confirm modal as
@@ -1113,6 +1210,28 @@ user-facing writes (publishing a roster, deciding leave) and extra connection pr
 send-only client in web (no `supervise`, no `createQueue` — the worker owns schema and queue
 creation); keep the full instance in the worker. **Effort:** 2 days. **Priority:** P2.
 **Industry comparison:** queue producers should not run queue maintenance.
+
+**PERF-13 · `listPeople()` is O(people × memberships) in JavaScript, unbounded · Medium**
+`createOrgRepo.listPeople()` (`src/lib/tenant/org-repository.ts:98-130`) loads **all** of an org's
+`staff_member` rows and **all** of its `staff_location` rows with no limit, then for each person runs
+`memberships.filter(...)` — a nested scan in JS. The comment states the assumption explicitly: "one
+query per table, grouped in memory (org staffing is small)." **Root cause:** a documented small-N
+assumption on the one page whose purpose is a large shared staff pool. **Impact:** for a 5,000-person
+org with ~15,000 memberships that is ~75 million iterations per `/app/people` render, on the request
+path, plus the full row payload in function memory. It degrades quadratically — the failure is sudden
+rather than gradual, and it lands on exactly the enterprise-sized customers the org feature exists to
+serve. `countLocations()` (`:82-88`) has the same shape in miniature, selecting all rows to return
+`rows.length` instead of `count(*)`. **Technical impact:** CPU-bound work in a serverless function
+with no pagination and no ceiling; `staff_location` has a `staff_member_id` index, so this should be a
+grouped query, not an in-memory join. **Industry comparison:** a people directory at this scale is
+paginated and server-aggregated everywhere. **Fix:** build a `Map<staffMemberId, businessId[]>` in one
+pass (O(n) instead of O(n²)) as the immediate fix; then paginate the page and aggregate the membership
+list in SQL (`array_agg` grouped by staff member). Replace `countLocations` with `count(*)`.
+**Migration:** pure code; the returned shape need not change for the O(n) fix, so it is a safe
+drop-in. **Dependencies:** benefits from `PROD-01` (departments) as the natural filter axis.
+**Effort:** 0.5 day for the Map fix; 2 days with pagination and SQL aggregation. **Priority:** P2
+(P1 before onboarding any org above a few hundred people). **Customer impact:** the People page stays
+fast as the pool grows. **Operational impact:** removes a quadratic CPU path from the request path.
 
 **PERF-08 · Connection pool and query timeouts unconfigured · Medium**
 `src/lib/db/index.ts:16` — `new Pool({ connectionString })` with no `max`, `idleTimeoutMillis`,
@@ -1555,6 +1674,8 @@ where behaviour changes for existing tenants.
 | 0.5 | Fix job owner resolution (org membership) + cross-location notices              | COR-01, COR-02   | Two-location org receives both; cross-location notice visible | `CLAUDE.md` job section           |
 | 0.6 | Health + readiness endpoints, worker heartbeat + staleness alert                | OPS-01 (1–2)     | Endpoint tests; simulated stale heartbeat                     | Ops runbook                       |
 | 0.7 | PIN escalating backoff + weak-PIN blocklist + async scrypt + kiosk rate limit   | SEC-06, SEC-07   | Lockout escalation; blocklist; DoS regression                 | `CLAUDE.md` clock-in section      |
+| 0.8 | Escape all email-template interpolation + allow-list `ctaUrl`                   | SEC-16           | Markup payload round-trips escaped; staff `quantity` path     | `CLAUDE.md` email section         |
+| 0.9 | Second-pass audit over the unread surface (§3.1) — findings, not fixes          | §3.1             | n/a (review milestone)                                        | Audit revision 2                  |
 
 ### Phase 1 — Foundations (weeks 7–18)
 

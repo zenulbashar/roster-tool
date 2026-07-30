@@ -624,6 +624,80 @@ it("rate-limits PIN attempts per kiosk token", …);
 
 ---
 
+## A8b — `SEC-16`: escape email-template interpolation
+
+**File:** `src/lib/email/templates.ts`
+
+There is no escaping helper anywhere in the email layer today, and every template interpolates
+straight into `bodyHtml`. The path that matters is `orderReminderEmail`: `stock_check_entry.quantity`
+is free text a staff member types at the PIN-gated kiosk, so it reaches the **owner's** inbox from
+Roster's own DKIM-signed domain.
+
+```ts
+/**
+ * Escape a value for interpolation into email HTML. Every `${…}` inside a
+ * bodyHtml/heading/footer template literal MUST go through this — the plain-text
+ * variants need no escaping. Untrusted paths today: staff-entered stock-check
+ * `quantity`, and any future staff- or public-supplied field (a leave note, form
+ * content in a digest).
+ */
+export function esc(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "";
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** A CTA URL must be one of ours — never an interpolated attacker-chosen href. */
+function safeCtaUrl(url: string): string {
+  return url.startsWith(env.APP_URL) ? esc(url) : esc(env.APP_URL);
+}
+```
+
+Then apply it at every HTML interpolation, e.g.:
+
+```ts
+// before
+bodyHtml: `<p>${businessName} is putting together the roster for <strong>${periodLabel}</strong>.</p>`,
+// after
+bodyHtml: `<p>${esc(businessName)} is putting together the roster for <strong>${esc(periodLabel)}</strong>.</p>`,
+
+// the staff-controlled path
+const itemText = (i: { name: string; quantity?: string | null }) =>
+  i.quantity ? `${esc(i.name)} (${esc(i.quantity)} left)` : esc(i.name);
+```
+
+**Tests**
+
+```ts
+it("escapes markup in a staff-entered stock quantity", () => {
+  const mail = orderReminderEmail({
+    businessName: "Cafe",
+    suppliers: [
+      {
+        supplierName: "S",
+        deliveryText: "Mon 01/09",
+        needsOrder: [{ name: "Beans", quantity: '<a href="https://evil">pay here</a>' }],
+        low: [],
+      },
+    ],
+  });
+  expect(mail.html).not.toContain("<a href=\"https://evil\"");
+  expect(mail.html).toContain("&lt;a href=");
+});
+
+it("falls back to APP_URL for a foreign ctaUrl", …);
+```
+
+**Longer term.** Hand-rolled HTML string concatenation for outbound mail will regress the moment a new
+field is added. Move to a templating layer that escapes by default (React Email or MJML) so the safe
+path is the default one rather than a convention.
+
+---
+
 ## A9 — Suggested CI additions
 
 **`.github/dependabot.yml`**
@@ -679,4 +753,6 @@ Run before closing the phase:
 - [ ] `/api/health` returns 200; `/api/ready` returns 503 with the worker stopped
 - [ ] Railway healthcheck points at `/api/ready`; the stale-heartbeat alert fires within 5 minutes
 - [ ] PIN lockout escalates and does not reset on lock; kiosk-token rate limit engages
+- [ ] A markup payload in a staff-entered stock `quantity` arrives escaped in the owner's email
 - [ ] Full test suite green; `CLAUDE.md` and `README.md` updated in the same PRs
+- [ ] Second-pass audit (§3.1) complete, or its remaining scope explicitly accepted and dated
