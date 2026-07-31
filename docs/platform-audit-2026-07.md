@@ -82,20 +82,26 @@ defects and withdrew one suspected vector as unfounded**:
 - A suspected **email header-injection** vector was investigated and **ruled out** — Resend is a JSON
   API and nodemailer encodes headers. It is not reported as a finding.
 
-**Revision 3** closed the rest of §3.1: the test suite (shape, fixtures and a per-method coverage
-proxy), the two remaining PIN-gated write paths, `sso/*` and `google-drive/*`, all 34 migration bodies,
-and a **systematic tenant-scoping scan of all 189 repository methods**. It added four findings — the
-most important being `TEST-02`, the fixture blind spot that explains _why_ `COR-01` survived a
-15,590-line suite — and, notably, **four verified positives** that strengthen §11 rather than
-qualifying it.
+**Revision 4 — coverage complete.** The final pass read the 38 remaining page bodies and the rest of
+`repository.ts`, closing every item on the §3.1 list. It added four findings — `COR-10` (a lost-update
+race that crashes the Shifts page), `SEC-18` (four capability tokens left readable by JavaScript for
+five minutes, for no benefit), `COR-11` (the last surviving M29 membership leftover) — and sharpened
+`SEC-17` from "misleading copy" into a flat internal contradiction, since the `/a/[token]` page's own
+banner states the opposite of what the email claims.
 
-Coverage is now roughly **75 of 192 files** plus systematic scans of the rest. What remains genuinely
-unread is the **page bodies** (all 42 censused programmatically, 4 read in full) and ~3,850 lines of
-`repository.ts` (scanned for tenant scoping, not read line-by-line). Both are large, low-yield
-surfaces: the structural findings that matter there — `UX-03`, `UX-04`, `PERF-09` — were established by
-census, and the repository scan answered the one question that carries real risk. **The audit's core
-scope is complete**; §3.1 lists what a fourth pass would still add, and it is now polish rather than
-risk.
+Revisions 1–3 covered the architecture-critical spine, the email layer, the payroll classifier and push
+path, the PIN-gated write paths, `sso/*`, `google-drive/*`, all 34 migration bodies, the test suite,
+and a programmatic UX/accessibility census of all 42 pages. **The repository is now reviewed.** What
+remains is runtime work that a repository cannot answer — `EXPLAIN ANALYZE` on the nine `PERF-01`
+paths, a load test at 1,000-location scale, and a screen-reader pass — and those should follow the
+Phase 0 fixes so they measure the intended architecture rather than the current one.
+
+**The pattern across four passes is itself a finding.** Every pass over previously-unread code yielded
+defects, including the fourth: **56 findings** total, of which **20 were found after** the point where
+revision 1 declared its headline conclusions. The architecture-level judgements in §1 did not change —
+but the defect count roughly doubled. Read that as evidence for how this codebase should be reviewed
+going forward: it is well-architected and consistently written, which makes individual defects _less_
+visible, not more. Spot-checking a codebase this uniform is unusually unreliable.
 
 ---
 
@@ -1098,6 +1104,39 @@ active loan to that location. **Migration:** pure code. **Effort:** 0.5 day. **P
 **Industry comparison:** n/a — internal consistency. **Operational impact:** removes a confusing
 support case.
 
+**COR-10 · `approveOffer` asserts non-null on an update that concurrency can lose, crashing the page · Medium (NEW, rev 4)**
+`approveOffer` (`src/lib/tenant/repository.ts:2103`) opens its transaction with a plain `SELECT` on
+`shift_offer` — **without `.for("update")`**, unlike `moveAssignment` (`:806`), which does take the row
+lock. Two concurrent approvals of the same offer therefore both read `status = 'claimed'`. Under READ
+COMMITTED the second transaction's final `UPDATE … WHERE status = 'claimed'` re-evaluates against the
+now-committed row, matches nothing, and `updated` is `undefined` — but the code returns
+`{ ok: true, offer: updated! }`. The caller then does `const { offer } = res; await
+repo.getPublishedShift(offer.shiftId)` (`src/app/app/shifts/page.tsx:71-72`) and throws
+**`TypeError: Cannot read properties of undefined`**. **Root cause:** a non-null assertion standing in
+for a lock the sibling method already uses. **Impact:** reachable by double-clicking Approve — and
+there is no submit-disabling anywhere outside `RosterBoard` and the items importer — or by two managers
+acting at once. The mutations themselves are idempotent so the _data_ stays correct and the email job
+was already enqueued, but the owner gets an unbranded crash page (no `error.tsx`, `PERF-09`) and cannot
+tell whether the approval worked. With no error tracking (`OPS-01`) nobody finds out.
+**Industry comparison:** a lost-update race that surfaces as a stack trace is a standard review catch.
+**Fix:** add `.for("update")` to the offer select (matching `moveAssignment`), and return
+`{ ok: false, reason: "This claim was just actioned." }` when the update matches no row — never assert.
+**Migration:** pure code. **Dependencies:** none. **Effort:** 0.5 day including a concurrent-approval
+test. **Priority:** P1 — trivial fix, user-visible crash. **Operational impact:** removes a support
+case that currently looks like data loss and is not.
+
+**COR-11 · The last M29 membership leftover: `getSetupFlags` still asks "is this person homed here?" · Low (NEW, rev 4)**
+A systematic scan of `repository.ts` found `memberHere` used in 13 places and exactly **one** remaining
+raw home-location check: `getSetupFlags` (`:1092`) computes
+`hasStaff` as `exists(select 1 from staff_member where business_id = <this location>)`. **Impact:** a
+location staffed entirely through `staff_location` membership — the M29 shared-pool case, and the whole
+point of `/app/people` — reports `hasStaff: false`, so the dashboard's Getting Started card tells the
+owner to "add staff" at a venue that already has a roster of them, and the card never auto-hides.
+**Root cause:** the same incomplete M29 read migration behind `COR-01` and `COR-02`; this is its
+smallest surviving instance. **Fix:** use the existing `memberHere` predicate. **Migration:** one line.
+**Effort:** 0.5 day with a test. **Priority:** P2. **Note:** the scan is the useful output here — with
+this fixed, staff scoping in the tenant repo is membership-based everywhere.
+
 **COR-08 · Pay-rule hour thresholds cumulate on gross clock span, so unpaid break time pushes hours onto higher-paid pay items · Medium (NEW, rev 2)**
 In `classifyEntries` (`src/lib/xero/pay-rules.ts:296-341`) the `daily_hours_beyond` and
 `weekly_hours_beyond` breakpoints are computed from `exactHours` — the **gross** clock span — while the
@@ -1216,6 +1255,28 @@ franchise or multi-brand customer signs.
 
 ### Security
 
+**SEC-18 · Four flash cookies expose raw capability tokens to JavaScript for five minutes, for no benefit · Medium (NEW, rev 4)**
+Freshly-generated capability links are handed to the page through a cookie set with
+**`httpOnly: false`** and `maxAge: 300`: the kiosk token and the personal-clock token
+(`settings/page.tsx:133`, `:204`), the Xero connect-invite token (`:281`), and a staff member's `/me`
+notices token (`staff/page.tsx:325`). The comment explains why — "Not httpOnly: a small client
+component clears it" — but `ClearFlashCookie` **only deletes**; it never reads the value. So the
+`httpOnly: false` buys nothing except making four secrets readable by any script on the page.
+**Root cause:** the show-once UX was implemented client-side, and the cookie flag was relaxed to
+enable the cleanup rather than the display (the value is already read **server-side** in both pages).
+**Impact:** during that 300-second window `document.cookie` yields tokens that are **permanent until
+manually rotated** — the kiosk token grants the venue's staff list plus clock writes to anyone holding
+it (`SEC-09`), and the `/me` token identifies one person's private notices surface. With **no CSP**
+(`SEC-05`) there is nothing constraining what script can run on `/app/settings` or `/app/staff`, so any
+injected script, malicious browser extension or compromised third-party asset harvests a long-lived
+capability during the exact window the owner is most likely to have the page open. **Industry
+comparison:** a secret that only the server needs should never leave `httpOnly`. **Fix:** set
+`httpOnly: true` and clear the cookie server-side — either on the next render (the value has already
+been consumed) or via a tiny server action the client component calls instead of touching
+`document.cookie`. No UX change. **Migration:** pure code. **Dependencies:** none; independently
+valuable, and materially reduces the blast radius of any future XSS. **Effort:** 0.5 day.
+**Priority:** P1 — trivial, and it removes a JS-readable window on the app's longest-lived secrets.
+
 **SEC-17 · The availability magic link is reusable for 21 days while the email tells staff it works once · Medium (NEW, rev 2)**
 `findRequestByToken` (`src/lib/tenant/public-access.ts:33-45`) gates only on
 `expiresAt > now()`. `availability_request.respondedAt` **is recorded** (`/a/[token]` calls
@@ -1223,7 +1284,11 @@ franchise or multi-brand customer signs.
 (`src/app/app/periods/[id]/request/page.tsx:24`). Meanwhile both the request and reminder emails carry
 the footer: _"This link is just for you. Please don't forward it. **It works once and expires.**"_
 **Root cause:** `CLAUDE.md` accurately hedges these as "single-use-**ish**", but the customer-facing
-copy states a stronger property than the code enforces. **Business impact:** the product makes a
+copy states a stronger property than the code enforces. **Rev 4 sharpens this into a flat internal
+contradiction:** the `/a/[token]` page's own success banner reads _"Thanks! Your availability has been
+saved. **You can change it any time using this link.**"_ (`src/app/a/[token]/page.tsx:137`). The page
+describes the real behaviour correctly; the email describes the opposite. One of the two is wrong, and
+it is the email — which is the one staff read before deciding whether the link is safe to forward. **Business impact:** the product makes a
 security promise it does not keep, to the people least able to verify it. A staff member who forwards
 the link — reasonably believing it is spent — hands over a 21-day capability to **read and overwrite
 their availability for the entire roster period**. Anyone with inbox access has the same. Availability
