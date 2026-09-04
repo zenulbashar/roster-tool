@@ -338,6 +338,7 @@ export const adminActivities = pgTable(
   (t) => [
     index("admin_activity_created_idx").on(t.createdAt),
     index("admin_activity_org_idx").on(t.orgId),
+    index("admin_activity_business_idx").on(t.businessId),
   ],
 );
 
@@ -598,7 +599,11 @@ export const staffLoans = pgTable(
     index("staff_loan_org_idx").on(t.orgId),
     index("staff_loan_staff_idx").on(t.staffMemberId),
     index("staff_loan_to_business_idx").on(t.toBusinessId),
-    index("staff_loan_active_idx").on(t.active),
+    // Partial: the expiry job and the "on loan" markers only ever look at
+    // ACTIVE loans, keyed by person + target location.
+    index("staff_loan_active_partial_idx")
+      .on(t.toBusinessId, t.staffMemberId)
+      .where(sql`${t.active} = true`),
   ],
 );
 
@@ -607,62 +612,70 @@ export const staffLoans = pgTable(
  * Mon–Fri". `weekdays` holds ISO weekday numbers (1=Mon … 7=Sun) the template
  * applies to. Times are stored as wall-clock "HH:MM:SS" strings.
  */
-export const shiftTemplates = pgTable("shift_template", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  businessId: uuid("business_id")
-    .notNull()
-    .references(() => businesses.id, { onDelete: "cascade" }),
-  label: text("label").notNull(),
-  startTime: time("start_time").notNull(),
-  endTime: time("end_time").notNull(),
-  weekdays: integer("weekdays").array().notNull(),
-  active: boolean("active").notNull().default(true),
-  // Owner-chosen accent colour (a bar hex from the fixed SHIFT_PALETTE). Null =
-  // no explicit choice, so the display falls back to the keyword-derived scheme
-  // (shiftColorScheme). Purely presentational; never enforced.
-  color: text("color"),
-  // Optional per-weekday time overrides, keyed by ISO weekday ("1".."7") →
-  // { start, end } ("HH:MM"). A day with no entry uses the default start/end
-  // above. Null/empty = every day uses the default (the original behaviour).
-  // Applied only at expansion (expandTemplatesToShifts); concrete shifts still
-  // snapshot their own resolved times, so nothing downstream changes.
-  dayTimeOverrides:
-    jsonb("day_time_overrides").$type<
-      Record<string, { start: string; end: string }>
+export const shiftTemplates = pgTable(
+  "shift_template",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    startTime: time("start_time").notNull(),
+    endTime: time("end_time").notNull(),
+    weekdays: integer("weekdays").array().notNull(),
+    active: boolean("active").notNull().default(true),
+    // Owner-chosen accent colour (a bar hex from the fixed SHIFT_PALETTE). Null =
+    // no explicit choice, so the display falls back to the keyword-derived scheme
+    // (shiftColorScheme). Purely presentational; never enforced.
+    color: text("color"),
+    // Optional per-weekday time overrides, keyed by ISO weekday ("1".."7") →
+    // { start, end } ("HH:MM"). A day with no entry uses the default start/end
+    // above. Null/empty = every day uses the default (the original behaviour).
+    // Applied only at expansion (expandTemplatesToShifts); concrete shifts still
+    // snapshot their own resolved times, so nothing downstream changes.
+    dayTimeOverrides:
+      jsonb("day_time_overrides").$type<
+        Record<string, { start: string; end: string }>
+      >(),
+    // How many people each instance of this shift needs (hospitality: several
+    // staff share one Friday-night close). A TARGET the builder flags against —
+    // never a hard block. Snapshotted onto each concrete shift at expansion.
+    requiredStaff: integer("required_staff").notNull().default(1),
+    // Optional per-weekday staffing overrides, keyed by ISO weekday ("1".."7")
+    // → required staff for that day ("Friday needs 4"). A day with no entry
+    // uses requiredStaff above. Null/empty = every day uses the default.
+    // Applied only at expansion (like dayTimeOverrides); concrete shifts still
+    // snapshot their own resolved number.
+    dayStaffOverrides: jsonb("day_staff_overrides").$type<
+      Record<string, number>
     >(),
-  // How many people each instance of this shift needs (hospitality: several
-  // staff share one Friday-night close). A TARGET the builder flags against —
-  // never a hard block. Snapshotted onto each concrete shift at expansion.
-  requiredStaff: integer("required_staff").notNull().default(1),
-  // Optional per-weekday staffing overrides, keyed by ISO weekday ("1".."7")
-  // → required staff for that day ("Friday needs 4"). A day with no entry
-  // uses requiredStaff above. Null/empty = every day uses the default.
-  // Applied only at expansion (like dayTimeOverrides); concrete shifts still
-  // snapshot their own resolved number.
-  dayStaffOverrides: jsonb("day_staff_overrides").$type<
-    Record<string, number>
-  >(),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("shift_template_business_idx").on(t.businessId)],
+);
 
-export const rosterPeriods = pgTable("roster_period", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  businessId: uuid("business_id")
-    .notNull()
-    .references(() => businesses.id, { onDelete: "cascade" }),
-  label: text("label").notNull(),
-  startDate: date("start_date").notNull(),
-  endDate: date("end_date").notNull(),
-  availabilityDeadline: timestamp("availability_deadline", {
-    withTimezone: true,
-  }),
-  status: rosterStatus("status").notNull().default("draft"),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const rosterPeriods = pgTable(
+  "roster_period",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    availabilityDeadline: timestamp("availability_deadline", {
+      withTimezone: true,
+    }),
+    status: rosterStatus("status").notNull().default("draft"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("roster_period_business_idx").on(t.businessId)],
+);
 
 export const shifts = pgTable(
   "shift",
@@ -689,7 +702,12 @@ export const shifts = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (t) => [index("shift_period_idx").on(t.rosterPeriodId)],
+  (t) => [
+    index("shift_period_idx").on(t.rosterPeriodId),
+    // PERF-01: clock-in shift matching, overlap detection and every
+    // date-ranged read filter on (business_id, date).
+    index("shift_business_date_idx").on(t.businessId, t.date),
+  ],
 );
 
 export const availabilityRequests = pgTable(
@@ -757,6 +775,11 @@ export const availabilityResponses = pgTable(
     uniqueIndex("availability_response_manual_staff_shift_unique")
       .on(t.staffMemberId, t.shiftId)
       .where(sql`${t.requestId} is null`),
+    // PERF-01: the builder's listResponses filters business_id and joins shift.
+    index("availability_response_business_shift_idx").on(
+      t.businessId,
+      t.shiftId,
+    ),
   ],
 );
 
@@ -796,23 +819,32 @@ export const rosterAssignments = pgTable(
       t.shiftId,
       t.staffMemberId,
     ),
+    // PERF-01: one row per person per shift makes this the largest table in
+    // the model; every tenant-scoped read and every "this person's shifts"
+    // read needs its own index (the pair unique only serves shift-first).
+    index("roster_assignment_business_idx").on(t.businessId),
+    index("roster_assignment_staff_idx").on(t.staffMemberId),
   ],
 );
 
-export const publishedRosters = pgTable("published_roster", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  businessId: uuid("business_id")
-    .notNull()
-    .references(() => businesses.id, { onDelete: "cascade" }),
-  rosterPeriodId: uuid("roster_period_id")
-    .notNull()
-    .unique()
-    .references(() => rosterPeriods.id, { onDelete: "cascade" }),
-  publicSlug: text("public_slug").notNull().unique(),
-  publishedAt: timestamp("published_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const publishedRosters = pgTable(
+  "published_roster",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    rosterPeriodId: uuid("roster_period_id")
+      .notNull()
+      .unique()
+      .references(() => rosterPeriods.id, { onDelete: "cascade" }),
+    publicSlug: text("public_slug").notNull().unique(),
+    publishedAt: timestamp("published_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("published_roster_business_idx").on(t.businessId)],
+);
 
 /**
  * A clock-in/out record for a staff member. `clockOutAt` null means the person
@@ -858,6 +890,9 @@ export const timesheetEntries = pgTable(
       t.businessId,
       t.staffMemberId,
     ),
+    // PERF-01: the timesheets view, the CSV export, the labour report and the
+    // Xero push all filter business_id + a clock_in_at RANGE.
+    index("timesheet_entry_business_clockin_idx").on(t.businessId, t.clockInAt),
     // A staff member can have at most one open (not-yet-clocked-out) entry,
     // making double clock-in impossible at the database level.
     uniqueIndex("timesheet_entry_one_open_per_staff")
@@ -870,21 +905,30 @@ export const timesheetEntries = pgTable(
  * Optional photo captured at clock in/out, stored inline as `bytea`. Cascades
  * away with its timesheet entry. Served only to the owner via a scoped route.
  */
-export const clockPhotos = pgTable("clock_photo", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  businessId: uuid("business_id")
-    .notNull()
-    .references(() => businesses.id, { onDelete: "cascade" }),
-  timesheetEntryId: uuid("timesheet_entry_id")
-    .notNull()
-    .references(() => timesheetEntries.id, { onDelete: "cascade" }),
-  kind: clockPhotoKind("kind").notNull(),
-  mimeType: text("mime_type").notNull(),
-  imageData: bytea("image_data").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const clockPhotos = pgTable(
+  "clock_photo",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    timesheetEntryId: uuid("timesheet_entry_id")
+      .notNull()
+      .references(() => timesheetEntries.id, { onDelete: "cascade" }),
+    kind: clockPhotoKind("kind").notNull(),
+    mimeType: text("mime_type").notNull(),
+    imageData: bytea("image_data").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    // PERF-01: the retention sweep and per-entry lookups must never scan a
+    // table of image bytes.
+    index("clock_photo_entry_idx").on(t.timesheetEntryId),
+    index("clock_photo_business_idx").on(t.businessId),
+  ],
+);
 
 /**
  * A staff member's request for time off, and the owner's decision on it.
@@ -1519,11 +1563,18 @@ export const formResponseAnswers = pgTable(
  * window is its own row; `expires_at` lets old rows be ignored/swept. See
  * `src/lib/rate-limit.ts` for the limits.
  */
-export const formRateLimits = pgTable("form_rate_limit", {
-  bucketKey: text("bucket_key").primaryKey(),
-  count: integer("count").notNull().default(0),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-});
+export const formRateLimits = pgTable(
+  "form_rate_limit",
+  {
+    bucketKey: text("bucket_key").primaryKey(),
+    count: integer("count").notNull().default(0),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    // PERF-10: rows are swept by expiry; without this the sweep is a scan.
+    index("form_rate_limit_expires_idx").on(t.expiresAt),
+  ],
+);
 
 /* -------------------------------------------------------------------------- */
 /* Google Drive document storage (Phase 1)                                    */

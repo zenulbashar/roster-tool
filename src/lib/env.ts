@@ -12,6 +12,11 @@ const baseEnvSchema = z.object({
 
   DATABASE_URL: z.string().url(),
 
+  // Which process this is: sizes the connection pool and its statement
+  // timeout (src/lib/db/index.ts). `npm run worker` and the worker Dockerfile
+  // set `worker`; everything else is the web app.
+  ROSTER_ROLE: z.enum(["web", "worker"]).default("web"),
+
   // Auth.js
   AUTH_SECRET: z.string().min(1),
   AUTH_URL: z.string().url().optional(),

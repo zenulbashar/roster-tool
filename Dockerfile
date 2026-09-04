@@ -14,6 +14,10 @@ COPY . .
 
 # Run in production mode (JSON logs; skips the dev-only pretty logger).
 ENV NODE_ENV=production
+# Sizes the DB pool + statement timeout for a long-lived job process
+# (src/lib/db/index.ts). The `worker` npm script sets it too; this covers
+# anyone running the entrypoint directly.
+ENV ROSTER_ROLE=worker
 
 # Same command as `npm run worker` locally — behavior is unchanged.
 CMD ["npm", "run", "worker"]

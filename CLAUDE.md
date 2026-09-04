@@ -907,6 +907,15 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
   `business_id` from body/query/params.
 - All domain reads/writes go through the tenant-scoped data-access layer in
   `src/lib/tenant/`. Don't query domain tables directly from routes.
+- **Every `business_id`-scoped table carries an index whose leading column is
+  `business_id`** (composite with the hot filter column where there is one —
+  `(business_id, date)` on `shift`, `(business_id, clock_in_at)` on
+  `timesheet_entry`), and any table read person-first also indexes
+  `staff_member_id`. The tenancy predicate is the most universal filter in the
+  codebase; a table without such an index degrades linearly with the tenant's
+  whole history (PERF-01). Add the index with the table, in the same migration.
+  Index migrations are written `IF NOT EXISTS` so an operator can pre-build a
+  large one with `CREATE INDEX CONCURRENTLY` outside the transactional runner.
 - **Admin exception (M37)** — the Zale IT admin console is the ONLY place that
   reads across tenants, and it is quarantined: every cross-tenant read lives in
   `src/lib/admin/repository.ts` (`createAdminRepo`), reachable only behind
