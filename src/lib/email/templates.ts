@@ -54,7 +54,7 @@ export function availabilityRequestEmail(input: {
       ctaLabel: "Choose my shifts",
       ctaUrl: link,
       footer:
-        "This link is just for you. Please don't forward it. It works once and expires.",
+        "This link is just for you and stays live for about three weeks — anyone who has it can change your answers, so please don't forward it.",
     }),
     text: [
       `Hi ${staffName},`,
@@ -64,7 +64,7 @@ export function availabilityRequestEmail(input: {
       link,
       deadlineText2,
       "",
-      "This link is just for you. Please don't forward it.",
+      "This link is just for you and stays live for about three weeks — anyone who has it can change your answers, so please don't forward it.",
     ]
       .filter(Boolean)
       .join("\n"),
@@ -359,7 +359,7 @@ export function reminderEmail(input: {
       ctaLabel: "Choose my shifts",
       ctaUrl: link,
       footer:
-        "This link is just for you. Please don't forward it. It works once and expires.",
+        "This link is just for you and stays live for about three weeks — anyone who has it can change your answers, so please don't forward it.",
     }),
     text: [
       `Hi ${staffName},`,
@@ -369,6 +369,8 @@ export function reminderEmail(input: {
       "",
       `Open this link to choose your shifts:`,
       link,
+      "",
+      "This link is just for you and stays live for about three weeks — anyone who has it can change your answers, so please don't forward it.",
     ]
       .filter(Boolean)
       .join("\n"),

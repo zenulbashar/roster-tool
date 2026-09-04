@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { logger } from "@/lib/logger";
 import type { TenantRepo } from "@/lib/tenant/repository";
 import type { XeroClient } from "./client";
 import { XeroApiError, XeroTimesheetAlreadyActioned } from "./errors";
@@ -177,9 +178,15 @@ export async function pushEmployeeTimesheet(opts: {
           tenantId,
           existing!.xeroTimesheetId!,
         );
-      } catch {
+      } catch (err) {
         // Delete failed → the OLD draft is still live and the row is unchanged.
-        // Not the "no draft" state; surface a distinct failure.
+        // Not the "no draft" state; surface a distinct failure — and LOG the
+        // provider error (OPS-07): without it a payroll-path failure is
+        // undiagnosable from the generic reason alone.
+        logger.error(
+          { err, businessId, staffMemberId, periodStart, periodEnd },
+          "Xero push: deleting the existing draft timesheet failed",
+        );
         return { status: "failed", reason: "delete_failed" };
       }
     }
@@ -223,9 +230,16 @@ export async function pushEmployeeTimesheet(opts: {
       xeroTimesheetId: created.timesheetId,
       hoursTotal: totalHours,
     };
-  } catch {
+  } catch (err) {
     // Create failed. If we deleted first, the pre-marker already recorded the
-    // distinct "no draft exists" state; for a first push, record it now.
+    // distinct "no draft exists" state; for a first push, record it now. Log
+    // the provider error either way (OPS-07) — the Xero status/body is the
+    // only thing that distinguishes an expired token from a deleted pay item
+    // from a malformed line.
+    logger.error(
+      { err, businessId, staffMemberId, periodStart, periodEnd, attempt },
+      "Xero push: creating the draft timesheet failed",
+    );
     if (!preMarked) {
       await repo.markXeroPushNoDraft({
         staffMemberId,

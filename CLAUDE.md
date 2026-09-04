@@ -949,8 +949,11 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
 ### Security
 
 - Validate ALL external input with zod.
-- Staff magic-link tokens are single-use-ish, scoped, and time-limited. Store
-  only a **hash** of the token; compare hashes. Never log tokens or PII.
+- Staff magic-link tokens are scoped and time-limited (availability links stay
+  live for 21 days and are deliberately RE-OPENABLE so staff can revise their
+  answers — the email says so; never claim a link "works once" unless the code
+  gates on `responded_at`). Store only a **hash** of the token; compare hashes.
+  Never log tokens or PII.
 - Secrets live in env only, accessed via the validated `src/lib/env.ts`.
 
 ### Background jobs
