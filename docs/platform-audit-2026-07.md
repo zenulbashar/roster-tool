@@ -841,6 +841,15 @@ bizRows)` and `await`s 2–6 queries plus N email sends per business, strictly s
   invocations.
 - **Expected operational impact:** meaningful reduction in database round trips and connection
   pressure.
+- **Resolution (milestone 1.4, this branch):** `requireOwner` is `React.cache(resolveOwner)` —
+  one session + impersonation + org + active-location resolution per request, shared by the
+  owner layout (bell, location switcher), the page and any server action in that request;
+  `ownerRepo`/`orgRepo`/`ownerContext` consume it. The cache is request-scoped by React (never
+  cross-user); a `redirect()` is cached for the request too, so every caller sees the same
+  outcome. No `requireOwnerFresh` was added: the guard already re-validates the impersonation
+  grant and session on every request, and no action needs a second lookup within one request.
+  The query-count assertion needs a React request scope, which the vitest suite (node
+  environment) cannot provide — covered by the production build + smoke, recorded as a gap.
 
 ### PERF-05 — The admin clients list is unbounded and aggregates over the two largest tables with no time bound
 
@@ -1118,6 +1127,10 @@ removal a deactivation (`active: false`, `loan_id: null`) for symmetry, and have
 active loan to that location. **Migration:** pure code. **Effort:** 0.5 day. **Priority:** P3.
 **Industry comparison:** n/a — internal consistency. **Operational impact:** removes a confusing
 support case.
+**Resolution (milestone 1.4, this branch):** `removePersonFromLocation` now deactivates the
+membership (`active = false`, `loan_id` cleared) and ends any active loan of that person to that
+location in one transaction; a later add or loan re-activates the row. Flow-tested in
+`tests/org-people-flow.test.ts`.
 
 **COR-10 · `approveOffer` asserts non-null on an update that concurrency can lose, crashing the page · Medium (NEW, rev 4)**
 `approveOffer` (`src/lib/tenant/repository.ts:2103`) opens its transaction with a plain `SELECT` on
@@ -1517,6 +1530,12 @@ user-facing writes (publishing a roster, deciding leave) and extra connection pr
 send-only client in web (no `supervise`, no `createQueue` — the worker owns schema and queue
 creation); keep the full instance in the worker. **Effort:** 2 days. **Priority:** P2.
 **Industry comparison:** queue producers should not run queue maintenance.
+**Resolution (milestone 1.4, this branch):** `getBoss()` is shaped by `ROSTER_ROLE`: the worker
+migrates, creates every queue at boot, supervises and schedules, and archives finished jobs for two
+weeks (`deleteAfterSeconds`); the web app is a send-only producer (`supervise: false`,
+`schedule: false`) that ensures a queue lazily on the first send to it in a process — no
+eleven-queue upsert per cold start. The schema version check stays on in web (cheap, no-op when
+current) so a producer never faces a missing schema on a fresh database.
 
 **PERF-13 · `listPeople()` is O(people × memberships) in JavaScript, unbounded · Medium**
 `createOrgRepo.listPeople()` (`src/lib/tenant/org-repository.ts:98-130`) loads **all** of an org's
@@ -1539,6 +1558,10 @@ drop-in. **Dependencies:** benefits from `PROD-01` (departments) as the natural 
 **Effort:** 0.5 day for the Map fix; 2 days with pagination and SQL aggregation. **Priority:** P2
 (P1 before onboarding any org above a few hundred people). **Customer impact:** the People page stays
 fast as the pool grows. **Operational impact:** removes a quadratic CPU path from the request path.
+**Resolution (milestone 1.4, this branch):** `listPeople` groups the (active-only) memberships into
+a `Map<staffMemberId, Set<businessId>>` in one pass — O(people + memberships) — with the returned
+shape unchanged; `countLocations` is `count(*)`. Pagination + SQL `array_agg` remain the follow-up
+for the multi-thousand-person case.
 
 **PERF-08 · Connection pool and query timeouts unconfigured · Medium**
 `src/lib/db/index.ts:16` — `new Pool({ connectionString })` with no `max`, `idleTimeoutMillis`,

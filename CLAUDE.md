@@ -125,14 +125,24 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
     `createTenantRepo`). So placing a person at a location (a membership) makes
     them appear in that location's roster builder / availability / kiosk — this
     is how staff are **shared and lent** across locations. `addStaff` creates the
-    org-level row + a home membership atomically.
+    org-level row + a home membership atomically. Removing a person from a
+    location (`removePersonFromLocation`) is a **deactivation, never a delete**
+    (COR-07): the `staff_location` row flips `active = false` (loan tag
+    cleared) and any active loan to that location is ended in the same
+    transaction — the one soft model the loan machinery already uses; a later
+    add or loan re-activates the row. `listPeople` groups memberships in one
+    pass (O(people + memberships)).
   - **Active location**: `requireOwner()` resolves `orgId` from membership and a
     **validated** active `businessId` (a cookie honoured only if it belongs to
     the org — N2). Every existing owner page tenants through the active location,
     so the header **location switcher** re-scopes them all with no per-page
     change. `ownerRepo()` = active-location tenant repo; `orgRepo()` /
     `createOrgRepo(orgId)` = org-scoped (locations + the People pool);
-    `ownerContext()` returns both.
+    `ownerContext()` returns both. **`requireOwner()` is memoised per request
+    with `React.cache` (PERF-04)** — the layout (bell + switcher), the page and
+    any action in the same request share ONE session/impersonation/org/location
+    resolution, so call it (or the three wrappers) freely; never re-implement
+    the resolution or pass the context around to avoid a "second" lookup.
   - **Owner surfaces**: `/app/locations` (list/switch/add locations, org-scoped)
     and `/app/people` (the shared pool — everyone org-wide + per-location
     membership chips). New people are still added on a location's `/app/staff`.
@@ -1014,6 +1024,12 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
 - All email sending (availability requests, reminders, published rosters) goes
   through pg-boss jobs.
 - Jobs MUST be idempotent and safe to retry.
+- **The worker owns the queue; web only sends (PERF-07).** `getBoss()` shapes
+  the instance by `ROSTER_ROLE`: the worker migrates the pg-boss schema,
+  creates every queue at boot, supervises/maintains, runs the cron scheduler
+  and keeps archived jobs two weeks; the web app is a send-only producer (no
+  supervision, no scheduler) that ensures a queue lazily on the first send to
+  it in a process. Never call `createQueue` for all queues from a request path.
 - **Owner recipients resolve through the org, never the legacy pointer.** A
   per-business sweep finds who to email with `ownerEmailsForBusiness` (business
   → `org_id` → `org_membership` role `owner` → user). `users.business_id` is set

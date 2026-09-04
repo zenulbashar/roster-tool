@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { createTenantRepo } from "@/lib/tenant/repository";
@@ -63,7 +64,20 @@ export interface OwnerContext {
   impersonation: { adminUserId: string; venueName: string } | null;
 }
 
-export async function requireOwner(): Promise<OwnerContext> {
+/**
+ * MEMOISED PER REQUEST (PERF-04): `React.cache` dedupes the session lookup,
+ * the impersonation check, the org resolution and the active-location query
+ * across everything rendered for one request — the owner layout (bell +
+ * location switcher), the page, and any server action in that request — so
+ * calling `requireOwner()` / `ownerRepo()` / `orgRepo()` / `ownerContext()`
+ * freely costs one resolution, not one per call site. The cache is scoped to
+ * the request by React, never shared across requests or users; a `redirect()`
+ * thrown here is cached for the request too, so every caller sees the same
+ * outcome. Outside a React request scope (scripts, tests) it simply runs.
+ */
+export const requireOwner = cache(resolveOwner);
+
+async function resolveOwner(): Promise<OwnerContext> {
   // Resolve the session FIRST — it is the identity every branch below is
   // bound to. M37: an admin impersonating a tenant resolves the org from the
   // signed impersonation grant (re-validated in resolveImpersonation, which

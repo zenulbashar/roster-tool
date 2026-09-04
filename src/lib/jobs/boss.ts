@@ -55,30 +55,81 @@ const FORM_DIGEST_CRON = "0 21 * * *";
 
 /**
  * pg-boss singleton. One instance per process (Next dev hot-reload safe via
- * globalThis). Jobs are retried with exponential backoff; queues are created on
- * start so enqueuing/working is safe immediately.
+ * globalThis). Jobs are retried with exponential backoff.
+ *
+ * Two shapes, chosen by ROSTER_ROLE (PERF-07):
+ *  - the WORKER owns the queue: it migrates the pg-boss schema, creates every
+ *    queue at boot, runs supervision/maintenance and the cron scheduler, and
+ *    archives finished jobs (kept two weeks for diagnosis, then deleted);
+ *  - the WEB app is a SEND-ONLY producer: no supervision, no scheduler, and no
+ *    eleven-queue upsert on every serverless cold start — a queue is ensured
+ *    lazily the first time this process sends to it (a one-off safety net for
+ *    a fresh deploy where web wakes before the worker has created queues).
  */
-const globalForBoss = globalThis as unknown as { __boss?: PgBoss };
+const globalForBoss = globalThis as unknown as {
+  __boss?: PgBoss;
+  __bossQueues?: Set<string>;
+};
 
 const RETRY = { retryLimit: 5, retryBackoff: true } as const;
+
+const isWorker = env.ROSTER_ROLE === "worker";
+
+/**
+ * Finished (completed/failed) jobs are kept this long for diagnosis before
+ * pg-boss's maintenance deletes them. A per-QUEUE setting in pg-boss 12
+ * (`deleteAfterSeconds`; the library default is 7 days), applied by the worker
+ * at boot — `createQueue` is an insert-if-absent, so an `updateQueue` follows
+ * it to bring queues that already existed up to the same retention.
+ */
+export const JOB_RETENTION_SECONDS = 14 * 24 * 60 * 60;
+
+const QUEUE_DEFAULTS = { deleteAfterSeconds: JOB_RETENTION_SECONDS } as const;
 
 export async function getBoss(): Promise<PgBoss> {
   if (globalForBoss.__boss) return globalForBoss.__boss;
 
-  const boss = new PgBoss(env.DATABASE_URL);
+  const boss = new PgBoss({
+    connectionString: env.DATABASE_URL,
+    // Only the worker supervises, schedules and maintains. Web still runs the
+    // (cheap, no-op when current) schema version check so a fresh database
+    // never leaves a producer facing a missing schema.
+    supervise: isWorker,
+    schedule: isWorker,
+    migrate: true,
+  });
   boss.on("error", (err: Error) => logger.error({ err }, "pg-boss error"));
   await boss.start();
-  for (const name of Object.values(QUEUES)) {
-    await boss.createQueue(name);
+  if (isWorker) {
+    for (const name of Object.values(QUEUES)) {
+      await boss.createQueue(name, QUEUE_DEFAULTS);
+      await boss.updateQueue(name, QUEUE_DEFAULTS);
+    }
+    globalForBoss.__bossQueues = new Set(Object.values(QUEUES));
   }
   globalForBoss.__boss = boss;
+  return boss;
+}
+
+/**
+ * The producer-side handle: the boss instance with the named queue guaranteed
+ * to exist. In the worker every queue was created at boot; in web the first
+ * send to a queue in this process performs the (idempotent) upsert once.
+ */
+async function producer(queue: string): Promise<PgBoss> {
+  const boss = await getBoss();
+  const known = (globalForBoss.__bossQueues ??= new Set<string>());
+  if (!known.has(queue)) {
+    await boss.createQueue(queue, QUEUE_DEFAULTS);
+    known.add(queue);
+  }
   return boss;
 }
 
 export async function enqueueAvailabilityRequest(
   payload: AvailabilityRequestJob,
 ): Promise<void> {
-  const boss = await getBoss();
+  const boss = await producer(QUEUES.availabilityRequest);
   await boss.send(QUEUES.availabilityRequest, payload, {
     ...RETRY,
     // Collapse duplicate enqueues for the same request.
@@ -94,7 +145,7 @@ export async function scheduleAvailabilityReminder(
   payload: AvailabilityReminderJob,
   runAt: Date,
 ): Promise<void> {
-  const boss = await getBoss();
+  const boss = await producer(QUEUES.availabilityReminder);
   await boss.sendAfter(
     QUEUES.availabilityReminder,
     payload,
@@ -106,7 +157,7 @@ export async function scheduleAvailabilityReminder(
 export async function enqueuePublishedRoster(
   payload: PublishedRosterJob,
 ): Promise<void> {
-  const boss = await getBoss();
+  const boss = await producer(QUEUES.publishedRoster);
   await boss.send(QUEUES.publishedRoster, payload, {
     ...RETRY,
     singletonKey: `${payload.rosterPeriodId}:${payload.staffMemberId}`,
@@ -116,7 +167,7 @@ export async function enqueuePublishedRoster(
 export async function enqueueLeaveDecision(
   payload: LeaveDecisionJob,
 ): Promise<void> {
-  const boss = await getBoss();
+  const boss = await producer(QUEUES.leaveDecision);
   await boss.send(QUEUES.leaveDecision, payload, {
     ...RETRY,
     // Collapse duplicate enqueues for the same decision.
@@ -127,7 +178,7 @@ export async function enqueueLeaveDecision(
 export async function enqueueShiftOfferDecision(
   payload: ShiftOfferDecisionJob,
 ): Promise<void> {
-  const boss = await getBoss();
+  const boss = await producer(QUEUES.shiftOfferDecision);
   await boss.send(QUEUES.shiftOfferDecision, payload, {
     ...RETRY,
     // Collapse duplicate enqueues for the same offer.

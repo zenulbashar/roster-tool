@@ -1,4 +1,4 @@
-import { and, asc, eq, ne, isNotNull } from "drizzle-orm";
+import { and, asc, eq, ne, isNotNull, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db as defaultDb, type Db } from "@/lib/db";
 import {
@@ -80,11 +80,11 @@ export function createOrgRepo(orgId: string, database: Db = defaultDb) {
 
     /** How many locations this org has (for "can't delete the last one" etc.). */
     async countLocations(): Promise<number> {
-      const rows = await database
-        .select({ id: businesses.id })
+      const [row] = await database
+        .select({ count: sql<number>`count(*)::int` })
         .from(businesses)
         .where(eq(businesses.orgId, orgId));
-      return rows.length;
+      return row?.count ?? 0;
     },
 
     /* ----- People (the shared org-wide staff pool) ----- */
@@ -92,8 +92,9 @@ export function createOrgRepo(orgId: string, database: Db = defaultDb) {
     /**
      * Everyone in the org, each with the locations they're an active member of.
      * The person's HOME location is always included (it's an implicit
-     * membership — see the tenant repo's `memberHere`). One query per table,
-     * grouped in memory (org staffing is small).
+     * membership — see the tenant repo's `memberHere`). Two queries, grouped in
+     * ONE pass over the memberships (PERF-13): O(people + memberships), so a
+     * large shared pool costs a Map lookup per person, never a nested scan.
      */
     async listPeople() {
       const people = await database
@@ -115,14 +116,21 @@ export function createOrgRepo(orgId: string, database: Db = defaultDb) {
           active: staffLocations.active,
         })
         .from(staffLocations)
-        .where(eq(staffLocations.orgId, orgId));
-
-      return people.map((p) => {
-        const locationIds = new Set(
-          memberships
-            .filter((m) => m.staffMemberId === p.id && m.active)
-            .map((m) => m.businessId),
+        .where(
+          and(eq(staffLocations.orgId, orgId), eq(staffLocations.active, true)),
         );
+
+      const byPerson = new Map<string, Set<string>>();
+      for (const m of memberships) {
+        let set = byPerson.get(m.staffMemberId);
+        if (!set) {
+          set = new Set();
+          byPerson.set(m.staffMemberId, set);
+        }
+        set.add(m.businessId);
+      }
+      return people.map((p) => {
+        const locationIds = byPerson.get(p.id) ?? new Set<string>();
         // The home location is always an implicit membership.
         locationIds.add(p.homeBusinessId);
         return { ...p, locationIds: [...locationIds] };
@@ -185,6 +193,13 @@ export function createOrgRepo(orgId: string, database: Db = defaultDb) {
      * Remove a person's membership at a location. Refused for the person's HOME
      * location (that's their base — the home disjunct keeps them visible there
      * regardless, so removing the row would be misleading). Org-scoped.
+     *
+     * A DEACTIVATION, not a delete (COR-07): the row flips `active = false`
+     * (and drops any `loan_id`), the same model the loan machinery uses, and
+     * any active loan of this person TO this location is ended in the same
+     * transaction — so the People page never shows "on loan to X" for someone
+     * who is no longer a member there, and a later `addPersonToLocation` or
+     * loan simply re-activates the row.
      */
     async removePersonFromLocation(
       staffMemberId: string,
@@ -203,15 +218,29 @@ export function createOrgRepo(orgId: string, database: Db = defaultDb) {
       if (person.homeBusinessId === businessId) {
         return { ok: false, reason: "home" };
       }
-      await database
-        .delete(staffLocations)
-        .where(
-          and(
-            eq(staffLocations.orgId, orgId),
-            eq(staffLocations.businessId, businessId),
-            eq(staffLocations.staffMemberId, staffMemberId),
-          ),
-        );
+      await database.transaction(async (tx) => {
+        await tx
+          .update(staffLocations)
+          .set({ active: false, loanId: null })
+          .where(
+            and(
+              eq(staffLocations.orgId, orgId),
+              eq(staffLocations.businessId, businessId),
+              eq(staffLocations.staffMemberId, staffMemberId),
+            ),
+          );
+        await tx
+          .update(staffLoans)
+          .set({ active: false })
+          .where(
+            and(
+              eq(staffLoans.orgId, orgId),
+              eq(staffLoans.staffMemberId, staffMemberId),
+              eq(staffLoans.toBusinessId, businessId),
+              eq(staffLoans.active, true),
+            ),
+          );
+      });
       return { ok: true };
     },
 
