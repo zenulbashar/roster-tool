@@ -37,6 +37,8 @@ import {
   type BadgeTone,
 } from "@/components/ui";
 
+import { ConfirmDeleteCard } from "@/components/ConfirmDeleteCard";
+
 const PATH = "/app/staff";
 
 /**
@@ -103,6 +105,7 @@ export default async function StaffPage({
     staffDeleted?: string;
     confirmDelete?: string;
     count?: string;
+    confirmDoc?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -174,6 +177,11 @@ export default async function StaffPage({
 
   // A delete awaiting confirmation (the person has recorded hours).
   const pendingDelete = staff.find((s) => s.id === sp.confirmDelete) ?? null;
+  // A document delete awaiting confirmation (UX-04) — it also removes the
+  // file this app created in the owner's Drive.
+  const pendingDocDelete = sp.confirmDoc
+    ? (allDocs.find((d) => d.id === sp.confirmDoc) ?? null)
+    : null;
 
   async function addStaff(formData: FormData) {
     "use server";
@@ -425,6 +433,12 @@ export default async function StaffPage({
     const repo = createTenantRepo(businessId);
     const documentId = String(formData.get("documentId"));
     const staffId = String(formData.get("staffId") ?? "");
+    // Two-step (UX-04): confirm first — this also deletes the Drive file.
+    if (formData.get("confirmed") !== "1") {
+      redirect(
+        `${PATH}?s=${encodeURIComponent(staffId)}&confirmDoc=${encodeURIComponent(documentId)}`,
+      );
+    }
     // Scoped delete: a foreign document id resolves to nothing and is a no-op.
     await deleteDocument({
       repo,
@@ -459,33 +473,46 @@ export default async function StaffPage({
 
       {/* Count-aware confirmation before a permanent delete. */}
       {pendingDelete ? (
-        <Card className="mt-4 border-[var(--color-danger)]">
-          <h2 className="font-archivo text-[17px] font-bold text-[var(--color-ink)]">
-            Delete {pendingDelete.name}?
-          </h2>
-          <p className="mt-1 text-[13.5px] text-[var(--color-text-secondary)]">
+        <ConfirmDeleteCard
+          title={`Delete ${pendingDelete.name}?`}
+          action={deleteStaff}
+          fields={{ id: pendingDelete.id }}
+          confirmLabel="Delete permanently"
+          cancelHref={`${PATH}?s=${pendingDelete.id}`}
+        >
+          <p>
             {pendingDelete.name} has {sp.count} recorded timesheet
             {sp.count === "1" ? " entry" : " entries"}. Deleting permanently
             removes them and all their records — timesheets, leave,
             certifications and documents. This can’t be undone. To keep their
             history instead, use <strong>Deactivate</strong>.
           </p>
-          <div className="mt-3 flex items-center gap-3">
-            <form action={deleteStaff}>
-              <input type="hidden" name="id" value={pendingDelete.id} />
-              <input type="hidden" name="confirmed" value="1" />
-              <Button type="submit" variant="danger">
-                Delete permanently
-              </Button>
-            </form>
-            <Link
-              href={`${PATH}?s=${pendingDelete.id}`}
-              className="text-[13px] font-semibold text-[var(--color-text-secondary)] hover:underline"
-            >
-              Cancel
-            </Link>
-          </div>
-        </Card>
+        </ConfirmDeleteCard>
+      ) : null}
+
+      {pendingDocDelete ? (
+        <ConfirmDeleteCard
+          title={`Delete “${pendingDocDelete.fileName}”?`}
+          action={deleteDocumentAction}
+          fields={{
+            documentId: pendingDocDelete.id,
+            staffId: pendingDocDelete.staffMemberId,
+          }}
+          confirmLabel="Delete document"
+          cancelHref={`${PATH}?s=${pendingDocDelete.staffMemberId}`}
+        >
+          <p>
+            This removes the document from{" "}
+            {staff.find((s) => s.id === pendingDocDelete.staffMemberId)?.name ??
+              "this person"}
+            ’s record{" "}
+            <strong>
+              and deletes the file this app created in your Google Drive
+            </strong>
+            . Files you put in Drive yourself are never touched. This can’t be
+            undone.
+          </p>
+        </ConfirmDeleteCard>
       ) : null}
 
       {/* Add-someone inline bar. */}

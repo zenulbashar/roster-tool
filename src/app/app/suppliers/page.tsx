@@ -17,6 +17,8 @@ import {
 
 const PATH = "/app/suppliers";
 
+import { ConfirmDeleteCard } from "@/components/ConfirmDeleteCard";
+
 function parseSupplierForm(formData: FormData) {
   const deliveryDays = formData
     .getAll("deliveryDays")
@@ -55,11 +57,15 @@ export default async function SuppliersPage({
     added?: string;
     updated?: string;
     deleted?: string;
+    confirmDelete?: string;
   }>;
 }) {
   const sp = await searchParams;
   const repo = await ownerRepo();
   const suppliers = await repo.listSuppliers();
+  // A delete awaiting confirmation (UX-04).
+  const pendingDelete =
+    suppliers.find((s) => s.id === sp.confirmDelete) ?? null;
 
   async function addSupplier(formData: FormData) {
     "use server";
@@ -94,6 +100,10 @@ export default async function SuppliersPage({
     "use server";
     const repo = await ownerRepo();
     const id = String(formData.get("id"));
+    // Two-step (UX-04): confirm first.
+    if (formData.get("confirmed") !== "1") {
+      redirect(`${PATH}?confirmDelete=${encodeURIComponent(id)}`);
+    }
     await repo.deleteSupplier(id);
     revalidatePath(PATH);
     redirect(`${PATH}?deleted=1`);
@@ -162,6 +172,20 @@ export default async function SuppliersPage({
       {sp.added ? <Banner tone="success">Supplier added.</Banner> : null}
       {sp.updated ? <Banner tone="success">Supplier updated.</Banner> : null}
       {sp.deleted ? <Banner tone="success">Supplier removed.</Banner> : null}
+      {pendingDelete ? (
+        <ConfirmDeleteCard
+          title={`Remove “${pendingDelete.name}”?`}
+          action={deleteSupplier}
+          fields={{ id: pendingDelete.id }}
+          confirmLabel="Remove supplier"
+          cancelHref={PATH}
+        >
+          <p>
+            Items linked to {pendingDelete.name} are kept and simply lose their
+            supplier link, and its order reminders stop. This can’t be undone.
+          </p>
+        </ConfirmDeleteCard>
+      ) : null}
 
       <section className="mt-4" aria-label="Suppliers">
         <div className="grid gap-4 md:grid-cols-2">

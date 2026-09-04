@@ -239,6 +239,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           and(
             eq(timesheetEntries.staffMemberId, id),
             eq(timesheetEntries.businessId, businessId),
+            isNull(timesheetEntries.deletedAt),
           ),
         );
       return row?.count ?? 0;
@@ -1127,6 +1128,10 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     },
 
     /* ----- Timesheets (clock in/out) ----- */
+    // Every read here excludes SOFT-DELETED entries (`deleted_at IS NULL`,
+    // UX-04): a deleted entry is kept as evidence but is invisible to the
+    // timesheets view, the CSV export, the labour report, the Xero push and
+    // the clock state, until it is restored.
 
     /** The staff member's currently-open entry (clocked in), if any. */
     getOpenEntry(staffMemberId: string) {
@@ -1139,6 +1144,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
               eq(timesheetEntries.businessId, businessId),
               eq(timesheetEntries.staffMemberId, staffMemberId),
               isNull(timesheetEntries.clockOutAt),
+              isNull(timesheetEntries.deletedAt),
             ),
           ),
       );
@@ -1179,6 +1185,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             eq(timesheetEntries.id, entryId),
             eq(timesheetEntries.businessId, businessId),
             isNull(timesheetEntries.clockOutAt),
+            isNull(timesheetEntries.deletedAt),
           ),
         )
         .returning();
@@ -1200,6 +1207,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             and(
               eq(timesheetEntries.id, input.timesheetEntryId),
               eq(timesheetEntries.businessId, businessId),
+              isNull(timesheetEntries.deletedAt),
             ),
           ),
       );
@@ -1298,6 +1306,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .where(
           and(
             eq(timesheetEntries.businessId, businessId),
+            isNull(timesheetEntries.deletedAt),
             gte(timesheetEntries.clockInAt, startUtc),
             lt(timesheetEntries.clockInAt, endUtc),
           ),
@@ -1333,6 +1342,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           and(
             eq(timesheetEntries.businessId, businessId),
             eq(timesheetEntries.approved, true),
+            isNull(timesheetEntries.deletedAt),
             gte(timesheetEntries.clockInAt, startUtc),
             lt(timesheetEntries.clockInAt, endUtc),
           ),
@@ -1368,6 +1378,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .where(
           and(
             eq(timesheetEntries.businessId, businessId),
+            isNull(timesheetEntries.deletedAt),
             gte(timesheetEntries.clockInAt, startUtc),
             lt(timesheetEntries.clockInAt, endUtc),
           ),
@@ -1409,6 +1420,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             and(
               eq(timesheetEntries.id, id),
               eq(timesheetEntries.businessId, businessId),
+              isNull(timesheetEntries.deletedAt),
             ),
           ),
       );
@@ -1429,6 +1441,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           and(
             eq(timesheetEntries.id, id),
             eq(timesheetEntries.businessId, businessId),
+            isNull(timesheetEntries.deletedAt),
           ),
         )
         .returning();
@@ -1443,21 +1456,67 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           and(
             eq(timesheetEntries.id, id),
             eq(timesheetEntries.businessId, businessId),
+            isNull(timesheetEntries.deletedAt),
           ),
         )
         .returning();
       return row ?? null;
     },
 
+    /**
+     * SOFT-delete a timesheet entry (UX-04). The row is KEPT with `deleted_at`
+     * set — it is the wage evidence for a shift worked, so it stays auditable
+     * and recoverable — and every read on this repo filters it out. Its clock
+     * photos ARE removed now (the privacy promise stands: a face photo never
+     * outlives the owner's decision to delete the entry; the hours are the
+     * evidence, not the photo). Scoped to this business; a foreign or already-
+     * deleted id is a no-op returning null. Returns the deleted row.
+     */
     async deleteEntry(id: string) {
-      await database
-        .delete(timesheetEntries)
+      return database.transaction(async (tx) => {
+        const [row] = await tx
+          .update(timesheetEntries)
+          .set({ deletedAt: new Date(), updatedAt: new Date() })
+          .where(
+            and(
+              eq(timesheetEntries.id, id),
+              eq(timesheetEntries.businessId, businessId),
+              isNull(timesheetEntries.deletedAt),
+            ),
+          )
+          .returning();
+        if (!row) return null;
+        await tx
+          .delete(clockPhotos)
+          .where(
+            and(
+              eq(clockPhotos.businessId, businessId),
+              eq(clockPhotos.timesheetEntryId, id),
+            ),
+          );
+        return row;
+      });
+    },
+
+    /**
+     * Undo a soft delete. Returns null when the entry isn't this business's or
+     * isn't deleted. Restoring an OPEN entry after the person has clocked in
+     * again would double-book the one-open-entry guard — the partial unique
+     * index rejects it and the error propagates for the caller to explain.
+     */
+    async restoreEntry(id: string) {
+      const [row] = await database
+        .update(timesheetEntries)
+        .set({ deletedAt: null, updatedAt: new Date() })
         .where(
           and(
             eq(timesheetEntries.id, id),
             eq(timesheetEntries.businessId, businessId),
+            isNotNull(timesheetEntries.deletedAt),
           ),
-        );
+        )
+        .returning();
+      return row ?? null;
     },
 
     /**
@@ -4331,6 +4390,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             eq(timesheetEntries.businessId, businessId),
             eq(timesheetEntries.approved, true),
             isNotNull(timesheetEntries.clockOutAt),
+            isNull(timesheetEntries.deletedAt),
             gte(timesheetEntries.clockInAt, startUtc),
             lt(timesheetEntries.clockInAt, endUtc),
           ),

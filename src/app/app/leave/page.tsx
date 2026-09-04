@@ -18,6 +18,8 @@ import {
   TextInput,
 } from "@/components/ui";
 
+import { ConfirmDeleteCard } from "@/components/ConfirmDeleteCard";
+
 const PATH = "/app/leave";
 
 const LEAVE_TYPES = [
@@ -44,6 +46,7 @@ export default async function LeavePage({
     denied?: string;
     added?: string;
     deleted?: string;
+    confirmDelete?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -56,6 +59,8 @@ export default async function LeavePage({
     repo.listUpcomingApprovedLeave(today),
     repo.listStaff({ activeOnly: true }),
   ]);
+  // A removal awaiting confirmation (UX-04) — only approved leave has Remove.
+  const pendingDelete = upcoming.find((r) => r.id === sp.confirmDelete) ?? null;
 
   async function approveLeave(formData: FormData) {
     "use server";
@@ -130,6 +135,10 @@ export default async function LeavePage({
     "use server";
     const repo = await ownerRepo();
     const id = String(formData.get("id"));
+    // Two-step (UX-04): confirm first.
+    if (formData.get("confirmed") !== "1") {
+      redirect(`${PATH}?confirmDelete=${encodeURIComponent(id)}`);
+    }
     await repo.deleteLeaveRequest(id);
     revalidatePath(PATH);
     redirect(`${PATH}?deleted=1`);
@@ -149,6 +158,22 @@ export default async function LeavePage({
       {sp.denied ? <Banner tone="success">Leave declined.</Banner> : null}
       {sp.added ? <Banner tone="success">Leave recorded.</Banner> : null}
       {sp.deleted ? <Banner tone="success">Leave removed.</Banner> : null}
+      {pendingDelete ? (
+        <ConfirmDeleteCard
+          title={`Remove ${pendingDelete.staffName}’s leave?`}
+          action={deleteLeave}
+          fields={{ id: pendingDelete.id }}
+          confirmLabel="Remove leave"
+          cancelHref={PATH}
+        >
+          <p>
+            {leaveTypeLabel(pendingDelete.leaveType)},{" "}
+            {formatDateRange(pendingDelete.startDate, pendingDelete.endDate)}.
+            The roster stops flagging {pendingDelete.staffName} as on leave for
+            those days and the record is gone. This can’t be undone.
+          </p>
+        </ConfirmDeleteCard>
+      ) : null}
 
       <div className="mt-1">
         <Banner tone="info">

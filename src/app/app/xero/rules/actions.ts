@@ -152,6 +152,10 @@ export async function movePayRuleAction(formData: FormData): Promise<void> {
 export async function deletePayRuleAction(formData: FormData): Promise<void> {
   const repo = await ownerRepo();
   const id = String(formData.get("ruleId") ?? "");
+  // Two-step (UX-04): confirm first — the next push re-sorts the hours.
+  if (id && formData.get("confirmed") !== "1") {
+    redirect(`${PATH}?confirmDelete=${encodeURIComponent(id)}`);
+  }
   if (id) await repo.deletePayRule(id);
   revalidatePath(PATH);
   redirect(`${PATH}?deleted=1`);

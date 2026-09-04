@@ -967,6 +967,19 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
   Never log tokens or PII.
 - Secrets live in env only, accessed via the validated `src/lib/env.ts`.
 
+### Destructive actions
+
+- **Every delete is two-step (UX-04).** The server action bounces to
+  `?confirmDelete=<id>` (or a sibling param such as `confirmDoc`) on the first
+  submit and acts only on `confirmed=1`; the page renders the shared
+  `ConfirmDeleteCard` (`src/components/ConfirmDeleteCard.tsx`) from REAL data
+  (the name, a count, the consequences — "its stock-check history goes with
+  it", "this also deletes the Drive file") so the owner sees exactly what goes.
+  No native `confirm()`, no client JS. `tests/destructive-confirm.test.ts`
+  fails the build for a `delete*` server action that never reads `confirmed`.
+- **Payroll-adjacent records are soft-deleted, never removed** — see
+  `timesheet_entry.deleted_at` under Data model.
+
 ### Background jobs
 
 - All email sending (availability requests, reminders, published rosters) goes
@@ -1217,8 +1230,17 @@ staff_member_id)`. A person appears at a location when their home is there OR
   typed, stored in cents, with an optional label. A stored number + label only;
   the app never calculates wages. Surfaced on the Staff page and the CSV export.
 - `timesheet_entry` — one clock in/out. `clock_out_at` null = currently in; a
-  **partial unique index** on `staff_member_id WHERE clock_out_at IS NULL` makes
-  double clock-in impossible. `shift_id` links a rostered shift when one matches
+  **partial unique index** on `staff_member_id WHERE clock_out_at IS NULL AND
+deleted_at IS NULL` makes double clock-in impossible. **`deleted_at`
+  (nullable, UX-04) is a SOFT delete**: an entry is the wage evidence for a
+  shift worked, so the owner's Delete (two-step confirmed) sets it instead of
+  removing the row — every tenant read (`getEntry`, `listEntriesBetween`, the
+  CSV export, the labour report, the Xero push, clock state, the staff-delete
+  count) filters `deleted_at IS NULL`, the entry's clock photos are removed at
+  that moment (the privacy promise), and the owner gets an **Undo**
+  (`restoreEntry`, refused by the unique index if the person has clocked in
+  again since). **Never hard-delete an entry from the app.** Retention still
+  purges a deleted entry's photos, never the row. `shift_id` links a rostered shift when one matches
   (published + confirmed) on the clock-in's business-local date, else null.
   `approved` is the owner's payroll sign-off (and the filter for the CSV hours
   export). `clock_in_lat`/`clock_in_lng`/`within_geofence` are set only by

@@ -1740,6 +1740,19 @@ soft delete is one nullable column plus a filter in the reads — additive, and 
 **Dependencies:** `OPS-04` for the trail. **Effort:** 2 days for the confirms; 3 days for timesheet
 soft delete. **Priority:** **P1 for `deleteEntry`**, P2 for the rest. **Operational impact:** removes
 the most damaging single-click mistake available in the product.
+**Resolution (milestone 0.10, this branch):** all ten delete actions (the nine above plus
+`deletePayRuleAction`) now bounce to a shared, server-rendered `ConfirmDeleteCard` and act only on
+`confirmed=1`; the card renders from real data (name, count, consequence) — the staff/forms/templates
+confirms were migrated onto the same component. `timesheet_entry` gained `deleted_at` (migration
+`0036`): the owner's Delete soft-deletes, every tenant read filters live rows, the partial unique
+one-open-entry index now reads `WHERE clock_out_at IS NULL AND deleted_at IS NULL` (so a stale
+"still clocked in" row can be deleted to free the person), the entry's clock photos are removed at
+that moment (the privacy promise holds), the deletion is structured-logged, and the success banner
+offers **Undo** (`restoreEntry`, refused with a clear message if the person has clocked in again
+since). Guarded by `tests/destructive-confirm.test.ts` (every `delete*` server action must read
+`confirmed`) and `tests/timesheet-soft-delete-flow.test.ts` (hidden from every read incl. export /
+report / Xero push, row + approval preserved, photos gone, restore, unique-guard release, tenant
+scoping). Still open: the OPS-04 tenant audit log (the structured log line is the interim trail).
 
 **UX-05 · Six page components exceed 500 lines with inline server actions · Low (NEW, rev 2)**
 `staff` (1,099), `build` (1,111), `settings` (958), `templates` (699), `xero/push` (533) and

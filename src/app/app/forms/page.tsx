@@ -12,6 +12,7 @@ import {
   PageHeader,
   TextInput,
 } from "@/components/ui";
+import { ConfirmDeleteCard } from "@/components/ConfirmDeleteCard";
 
 const PATH = "/app/forms";
 
@@ -79,29 +80,21 @@ export default async function FormsPage({
       {sp.deleted ? <Banner tone="success">Form deleted.</Banner> : null}
 
       {pendingDelete ? (
-        <Card className="mt-4 border-[var(--color-danger)]">
-          <h2 className="text-lg font-semibold">
-            Delete “{pendingDelete.title}”?
-          </h2>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">
+        <ConfirmDeleteCard
+          title={`Delete “${pendingDelete.title}”?`}
+          action={deleteForm}
+          fields={{ id: pendingDelete.id }}
+          confirmLabel={`Delete form and ${sp.count} response${
+            sp.count === "1" ? "" : "s"
+          }`}
+          cancelHref={PATH}
+        >
+          <p>
             This form has {sp.count} response
             {sp.count === "1" ? "" : "s"}. Deleting the form permanently removes
             the form and all of its responses. This can’t be undone.
           </p>
-          <div className="mt-3 flex items-center gap-3">
-            <form action={deleteForm}>
-              <input type="hidden" name="id" value={pendingDelete.id} />
-              <input type="hidden" name="confirmed" value="1" />
-              <Button type="submit" variant="danger">
-                Delete form and {sp.count} response
-                {sp.count === "1" ? "" : "s"}
-              </Button>
-            </form>
-            <ButtonLink href={PATH} variant="secondary">
-              Cancel
-            </ButtonLink>
-          </div>
-        </Card>
+        </ConfirmDeleteCard>
       ) : null}
 
       <section className="mt-4" aria-label="Forms">

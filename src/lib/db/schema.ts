@@ -895,6 +895,10 @@ export const timesheetEntries = pgTable(
     // the UI offers None / 30 / 60. Never a payroll calc — just net worked time.
     breakMinutes: integer("break_minutes").notNull().default(0),
     approved: boolean("approved").notNull().default(false),
+    // UX-04: SOFT delete. An entry is the wage evidence for a shift worked, so
+    // the owner's "Delete" sets this instead of removing the row. Every tenant
+    // read filters `deleted_at IS NULL`; the entry can be restored (Undo).
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -910,11 +914,13 @@ export const timesheetEntries = pgTable(
     // PERF-01: the timesheets view, the CSV export, the labour report and the
     // Xero push all filter business_id + a clock_in_at RANGE.
     index("timesheet_entry_business_clockin_idx").on(t.businessId, t.clockInAt),
-    // A staff member can have at most one open (not-yet-clocked-out) entry,
-    // making double clock-in impossible at the database level.
+    // A staff member can have at most one LIVE open (not-yet-clocked-out)
+    // entry, making double clock-in impossible at the database level. A
+    // soft-deleted open entry no longer counts, so deleting a stale "still
+    // clocked in" row frees the person to clock in again.
     uniqueIndex("timesheet_entry_one_open_per_staff")
       .on(t.staffMemberId)
-      .where(sql`${t.clockOutAt} is null`),
+      .where(sql`${t.clockOutAt} is null and ${t.deletedAt} is null`),
   ],
 );
 
