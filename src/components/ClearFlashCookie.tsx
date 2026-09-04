@@ -1,22 +1,21 @@
 "use client";
 
 import { useEffect } from "react";
+import { clearFlashCookie } from "@/app/actions/flash";
 
 /**
- * Clears a (non-httpOnly) flash cookie from the browser right after it has been
- * rendered once. Used so a freshly-generated capability link (kiosk, personal
- * clock-in, staff notices) is shown a single time and doesn't linger in the
- * cookie store.
+ * Clears a "show once" flash cookie right after the server has rendered the
+ * link it carried, so a freshly-generated capability link (kiosk, personal
+ * clock-in, staff notices, Xero invite) is shown a single time and doesn't
+ * linger in the cookie store.
+ *
+ * The cookies are httpOnly (SEC-18), so this component never sees their value
+ * — it only asks the server to delete them, and the server only honours
+ * registered flash-cookie names (see `src/lib/flash-cookie.ts`).
  */
-export function ClearFlashCookie({
-  name,
-  path = "/app/settings",
-}: {
-  name: string;
-  path?: string;
-}) {
+export function ClearFlashCookie({ name }: { name: string }) {
   useEffect(() => {
-    document.cookie = `${name}=; Max-Age=0; path=${path}`;
-  }, [name, path]);
+    void clearFlashCookie(name);
+  }, [name]);
   return null;
 }

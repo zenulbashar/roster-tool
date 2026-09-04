@@ -36,12 +36,13 @@ import {
   TextInput,
 } from "@/components/ui";
 import { ClearFlashCookie } from "@/components/ClearFlashCookie";
+import { flashCookieOptions, type FlashCookieName } from "@/lib/flash-cookie";
 import { UseMyLocationButton } from "@/components/UseMyLocationButton";
 
 const PATH = "/app/settings";
-const LINK_COOKIE = "kiosk_link_once";
-const CLOCK_LINK_COOKIE = "personal_clock_link_once";
-const XERO_INVITE_COOKIE = "xero_invite_once";
+const LINK_COOKIE = "kiosk_link_once" satisfies FlashCookieName;
+const CLOCK_LINK_COOKIE = "personal_clock_link_once" satisfies FlashCookieName;
+const XERO_INVITE_COOKIE = "xero_invite_once" satisfies FlashCookieName;
 
 export default async function SettingsPage({
   searchParams,
@@ -126,17 +127,11 @@ export default async function SettingsPage({
     const repo = await ownerRepo();
     const { token, tokenHash } = generateToken();
     await repo.updateBusinessSettings({ kioskTokenHash: tokenHash });
-    // Stash the raw token in a short-lived flash cookie so the next render can
-    // show the full link once. Not httpOnly: a small client component clears it
-    // after display. Scoped to this page only.
+    // Stash the raw token in a short-lived, httpOnly flash cookie so the next
+    // render can show the full link once; a server action clears it after
+    // display (SEC-18 — the token must never be readable by page scripts).
     const cookieStore = await cookies();
-    cookieStore.set(LINK_COOKIE, token, {
-      path: PATH,
-      maxAge: 300,
-      httpOnly: false,
-      sameSite: "lax",
-      secure: env.NODE_ENV === "production",
-    });
+    cookieStore.set(LINK_COOKIE, token, flashCookieOptions(LINK_COOKIE));
     revalidatePath(PATH);
     redirect(PATH);
   }
@@ -201,13 +196,11 @@ export default async function SettingsPage({
     const { token, tokenHash } = generateToken();
     await repo.updateBusinessSettings({ personalClockTokenHash: tokenHash });
     const cookieStore = await cookies();
-    cookieStore.set(CLOCK_LINK_COOKIE, token, {
-      path: PATH,
-      maxAge: 300,
-      httpOnly: false,
-      sameSite: "lax",
-      secure: env.NODE_ENV === "production",
-    });
+    cookieStore.set(
+      CLOCK_LINK_COOKIE,
+      token,
+      flashCookieOptions(CLOCK_LINK_COOKIE),
+    );
     revalidatePath(PATH);
     redirect(PATH);
   }
@@ -277,13 +270,11 @@ export default async function SettingsPage({
     });
     // Show the raw link exactly once (only its hash is stored).
     const store = await cookies();
-    store.set(XERO_INVITE_COOKIE, token, {
-      path: PATH,
-      maxAge: 300,
-      httpOnly: false,
-      sameSite: "lax",
-      secure: env.NODE_ENV === "production",
-    });
+    store.set(
+      XERO_INVITE_COOKIE,
+      token,
+      flashCookieOptions(XERO_INVITE_COOKIE),
+    );
     revalidatePath(PATH);
     redirect(`${PATH}?xeroInvited=1`);
   }

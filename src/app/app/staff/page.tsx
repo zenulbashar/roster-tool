@@ -22,6 +22,7 @@ import {
 } from "@/lib/google-drive/service";
 import { DOC_TYPES, validateUpload } from "@/lib/google-drive/validation";
 import { ClearFlashCookie } from "@/components/ClearFlashCookie";
+import { flashCookieOptions, type FlashCookieName } from "@/lib/flash-cookie";
 import { CopyButton } from "@/components/CopyButton";
 import { AddStaffFields } from "@/components/AddStaffFields";
 import {
@@ -43,7 +44,7 @@ const PATH = "/app/staff";
  * "<staffId>:<token>" so the link renders beside the right person. Same
  * pattern as the kiosk link in Settings; only the hash is ever stored.
  */
-const NOTICES_LINK_COOKIE = "notices_link_once";
+const NOTICES_LINK_COOKIE = "notices_link_once" satisfies FlashCookieName;
 
 const CERT_TYPE_LABEL: Record<string, string> = {
   rsa: "RSA",
@@ -322,13 +323,11 @@ export default async function StaffPage({
       redirect(`${PATH}?error=${encodeURIComponent("Staff member not found")}`);
     // Flash the raw token so the next render shows the link once.
     const cookieStore = await cookies();
-    cookieStore.set(NOTICES_LINK_COOKIE, `${id}:${token}`, {
-      path: PATH,
-      maxAge: 300,
-      httpOnly: false,
-      sameSite: "lax",
-      secure: env.NODE_ENV === "production",
-    });
+    cookieStore.set(
+      NOTICES_LINK_COOKIE,
+      `${id}:${token}`,
+      flashCookieOptions(NOTICES_LINK_COOKIE),
+    );
     revalidatePath(PATH);
     redirect(`${PATH}?s=${id}`);
   }
@@ -781,10 +780,7 @@ export default async function StaffPage({
                   <Eyebrow className="mb-2 block">Staff notices</Eyebrow>
                   {freshNoticesLink?.staffId === selected.id ? (
                     <div className="mb-2">
-                      <ClearFlashCookie
-                        name={NOTICES_LINK_COOKIE}
-                        path={PATH}
-                      />
+                      <ClearFlashCookie name={NOTICES_LINK_COOKIE} />
                       <Banner tone="success">
                         Copy this private link for {selected.name} now — for
                         security we won&apos;t show it again.

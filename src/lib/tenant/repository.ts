@@ -2117,6 +2117,9 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
      */
     async approveOffer(offerId: string) {
       return database.transaction(async (tx) => {
+        // Row-locked (like moveAssignment): two concurrent approvals — a
+        // double-click, or two managers — serialise here, so the second sees
+        // `approved` and is refused instead of racing the transfer below.
         const [offer] = await tx
           .select()
           .from(shiftOffers)
@@ -2125,7 +2128,8 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
               eq(shiftOffers.id, offerId),
               eq(shiftOffers.businessId, businessId),
             ),
-          );
+          )
+          .for("update");
         if (!offer || offer.status !== "claimed") {
           return {
             ok: false as const,
@@ -2226,7 +2230,15 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             ),
           )
           .returning();
-        return { ok: true as const, offer: updated! };
+        // Unreachable under the row lock above, but never assert: a lost
+        // update must surface as a refusal, not a crash at the call site.
+        if (!updated) {
+          return {
+            ok: false as const,
+            reason: "This claim was just actioned by someone else.",
+          };
+        }
+        return { ok: true as const, offer: updated };
       });
     },
 

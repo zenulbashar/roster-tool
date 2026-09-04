@@ -500,10 +500,15 @@ hmac`, AUTH_SECRET-signed, 15 min — `src/lib/notices-verification.ts`,
     re-checks both cookies and that the proof is bound to the SAME staff
     member the token resolved to. Nothing stored server-side; it expires and
     the PIN is re-entered.
-  - **Strict per-staff scoping**: all reads/writes go through repo methods
-    that filter by `business_id` AND `staff_member_id` (foreign ids no-op);
-    the staff member is always derived from the token hash, never client
-    input. No path from /me into /app or another person's data.
+  - **Strict per-staff scoping — and notices FOLLOW THE PERSON (M29)**: all
+    reads/writes go through repo methods that filter by `staff_member_id` AND
+    the `noticeVisibleTo` predicate — a notice at this location OR at any
+    location in the person's own org (a notice raised at a lent-to venue, or
+    the daily reminder for a shift there, must reach the person's home `/me`;
+    another person's, and any other org's, never match). The staff member is
+    always derived from the token hash, never client input. No path from /me
+    into /app or another person's data. Written notices still carry the
+    creating location's `business_id`.
   - **Four notice types** (`staff_notification_type`): `leave_decided` (owner
     approves/denies a request — beside the decision-email enqueue),
     `shift_swap_approved` (offer approval — the claimer, and the releaser if
