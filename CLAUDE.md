@@ -1133,7 +1133,14 @@ npm run typecheck && npm run lint && npm test
 ## CI
 
 `.github/workflows/ci.yml` runs on every push/PR: `npm ci`, migrate (against a
-Postgres service), typecheck, lint, format check, test. Keep it green.
+Postgres service), typecheck, lint, format check, then the suite WITH V8
+coverage of `src/lib` (`npm run test:coverage`) and the **coverage ratchet**
+(`npm run coverage:ratchet` — `scripts/coverage-ratchet.mjs` compares the
+totals with the committed `coverage-baseline.json`: coverage may rise freely,
+never fall by more than a quarter point; lock a gain in with
+`npm run coverage:ratchet -- --update`). The lcov report is uploaded as a
+build artifact. `.github/dependabot.yml` opens one grouped npm PR a week plus
+Actions bumps. Keep it green.
 
 ## Deployment
 

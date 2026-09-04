@@ -56,8 +56,25 @@ jobs:
       - name: Format check
         run: npm run format:check
 
-      - name: Test
-        run: npm test
+      # The suite with V8 coverage of src/lib (TEST-01). The ratchet compares
+      # the totals with the checked-in coverage-baseline.json: coverage may
+      # rise freely (bump the baseline to lock it in) and must never fall.
+      - name: Test (with coverage)
+        run: npm run test:coverage
+
+      - name: Coverage ratchet
+        run: npm run coverage:ratchet
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage/lcov.info
+            coverage/coverage-summary.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   # ---------------------------------------------------------------------------
   # Auto-apply pending DB migrations to PRODUCTION after a merge to main.

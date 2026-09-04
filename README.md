@@ -54,16 +54,18 @@ npm run worker
 
 ## Useful commands
 
-| Command               | What it does                                      |
-| --------------------- | ------------------------------------------------- |
-| `npm run dev`         | Start the app in development                      |
-| `npm run worker`      | Run the background job worker                     |
-| `npm run db:generate` | Generate a migration from schema changes          |
-| `npm run db:migrate`  | Apply migrations                                  |
-| `npm run db:seed`     | Seed a demo business with staff + a sample period |
-| `npm run typecheck`   | TypeScript check                                  |
-| `npm run lint`        | ESLint                                            |
-| `npm test`            | Run the test suite                                |
+| Command                    | What it does                                                                                          |
+| -------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `npm run dev`              | Start the app in development                                                                          |
+| `npm run worker`           | Run the background job worker                                                                         |
+| `npm run db:generate`      | Generate a migration from schema changes                                                              |
+| `npm run db:migrate`       | Apply migrations                                                                                      |
+| `npm run db:seed`          | Seed a demo business with staff + a sample period                                                     |
+| `npm run typecheck`        | TypeScript check                                                                                      |
+| `npm run lint`             | ESLint                                                                                                |
+| `npm test`                 | Run the test suite                                                                                    |
+| `npm run test:coverage`    | The suite with V8 coverage of `src/lib` (report in `coverage/`)                                       |
+| `npm run coverage:ratchet` | Compare coverage with the committed baseline — may rise, must not fall; `-- --update` locks a gain in |
 
 ## Production deployment
 

@@ -1,0 +1,34 @@
+# Dependency updates (SEC-04): one grouped PR a week for routine npm bumps so
+# the queue stays reviewable, and GitHub Actions kept current. Security
+# updates for known-vulnerable packages arrive as their own PRs as soon as an
+# advisory is published (enable Dependabot alerts + security updates in the
+# repository settings for that). CI runs the full suite, the coverage ratchet
+# and `npm audit --audit-level=high` on every PR, so a bump that breaks a
+# behaviour or leaves a high-severity advisory open is red before review.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Australia/Sydney
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+    groups:
+      # Routine minor/patch bumps ride together; majors get their own PR.
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Australia/Sydney
+    labels:
+      - dependencies

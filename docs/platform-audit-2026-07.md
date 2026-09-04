@@ -1208,6 +1208,14 @@ coverage report per PR with a ratchet (never decrease) is standard at this matur
 `@vitest/coverage-v8`, publish the report in CI, and set a **ratchet** rather than a target — an
 absolute threshold invites gaming, a ratchet just stops regression. **Migration:** dev-dependency
 only. **Effort:** 1 day. **Priority:** P2 — it does not fix a defect, it makes the next one findable.
+**Resolution (milestone 0.14, this branch):** `@vitest/coverage-v8` with V8 coverage of the logic
+layer (`src/lib/**`, schema excluded — pages/components/server actions render in a browser and
+would only dilute the number), `npm run test:coverage` in CI followed by `npm run coverage:ratchet`
+(`scripts/coverage-ratchet.mjs`): the totals are compared with the committed
+`coverage-baseline.json`, a metric may rise freely and must not fall by more than a quarter point;
+`--update` locks a gain in. The lcov + summary are uploaded as a build artifact. Dependabot
+(`.github/dependabot.yml`) opens one grouped minor/patch npm PR a week plus Actions bumps. The
+`npm audit --audit-level=high` gate lands with the dependency remediation (0.2).
 
 **TEST-02 · The job-handler fixtures manufacture the precondition the code assumes, which is why `COR-01` survived the suite · Medium-High (NEW, rev 3)**
 Two sets of tests exist and they are **disjoint**. Six files build multiple locations under one
