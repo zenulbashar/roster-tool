@@ -1073,7 +1073,39 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
 
 ### Observability
 
-- Use the `logger` from `src/lib/logger.ts`. Structured logs only.
+- Use the `logger` from `src/lib/logger.ts`. Structured logs only. Inside a
+  request (a page, layout, route handler or server action) prefer
+  **`requestLogger()`** from `src/lib/request-context.ts` — a pino child bound
+  to the request's correlation id — so one request's lines can be joined.
+- **Every request carries a correlation id** (OPS-01): `src/proxy.ts` honours
+  a well-formed upstream `x-request-id` or mints one, stamps it on the request
+  headers and echoes it on the response; `getRequestId()` (React.cache) reads
+  it server-side (null outside a request — never breaks worker code). The id
+  is validated strictly (`src/lib/request-id.ts`, pure) because it lands in
+  logs.
+- **Unhandled errors are reported through ONE seam** (`reportError` in
+  `src/lib/error-reporting.ts`): a structured `logger.error` line carrying
+  the request id and Next's error `digest`, plus best-effort forwarding to a
+  Sentry-compatible tracker over raw `fetch` (no SDK) when `SENTRY_DSN` is set
+  — FAIL CLOSED without it. Callers: `src/instrumentation.ts`
+  (`onRequestError` — every server render/action/route/proxy failure), the
+  worker's per-job `guarded` wrapper in `boss.ts` (report, then RE-THROW so
+  pg-boss still retries), `boss.on("error")`, and the worker's startup /
+  unhandled-rejection paths. Everything that leaves the process passes
+  `scrubPii`/`scrubPath` (emails, bearer/keyed secrets, 32+ char opaque
+  tokens, capability-link path segments) — never pass bodies, cookies or
+  headers into a report. Forwarding is capped per rolling minute; logging
+  never is.
+- **Every route group has branded boundaries** (PERF-09): `error.tsx` under
+  `src/app`, `src/app/app` and `src/app/admin` render `ErrorState` (a
+  `role="alert"` card with the **reference code = the error `digest`** the
+  server logged, "Try again" = the segment `reset`, and a way home);
+  `global-error.tsx` is self-contained (inline styles — the root layout, and
+  so globals.css, may not have rendered); `not-found.tsx` ×3 render
+  `NotFoundState` (the root one gives no hint that `/admin` exists);
+  `loading.tsx` in the owner and admin areas renders `PageSkeleton`
+  (`rosterShimmer`, reduced-motion safe). `tests/error-boundaries.test.ts`
+  fails the build if a boundary file goes missing or leaks the error text.
 - No swallowed errors. Let jobs fail (so pg-boss retries) rather than catching
   and ignoring. Where a failure is deliberately turned into a status (the Xero
   push's `failed` outcomes), `logger.error` the provider error first — a

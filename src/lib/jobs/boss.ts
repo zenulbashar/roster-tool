@@ -1,6 +1,7 @@
 import { PgBoss, type Job } from "pg-boss";
 import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
+import { reportError } from "@/lib/error-reporting";
 import {
   QUEUES,
   type AvailabilityRequestJob,
@@ -98,7 +99,9 @@ export async function getBoss(): Promise<PgBoss> {
     schedule: isWorker,
     migrate: true,
   });
-  boss.on("error", (err: Error) => logger.error({ err }, "pg-boss error"));
+  boss.on("error", (err: Error) => {
+    void reportError({ error: err, tags: { source: "pg-boss" } });
+  });
   await boss.start();
   if (isWorker) {
     for (const name of Object.values(QUEUES)) {
@@ -187,6 +190,36 @@ export async function enqueueShiftOfferDecision(
 }
 
 /**
+ * Run one job under structured logging + error reporting (OPS-01): every
+ * handler invocation logs its queue + job id + duration, and a failure is
+ * reported (log line + forwarded to the error tracker when configured) and
+ * then RE-THROWN so pg-boss still retries it — nothing is swallowed. The
+ * worker is the one place errors previously vanished into pg-boss's retry
+ * loop with no signal; this makes each failure a visible, correlated event.
+ */
+function guarded<T extends object>(
+  queue: string,
+  handler: (job: Job<T>) => Promise<unknown>,
+): (jobs: Job<T>[]) => Promise<void> {
+  return async (jobs) => {
+    for (const job of jobs) {
+      const started = Date.now();
+      const log = logger.child({ queue, jobId: job.id });
+      try {
+        await handler(job);
+        log.info({ durationMs: Date.now() - started }, "Job completed");
+      } catch (err) {
+        await reportError({
+          error: err,
+          tags: { source: "worker", queue, jobId: job.id },
+        });
+        throw err;
+      }
+    }
+  };
+}
+
+/**
  * Register all job handlers. Called by the worker process. The handler receives
  * a batch of jobs from pg-boss; we process each.
  */
@@ -195,101 +228,63 @@ export async function registerWorkers(): Promise<void> {
 
   await boss.work<AvailabilityRequestJob>(
     QUEUES.availabilityRequest,
-    async (jobs: Job<AvailabilityRequestJob>[]) => {
-      for (const job of jobs) {
-        await handleAvailabilityRequest(job.data);
-      }
-    },
+    guarded(QUEUES.availabilityRequest, (job) =>
+      handleAvailabilityRequest(job.data),
+    ),
   );
 
   await boss.work<AvailabilityReminderJob>(
     QUEUES.availabilityReminder,
-    async (jobs: Job<AvailabilityReminderJob>[]) => {
-      for (const job of jobs) {
-        await handleAvailabilityReminder(job.data);
-      }
-    },
+    guarded(QUEUES.availabilityReminder, (job) =>
+      handleAvailabilityReminder(job.data),
+    ),
   );
 
   await boss.work<PublishedRosterJob>(
     QUEUES.publishedRoster,
-    async (jobs: Job<PublishedRosterJob>[]) => {
-      for (const job of jobs) {
-        await handlePublishedRoster(job.data);
-      }
-    },
+    guarded(QUEUES.publishedRoster, (job) => handlePublishedRoster(job.data)),
   );
 
   await boss.work<PhotoRetentionJob>(
     QUEUES.photoRetention,
-    async (jobs: Job<PhotoRetentionJob>[]) => {
-      for (const _job of jobs) {
-        await handlePhotoRetention();
-      }
-    },
+    guarded(QUEUES.photoRetention, () => handlePhotoRetention()),
   );
 
   await boss.work<LeaveDecisionJob>(
     QUEUES.leaveDecision,
-    async (jobs: Job<LeaveDecisionJob>[]) => {
-      for (const job of jobs) {
-        await handleLeaveDecision(job.data);
-      }
-    },
+    guarded(QUEUES.leaveDecision, (job) => handleLeaveDecision(job.data)),
   );
 
   await boss.work<ShiftOfferDecisionJob>(
     QUEUES.shiftOfferDecision,
-    async (jobs: Job<ShiftOfferDecisionJob>[]) => {
-      for (const job of jobs) {
-        await handleShiftOfferDecision(job.data);
-      }
-    },
+    guarded(QUEUES.shiftOfferDecision, (job) =>
+      handleShiftOfferDecision(job.data),
+    ),
   );
 
   await boss.work<CertReminderJob>(
     QUEUES.certReminder,
-    async (jobs: Job<CertReminderJob>[]) => {
-      for (const _job of jobs) {
-        await handleCertificationReminders();
-      }
-    },
+    guarded(QUEUES.certReminder, () => handleCertificationReminders()),
   );
 
   await boss.work<OrderReminderJob>(
     QUEUES.orderReminder,
-    async (jobs: Job<OrderReminderJob>[]) => {
-      for (const _job of jobs) {
-        await handleOrderReminders();
-      }
-    },
+    guarded(QUEUES.orderReminder, () => handleOrderReminders()),
   );
 
   await boss.work<StaffShiftReminderJob>(
     QUEUES.staffShiftReminder,
-    async (jobs: Job<StaffShiftReminderJob>[]) => {
-      for (const _job of jobs) {
-        await handleStaffShiftReminders();
-      }
-    },
+    guarded(QUEUES.staffShiftReminder, () => handleStaffShiftReminders()),
   );
 
   await boss.work<StaffLoanExpiryJob>(
     QUEUES.staffLoanExpiry,
-    async (jobs: Job<StaffLoanExpiryJob>[]) => {
-      for (const _job of jobs) {
-        await handleStaffLoanExpiry();
-      }
-    },
+    guarded(QUEUES.staffLoanExpiry, () => handleStaffLoanExpiry()),
   );
 
   await boss.work<FormResponseDigestJob>(
     QUEUES.formResponseDigest,
-    async (jobs: Job<FormResponseDigestJob>[]) => {
-      for (const _job of jobs) {
-        await handleFormResponseDigests();
-      }
-    },
+    guarded(QUEUES.formResponseDigest, () => handleFormResponseDigests()),
   );
 
   // Daily cron sweep of expired clock-in photos. Re-scheduling with the same

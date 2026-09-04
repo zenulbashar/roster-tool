@@ -645,6 +645,18 @@ bizRows)` and `await`s 2–6 queries plus N email sends per business, strictly s
   errors become a branded page with a reference code instead of a blank failure.
 - **Expected operational impact:** transformative. This is the difference between operating a
   product and hoping about one.
+- **Resolution (milestones 0.6 + 1.1, this branch):** items 1–2 landed in 0.6 (`/api/health`,
+  `/api/ready` with the worker heartbeat + container `HEALTHCHECK`). Items 3, 4 and 6 landed in
+  1.1: `src/proxy.ts` gives every request an `x-request-id` (honoured from upstream when
+  well-formed, minted otherwise, echoed on the response) and `requestLogger()` binds it into a
+  pino child; `src/lib/error-reporting.ts` is a dependency-free, Sentry-compatible reporter over
+  `fetch` (envelope protocol; fail closed without `SENTRY_DSN`; PII scrubbed — emails, bearer/keyed
+  secrets, opaque tokens, capability-link path segments; per-minute forwarding cap) fed by
+  `src/instrumentation.ts` (`onRequestError`, every server failure with its `digest` + request id)
+  and the worker's per-job `guarded` wrapper (report, then re-throw so pg-boss retries);
+  `error.tsx`/`global-error.tsx`/`not-found.tsx`/`loading.tsx` give every route group a branded
+  boundary whose reference code IS the logged digest. Items 5 (queue metrics + DLQ) and 7 (SLOs)
+  are scheduled with the job fan-out (1.2/1.5).
 
 ### SEC-05 — No security headers of any kind
 
@@ -1586,6 +1598,15 @@ board, the report, the responses list) so chrome and navigation paint immediatel
 **Effort:** 1 week across the app. **Priority:** P1 for error boundaries (currently a bad failure
 experience), P2 for streaming. **Industry comparison:** Linear-class polish is explicitly the design
 target here, and instant skeletons are a large part of why those products feel fast.
+**Resolution (milestone 1.1, this branch — the P1 half):** `error.tsx` for the root, owner and
+admin segments (a `role="alert"` `ErrorState` card: plain-language copy, the reference code = Next's
+error `digest` — the same value `onRequestError` logged with the request id — "Try again" via the
+segment `reset`, and a way home inside the surviving chrome), a self-contained `global-error.tsx`
+(inline styles; the root layout and its CSS may not have rendered), `not-found.tsx` for all three
+(the root one gives no hint that `/admin` exists), and route-level `loading.tsx` skeletons for the
+owner and admin areas (`rosterShimmer`, reduced-motion safe). `tests/error-boundaries.test.ts` fails
+the build if a boundary goes missing or leaks the error text. Still open (P2): `Suspense` streaming
+of the expensive regions.
 
 **PERF-10 · Unbounded tables with no retention · Medium**
 Verified: `notification`, `staff_notification` and `admin_activity` have **no deletion path

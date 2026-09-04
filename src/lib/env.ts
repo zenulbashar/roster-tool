@@ -96,6 +96,18 @@ const baseEnvSchema = z.object({
   // `platform_admin` rows still work). Admins are Zale IT staff, unrelated to
   // tenant ownership; they reach live tenants only through impersonation.
   ADMIN_ALLOWLIST: z.string().optional(),
+
+  // Error tracking (OPS-01). A Sentry-compatible DSN
+  // (https://<key>@<host>/<project>) that unhandled errors from the web app
+  // (via src/instrumentation.ts) and the worker are forwarded to, with a
+  // scrubbed message/stack, the request id and Next's error digest. OPTIONAL
+  // and FAIL CLOSED: unset means errors are logged (pino) but forwarded
+  // nowhere — the app never needs the vendor to boot. SENTRY_ENVIRONMENT
+  // labels the events (defaults to VERCEL_ENV / RAILWAY_ENVIRONMENT_NAME /
+  // NODE_ENV). No SDK is bundled: src/lib/error-reporting.ts speaks the
+  // envelope protocol over fetch.
+  SENTRY_DSN: z.string().optional(),
+  SENTRY_ENVIRONMENT: z.string().optional(),
 });
 
 const envSchema = baseEnvSchema.superRefine((val, ctx) => {

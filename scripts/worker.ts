@@ -12,6 +12,7 @@
 import { writeFile } from "node:fs/promises";
 import { getBoss, registerWorkers } from "../src/lib/jobs/boss";
 import { logger } from "../src/lib/logger";
+import { reportError } from "../src/lib/error-reporting";
 import {
   recordWorkerHeartbeat,
   WORKER_HEARTBEAT_INTERVAL_MS,
@@ -65,7 +66,18 @@ async function shutdown() {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
+process.on("unhandledRejection", (err) => {
+  // A rejection nobody awaited would otherwise kill the process silently
+  // (Node's default) — report it, then let the platform restart us.
+  void reportError({
+    error: err,
+    tags: { source: "worker", event: "unhandledRejection" },
+  }).finally(() => process.exit(1));
+});
+
 main().catch((err) => {
-  logger.error({ err }, "Worker failed to start");
-  process.exit(1);
+  void reportError({
+    error: err,
+    tags: { source: "worker", event: "startup" },
+  }).finally(() => process.exit(1));
 });
