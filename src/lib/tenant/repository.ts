@@ -184,6 +184,15 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .from(businesses)
         .where(eq(businesses.id, businessId));
       const orgId = biz?.orgId ?? null;
+      // COR-03: one person = one org-level row. A matching email anywhere in
+      // the org (any case) is the SAME person — refuse, and hand the caller
+      // the existing record so it can offer "add them to this location".
+      const existing = await lookupOrgMember(
+        database,
+        { businessId, orgId, memberHere },
+        input.email,
+      );
+      if (existing) throw new StaffExistsInOrgError(existing);
       return database.transaction(async (tx) => {
         const [row] = await tx
           .insert(staffMembers)
@@ -197,6 +206,23 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         }
         return row!;
       });
+    },
+
+    /**
+     * The org member with this email (case-insensitive), if any — with whether
+     * they are already a member of THIS location (COR-03). Falls back to the
+     * location itself for a business with no org (pre-backfill data).
+     */
+    async findOrgMemberByEmail(email: string) {
+      const [biz] = await database
+        .select({ orgId: businesses.orgId })
+        .from(businesses)
+        .where(eq(businesses.id, businessId));
+      return lookupOrgMember(
+        database,
+        { businessId, orgId: biz?.orgId ?? null, memberHere },
+        email,
+      );
     },
 
     async updateStaff(
@@ -4997,6 +5023,67 @@ function fieldsStructurallyEqual(
 export type TenantRepo = ReturnType<typeof createTenantRepo>;
 
 /** Run a select expected to return at most one row. */
+/**
+ * Thrown by `addStaff` when the email already belongs to someone in the
+ * organisation (COR-03). Carries the existing record so the caller can offer
+ * to place THAT person at the location instead of creating a duplicate (two
+ * PINs, two pay rates, split hours).
+ */
+export class StaffExistsInOrgError extends Error {
+  constructor(
+    public readonly existing: {
+      id: string;
+      name: string;
+      homeBusinessId: string;
+      active: boolean;
+      memberHere: boolean;
+    },
+  ) {
+    super("A person with that email is already on this organisation's team");
+    this.name = "StaffExistsInOrgError";
+  }
+}
+
+/**
+ * Find the org member with `email` (trimmed, case-insensitive). Scoped to the
+ * org when the location has one, else to the location itself. `memberHere`
+ * is the calling repo's membership predicate, so the flag answers "would this
+ * person already show on THIS location's staff list?".
+ */
+async function lookupOrgMember(
+  database: Db,
+  scope: {
+    businessId: string;
+    orgId: string | null;
+    memberHere: Parameters<typeof and>[0];
+  },
+  email: string,
+): Promise<StaffExistsInOrgError["existing"] | null> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return null;
+  const inScope = scope.orgId
+    ? eq(staffMembers.orgId, scope.orgId)
+    : eq(staffMembers.businessId, scope.businessId);
+  const [row] = await database
+    .select({
+      id: staffMembers.id,
+      name: staffMembers.name,
+      homeBusinessId: staffMembers.businessId,
+      active: staffMembers.active,
+    })
+    .from(staffMembers)
+    .where(and(inScope, sql`lower(${staffMembers.email}) = ${normalized}`))
+    .orderBy(asc(staffMembers.createdAt))
+    .limit(1);
+  if (!row) return null;
+  const [here] = await database
+    .select({ id: staffMembers.id })
+    .from(staffMembers)
+    .where(and(eq(staffMembers.id, row.id), scope.memberHere))
+    .limit(1);
+  return { ...row, memberHere: Boolean(here) };
+}
+
 async function first<T>(query: PromiseLike<T[]>): Promise<T | null> {
   const rows = await query;
   return rows[0] ?? null;

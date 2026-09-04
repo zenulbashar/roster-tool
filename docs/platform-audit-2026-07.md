@@ -1102,6 +1102,20 @@ can be added — write a detection query first and report, do not merge automati
 timesheets is a judgement call the owner must make). **Effort:** 3 days incl. the detection report.
 **Priority:** P1 (cost of delay grows). **Industry comparison:** every multi-site WFM keys people at
 the org. **Operational impact:** prevents a support-heavy data-repair class.
+**Resolution (this branch):** three layers, exactly as recommended. (1) The app guard — `addStaff`
+looks up the org by `lower(email)` first and refuses a duplicate with `StaffExistsInOrgError`
+(existing id, name, home location, member-here flag); the Staff page turns that into "Ada is
+already on your team at Downtown — add her existing record to this location" (one click, their PIN,
+rate and history come with them), or the familiar "already on your team" when they are already a
+member here. (2) The database guard — the partial unique index
+`staff_member_org_email_lower_unique (org_id, lower(email)) WHERE org_id IS NOT NULL`, created by
+migration `0040` ONLY when no duplicates exist (a `DO` block that otherwise raises a warning and
+leaves the schema untouched), and by `npm run staff:ensure-unique`, which prints the detection report
+(org, email, names) and creates the index once clean. (3) Detection, never merging —
+`listDuplicatePeople` (legacy null-org rows resolved through their home business) drives a warning on
+the owner's People page naming the pairs and the deactivate-one remedy; the admin client page shows a
+count only. Flow-tested: refusal + pointer, member-here, DB rejection of a case variant (insert and
+edit), cross-org freedom, legacy detection with both rows intact.
 
 **COR-04 · `resolveOrgForUser` picks an arbitrary membership · Low**
 `src/lib/tenant/org-access.ts:39-48` returns the first `org_membership` row with no `ORDER BY` and no

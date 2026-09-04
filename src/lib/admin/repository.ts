@@ -377,6 +377,30 @@ export function createAdminRepo() {
       return rows;
     },
 
+    /**
+     * How many people exist twice in a client (same email, any case, on more
+     * than one staff row — COR-03). A COUNT only: the console never sees who.
+     * The owner resolves them on their People page.
+     */
+    async countDuplicateStaff(orgId: string): Promise<number> {
+      const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(
+        db
+          .select({ email: sql`lower(${staffMembers.email})`.as("email") })
+          .from(staffMembers)
+          .innerJoin(businesses, eq(businesses.id, staffMembers.businessId))
+          .where(
+            eq(
+              sql`coalesce(${staffMembers.orgId}, ${businesses.orgId})`,
+              orgId,
+            ),
+          )
+          .groupBy(sql`lower(${staffMembers.email})`)
+          .having(sql`count(*) > 1`)
+          .as("dupes"),
+      );
+      return row?.n ?? 0;
+    },
+
     /** Total activity rows (for pagination). */
     async countActivity(orgId?: string): Promise<number> {
       const [row] = await db

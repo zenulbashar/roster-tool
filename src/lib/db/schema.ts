@@ -593,6 +593,14 @@ export const staffMembers = pgTable(
   (t) => [
     unique("staff_member_business_email_unique").on(t.businessId, t.email),
     index("staff_member_org_idx").on(t.orgId),
+    // COR-03: a person is ONE org-level row. The same email (any case) twice in
+    // one organisation is the "two PINs, two rates, split hours" defect, so the
+    // database refuses it. Migration 0040 creates this index ONLY when no
+    // duplicates exist (an operator resolves any first — never auto-merged);
+    // `npm run staff:ensure-unique` reports and creates it later.
+    uniqueIndex("staff_member_org_email_lower_unique")
+      .on(t.orgId, sql`lower(${t.email})`)
+      .where(sql`${t.orgId} is not null`),
   ],
 );
 

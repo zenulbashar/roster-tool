@@ -2,8 +2,13 @@ import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
-import { ownerRepo, requireOwner } from "@/lib/auth/context";
-import { createTenantRepo } from "@/lib/tenant/repository";
+import { ownerRepo, ownerContext, requireOwner } from "@/lib/auth/context";
+import {
+  createTenantRepo,
+  StaffExistsInOrgError,
+} from "@/lib/tenant/repository";
+import { createOrgRepo } from "@/lib/tenant/org-repository";
+import { isUniqueViolation } from "@/lib/db/errors";
 import { env } from "@/lib/env";
 import { staffSchema, newPinSchema, payRateSchema } from "@/lib/validation";
 import { hashPin } from "@/lib/pin";
@@ -81,15 +86,6 @@ const CERT_META: Record<
   },
 };
 
-function isUniqueViolation(err: unknown): boolean {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    "code" in err &&
-    (err as { code?: string }).code === "23505"
-  );
-}
-
 export default async function StaffPage({
   searchParams,
 }: {
@@ -106,11 +102,24 @@ export default async function StaffPage({
     confirmDelete?: string;
     count?: string;
     confirmDoc?: string;
+    exists?: string;
   }>;
 }) {
   const sp = await searchParams;
-  const repo = await ownerRepo();
+  const { repo, org } = await ownerContext();
   const staff = await repo.listStaff();
+
+  // COR-03: an add that matched someone already on the team at ANOTHER
+  // location. Offer to place their existing record here instead of creating a
+  // second person (two PINs, two rates, split hours).
+  const existingElsewhere = sp.exists
+    ? await org.getPersonInOrg(sp.exists)
+    : null;
+  const existingHomeName = existingElsewhere
+    ? ((await org.listLocations()).find(
+        (l) => l.id === existingElsewhere.businessId,
+      )?.name ?? "another location")
+    : null;
   const business = await repo.getBusiness();
   const tz = business?.timezone ?? DEFAULT_TIMEZONE;
   const timeZone = business?.timezone ?? undefined;
@@ -198,6 +207,16 @@ export default async function StaffPage({
     try {
       await repo.addStaff(parsed.data);
     } catch (err) {
+      if (err instanceof StaffExistsInOrgError) {
+        // Same person, already on the team (COR-03). Here already → the
+        // familiar message; elsewhere in the org → offer to add them here.
+        if (err.existing.memberHere) {
+          redirect(
+            `${PATH}?error=${encodeURIComponent("That email is already on your team")}`,
+          );
+        }
+        redirect(`${PATH}?exists=${err.existing.id}`);
+      }
       if (isUniqueViolation(err)) {
         redirect(
           `${PATH}?error=${encodeURIComponent("That email is already on your team")}`,
@@ -207,6 +226,25 @@ export default async function StaffPage({
     }
     revalidatePath(PATH);
     redirect(`${PATH}?added=1`);
+  }
+
+  /**
+   * COR-03: place an EXISTING org member at this location instead of creating
+   * a duplicate. The org repo verifies both the person and this location
+   * belong to the owner's org (N3); the location is the session's active one.
+   */
+  async function addExistingToLocation(formData: FormData) {
+    "use server";
+    const { orgId, businessId } = await requireOwner();
+    const id = String(formData.get("id") ?? "");
+    const res = await createOrgRepo(orgId).addPersonToLocation(id, businessId);
+    revalidatePath(PATH);
+    if (!res.ok) {
+      redirect(
+        `${PATH}?error=${encodeURIComponent("Couldn't add that person to this location")}`,
+      );
+    }
+    redirect(`${PATH}?s=${id}&added=1`);
   }
 
   async function editStaff(formData: FormData) {
@@ -470,6 +508,40 @@ export default async function StaffPage({
         <Banner tone="success">Document uploaded to your Drive.</Banner>
       ) : null}
       {sp.docDeleted ? <Banner tone="success">Document removed.</Banner> : null}
+
+      {/* COR-03: the person already exists in the org at another location. */}
+      {existingElsewhere ? (
+        <Card className="mt-4">
+          <h2 className="font-archivo text-[17px] font-bold text-[var(--color-ink)]">
+            {existingElsewhere.name} is already on your team
+          </h2>
+          <p className="mt-1.5 text-[13.5px] text-[var(--color-text-secondary)]">
+            That email belongs to {existingElsewhere.name}, who works at{" "}
+            <strong>{existingHomeName}</strong>. Rather than creating a second
+            record (a second PIN, a second pay rate and split hours), add their
+            existing record to this location — their PIN, rate and history come
+            with them.
+            {!existingElsewhere.active
+              ? " They're currently inactive; adding them here keeps them inactive until you reactivate them from their record."
+              : ""}
+          </p>
+          <form
+            action={addExistingToLocation}
+            className="mt-4 flex flex-wrap items-center gap-3"
+          >
+            <input type="hidden" name="id" value={existingElsewhere.id} />
+            <Button type="submit">
+              Add {existingElsewhere.name} to this location
+            </Button>
+            <Link
+              href={PATH}
+              className="text-[13px] font-semibold text-[var(--color-text-secondary)] hover:underline"
+            >
+              Cancel
+            </Link>
+          </form>
+        </Card>
+      ) : null}
 
       {/* Count-aware confirmation before a permanent delete. */}
       {pendingDelete ? (

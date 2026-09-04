@@ -22,7 +22,8 @@
     "worker": "ROSTER_ROLE=worker tsx --env-file-if-exists=.env scripts/worker.ts",
     "dev:setup": "docker compose up -d && wait-on tcp:5432 && npm run db:migrate && npm run db:seed",
     "test:coverage": "vitest run --coverage",
-    "coverage:ratchet": "node scripts/coverage-ratchet.mjs"
+    "coverage:ratchet": "node scripts/coverage-ratchet.mjs",
+    "staff:ensure-unique": "tsx --env-file-if-exists=.env scripts/ensure-staff-uniqueness.ts"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.3",

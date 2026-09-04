@@ -137,6 +137,58 @@ export function createOrgRepo(orgId: string, database: Db = defaultDb) {
       });
     },
 
+    /**
+     * People who exist TWICE in this org — the same email (any case) on more
+     * than one `staff_member` row (COR-03). Legacy rows whose `org_id` is still
+     * null are resolved through their home business, so pre-backfill data is
+     * reported too. The owner decides how to resolve each pair (keep one,
+     * deactivate the other); nothing is ever merged automatically.
+     */
+    async listDuplicatePeople(): Promise<
+      Array<{
+        email: string;
+        people: Array<{
+          id: string;
+          name: string;
+          homeBusinessId: string;
+          active: boolean;
+        }>;
+      }>
+    > {
+      const rows = await database
+        .select({
+          id: staffMembers.id,
+          name: staffMembers.name,
+          email: staffMembers.email,
+          homeBusinessId: staffMembers.businessId,
+          active: staffMembers.active,
+        })
+        .from(staffMembers)
+        .innerJoin(businesses, eq(businesses.id, staffMembers.businessId))
+        .where(
+          eq(sql`coalesce(${staffMembers.orgId}, ${businesses.orgId})`, orgId),
+        )
+        .orderBy(asc(staffMembers.createdAt));
+      const byEmail = new Map<string, typeof rows>();
+      for (const r of rows) {
+        const key = r.email.trim().toLowerCase();
+        const list = byEmail.get(key) ?? [];
+        list.push(r);
+        byEmail.set(key, list);
+      }
+      return [...byEmail.entries()]
+        .filter(([, list]) => list.length > 1)
+        .map(([email, list]) => ({
+          email,
+          people: list.map(({ id, name, homeBusinessId, active }) => ({
+            id,
+            name,
+            homeBusinessId,
+            active,
+          })),
+        }));
+    },
+
     /** A person, only if they belong to THIS org (IDOR-safe; null otherwise). */
     async getPersonInOrg(staffMemberId: string) {
       const [row] = await database

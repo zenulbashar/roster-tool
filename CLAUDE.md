@@ -1088,6 +1088,12 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
   request (a page, layout, route handler or server action) prefer
   **`requestLogger()`** from `src/lib/request-context.ts` — a pino child bound
   to the request's correlation id — so one request's lines can be joined.
+- **Classify database errors through `src/lib/db/errors.ts`**
+  (`pgErrorCode` / `isUniqueViolation`): drizzle wraps the driver error in a
+  `DrizzleQueryError` with the SQLSTATE on `cause`, so a bare `err.code`
+  check silently never matches (it turned the Staff page's "already on your
+  team" message into a crash). Never read `.code` off a caught query error
+  directly.
 - **Every request carries a correlation id** (OPS-01): `src/proxy.ts` honours
   a well-formed upstream `x-request-id` or mints one, stamps it on the request
   headers and echoes it on the response; `getRequestId()` (React.cache) reads
@@ -1315,7 +1321,18 @@ Notable columns / conventions:
 - `staff_member.org_id` (M29, nullable during rollout, backfilled) — the person's
   organisation; the staff row is now org-level. `business_id` is retained as the
   person's **home** location (an implicit membership). Pay rate + PIN + lockout
-  live on this one org-level row (**one PIN, one rate, org-wide**).
+  live on this one org-level row (**one PIN, one rate, org-wide**). **A person
+  is unique per org by email (COR-03)**: `addStaff` refuses a case-variant
+  duplicate with `StaffExistsInOrgError` (carrying the existing id/name/home +
+  whether they're already a member here — the Staff page turns it into "add
+  them to this location"), and the partial unique index
+  `staff_member_org_email_lower_unique` on `(org_id, lower(email)) WHERE org_id
+IS NOT NULL` backs it at the database. Migration `0040` creates the index
+  ONLY when no duplicates exist; `npm run staff:ensure-unique` reports any
+  (org, email, names) and creates it once clean. Duplicates are DETECTED for
+  the owner (`listDuplicatePeople` → a warning on `/app/people`) and COUNTED
+  for the admin console — never merged automatically (merging hours is the
+  owner's decision).
 - `staff_location` (M29) — org staff↔location membership. `org_id` (cascade),
   `business_id` → `business` (cascade), `staff_member_id` → `staff_member`
   (cascade), `active`, `loan_id` (nullable → `staff_loan`, set null; marks a
