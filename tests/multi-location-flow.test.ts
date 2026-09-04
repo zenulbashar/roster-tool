@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { businesses, organisations } from "@/lib/db/schema";
+import { businesses, organisations, staffNotifications } from "@/lib/db/schema";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { createOrgRepo } from "@/lib/tenant/org-repository";
 import {
@@ -159,13 +159,25 @@ describe("multi-location: jobs, notices and setup flags", () => {
   it("never shows a notice from a business outside the person's org", async () => {
     const repoA = createTenantRepo(t.bizA);
     const eve = await repoA.addStaff({ name: "Eve", email: "eve@ml-a.test" });
-    // Simulate a stray row at a foreign org's business keyed to this person.
-    const stray = await createTenantRepo(foreignBiz).createStaffNotification({
-      staffMemberId: eve.id,
-      type: "rostered",
-      title: "Should never be visible",
-    });
-    expect(stray).not.toBeNull();
+    // The repo REFUSES to create a notice for a non-member (TEST-03)...
+    expect(
+      await createTenantRepo(foreignBiz).createStaffNotification({
+        staffMemberId: eve.id,
+        type: "rostered",
+        title: "Should never be visible",
+      }),
+    ).toBeNull();
+    // ...so simulate a stray row written around it, keyed to this person.
+    const [stray] = await db
+      .insert(staffNotifications)
+      .values({
+        businessId: foreignBiz,
+        staffMemberId: eve.id,
+        type: "rostered",
+        title: "Should never be visible",
+      })
+      .returning();
+    expect(stray).toBeDefined();
 
     const seen = await repoA.listStaffNotifications(eve.id);
     expect(seen.map((n) => n.id)).not.toContain(stray!.id);

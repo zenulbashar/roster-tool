@@ -71,3 +71,37 @@ export async function makeOrgWithTwoLocations(opts: {
     },
   };
 }
+
+/**
+ * Give an EXISTING business an owner the way the application does — through
+ * an organisation + `org_membership`, never by writing the legacy
+ * `users.business_id` pointer (TEST-02). Creates an org for the business when
+ * it has none (a bare `insert(businesses)` fixture), so a job/handler test
+ * exercises the org-based recipient resolution production actually uses.
+ */
+export async function attachOwner(
+  businessId: string,
+  email: string,
+): Promise<{ userId: string; orgId: string }> {
+  const [biz] = await db
+    .select({ orgId: businesses.orgId })
+    .from(businesses)
+    .where(eq(businesses.id, businessId));
+  let orgId = biz?.orgId ?? null;
+  if (!orgId) {
+    const [org] = await db
+      .insert(organisations)
+      .values({ name: `Org for ${businessId.slice(0, 8)}` })
+      .returning();
+    orgId = org!.id;
+    await db
+      .update(businesses)
+      .set({ orgId })
+      .where(eq(businesses.id, businessId));
+  }
+  const [user] = await db.insert(users).values({ email }).returning();
+  await db
+    .insert(orgMemberships)
+    .values({ orgId, userId: user!.id, role: "owner" });
+  return { userId: user!.id, orgId };
+}

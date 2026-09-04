@@ -7,6 +7,7 @@ import { hashPin } from "@/lib/pin";
 import { submitStaffLeave } from "@/lib/leave-submission";
 import { submitStockCheck } from "@/lib/stock-check-submission";
 import { handleCertificationReminders } from "@/lib/jobs/handlers";
+import { attachOwner } from "./helpers/org";
 
 /**
  * Verifies notifications are CREATED at each in-scope event's source when the
@@ -23,6 +24,7 @@ describe("notification event wiring", () => {
   let businessId = "";
   let repo: TenantRepo;
   const created: string[] = [];
+  const ownerIds: string[] = [];
 
   beforeEach(async () => {
     const [b] = await db
@@ -36,8 +38,10 @@ describe("notification event wiring", () => {
 
   afterAll(async () => {
     // Clean up so re-runs don't collide (owner email is unique) or accumulate.
+    if (ownerIds.length > 0) {
+      await db.delete(users).where(inArray(users.id, ownerIds));
+    }
     if (created.length > 0) {
-      await db.delete(users).where(inArray(users.businessId, created));
       await db.delete(businesses).where(inArray(businesses.id, created));
     }
     await db.$client.end();
@@ -114,9 +118,12 @@ describe("notification event wiring", () => {
   it("cert reminder job creates a cert_expiring notification when due", async () => {
     // An owner email recipient is required for the digest to run. Unique email
     // per run so repeated test runs against the same DB don't collide.
-    await db
-      .insert(users)
-      .values({ email: `owner-${crypto.randomUUID()}@e.test`, businessId });
+    // Owner via org membership, as in production (TEST-02).
+    const { userId } = await attachOwner(
+      businessId,
+      `owner-${crypto.randomUUID()}@e.test`,
+    );
+    ownerIds.push(userId);
     const staff = await repo.addStaff({ name: "Cara", email: "cara@e.test" });
     // Expires today → due "expired" stage.
     const now = new Date("2026-06-09T02:00:00Z");

@@ -66,12 +66,12 @@ describe("availability flow", () => {
 
   it("issues a request and the send job emails the staff member once", async () => {
     const { token, tokenHash } = generateToken();
-    const req = await repo.createRequest({
+    const req = (await repo.createRequest({
       rosterPeriodId: periodId,
       staffMemberId: staffId,
       tokenHash,
       expiresAt: new Date(Date.now() + 86_400_000),
-    });
+    }))!;
 
     const send = vi.fn().mockResolvedValue(undefined);
     await handleAvailabilityRequest({ requestId: req.id, token }, { send });
@@ -126,12 +126,12 @@ describe("availability flow", () => {
       name: "Jo",
       email: "jo@flow.test",
     });
-    const req = await repo.createRequest({
+    const req = (await repo.createRequest({
       rosterPeriodId: periodId,
       staffMemberId: member.id,
       tokenHash,
       expiresAt: new Date(Date.now() + 86_400_000),
-    });
+    }))!;
 
     await repo.saveResponses(req.id, [
       { shiftId: shiftIds[0]!, available: true },
@@ -170,12 +170,12 @@ describe("availability flow", () => {
   it("reminds a non-responder once and is idempotent", async () => {
     const { token, tokenHash } = generateToken();
     const m = await repo.addStaff({ name: "Rey", email: "rey@flow.test" });
-    const req = await repo.createRequest({
+    const req = (await repo.createRequest({
       rosterPeriodId: periodId,
       staffMemberId: m.id,
       tokenHash,
       expiresAt: new Date(Date.now() + 86_400_000),
-    });
+    }))!;
     await repo.markRequestSent(req.id);
 
     const send = vi.fn().mockResolvedValue(undefined);
@@ -191,12 +191,12 @@ describe("availability flow", () => {
   it("does not remind someone who already responded", async () => {
     const { token, tokenHash } = generateToken();
     const m = await repo.addStaff({ name: "Mia", email: "mia@flow.test" });
-    const req = await repo.createRequest({
+    const req = (await repo.createRequest({
       rosterPeriodId: periodId,
       staffMemberId: m.id,
       tokenHash,
       expiresAt: new Date(Date.now() + 86_400_000),
-    });
+    }))!;
     await repo.markRequestSent(req.id);
     await repo.markRequestResponded(req.id);
 

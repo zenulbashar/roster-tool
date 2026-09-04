@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { businesses, users } from "@/lib/db/schema";
 import { createTenantRepo, type TenantRepo } from "@/lib/tenant/repository";
 import { handleCertificationReminders } from "@/lib/jobs/handlers";
+import { attachOwner } from "./helpers/org";
 
 /** A fixed instant at noon UTC for a given calendar date. */
 function at(date: string): Date {
@@ -30,8 +31,10 @@ describe("certification reminder job", () => {
   let repoDigest: TenantRepo;
   let repoStage: TenantRepo;
 
+  // Owners reach a business through an org membership, as in production
+  // (TEST-02) — never the legacy `users.business_id` pointer.
   async function addOwner(businessId: string, email: string) {
-    await db.insert(users).values({ email, businessId });
+    await attachOwner(businessId, email);
   }
 
   beforeAll(async () => {

@@ -1232,6 +1232,17 @@ add-location paths; (3) add one canonical `makeOrgWithTwoLocations()` helper and
 multi-location matters. **Migration:** test-only. **Dependencies:** pairs with the `COR-01` fix, which
 should ship _with_ test (1). **Effort:** 3 days. **Priority:** **P1** — this is the finding that
 prevents the next `COR-01`.
+**Resolution (milestones 0.5 + 0.13, this branch):** the canonical `makeOrgWithTwoLocations()`
+helper (`tests/helpers/org.ts`) builds an organisation + owner membership + two locations exactly
+as onboarding/add-location do, and `tests/multi-location-flow.test.ts` runs the cert, order and
+form-digest per-business handlers plus staff notices across both locations (0.5). In 0.13 the four
+legacy job fixtures (`certification-reminders`, `order-reminder-job`, `form-digest-flow`,
+`notification-events`) were moved off the `users.business_id` pointer onto `attachOwner()` — an
+org + membership for an existing business — so no test in the suite writes the legacy pointer as an
+owner fixture any more; the digest test also stopped asserting on the global sweep's total.
+Remaining: (2)'s stricter form — building through the real server actions — is not done.
+
+**TEST-03 resolution — see the note under TEST-03 below.**
 
 **TEST-03 · The tenant-isolation test covers 4 methods of 189 and never mentions organisations · Medium (NEW, rev 3)**
 `tests/tenant-isolation.test.ts` is **88 lines, 4 tests**: insert-forcing, list leakage, cross-tenant
@@ -1246,6 +1257,24 @@ unscoped method **fails the suite by default**. Add N1/N2/N3 cases. This is the 
 `SEC-10` structurally safe rather than convention-safe. **Effort:** 3 days. **Priority:** P1 —
 it converts tenancy from "reviewed carefully" to "enforced by CI", which is the claim enterprise
 buyers actually want.
+**Resolution (milestone 0.13, this branch):** `tests/tenant-isolation.test.ts` is now table-driven:
+two real organisations, a full object graph under tenant B (31 business-scoped tables populated),
+and EVERY mutating method of the tenant repo — 83 of them — called through tenant A's repo with B's
+ids, with B's rows snapshotted before and after each call (byte-identical or the method is named);
+a completeness check diffs the table against the repo's own method list so a new mutator fails the
+suite until it is listed. N1/N2/N3 have explicit cases (org from membership only; a forged
+active-location cookie naming another org's location falls back; person AND location must be in the
+acting org for placement, loans, loan-ending and org-offer claims). **The suite found five real
+holes on first run**, all fixed in the same milestone: `saveResponses` and `assign` upserted on a
+conflict target without `business_id` (another tenant's availability answers / suggested
+assignment could be overwritten); `publish` likewise bumped another tenant's `published_at`; the
+`/me` notice reads/writes accepted any org member's id without requiring membership at the ACTING
+location; and nine creators (`createRequest`, `createShifts`, `createSuggestedAssignments`,
+`clockIn`, `createStaffNotification`, `addStaffDocument`, `upsertXeroEmployeeMap`, the two Xero push
+writers, `upsertFormResponseNotification`) inserted rows under the caller's business that pointed at
+another tenant's staff/period/form — they now refuse (`clockIn` throws), and `bulkInsertItems`
+coerces a foreign supplier to null like `addItem`. Every caller relied on a scoped getter first, so
+none was exploitable through the UI as shipped; the point is that they no longer depend on it.
 
 ### Product
 

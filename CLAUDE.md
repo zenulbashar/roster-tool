@@ -920,6 +920,24 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
   `business_id` from body/query/params.
 - All domain reads/writes go through the tenant-scoped data-access layer in
   `src/lib/tenant/`. Don't query domain tables directly from routes.
+- **Isolation is enforced by CI, not review (TEST-03).**
+  `tests/tenant-isolation.test.ts` calls EVERY mutating `createTenantRepo`
+  method with another tenant's ids and snapshots that tenant's rows before and
+  after (byte-identical, or the method is named); a completeness check compares
+  its table against the repo's own method list, so a new mutator must be added
+  there — with a foreign-id call, or an explicit own-business-only reason —
+  before the suite passes. The rules it encodes: a writer keyed on a foreign
+  row no-ops and returns null/false/[]; an upsert whose conflict target lacks
+  `business_id` (`assign`, `saveResponses`, `publish`) verifies the parent row
+  is this business's FIRST; a creator handed a staff/period/form id verifies
+  it is this location's member / this business's row and REFUSES
+  (`createRequest`, `createShifts`, `createSuggestedAssignments`, `clockIn`
+  throws, `createStaffNotification`, `addStaffDocument`,
+  `upsertXeroEmployeeMap`, `saveXeroPushDraft`/`markXeroPushNoDraft`,
+  `upsertFormResponseNotification`; `addItem`/`bulkInsertItems` coerce a
+  foreign supplier to null); and the `/me` notice reads/writes require the
+  person to be a member of the ACTING location on top of `noticeVisibleTo`.
+  The same file pins the org invariants N1/N2/N3 below.
 - **Every `business_id`-scoped table carries an index whose leading column is
   `business_id`** (composite with the hot filter column where there is one —
   `(business_id, date)` on `shift`, `(business_id, clock_in_at)` on
@@ -1008,6 +1026,13 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
   `sendFormDigestForBusiness`. Test the per-business function (it can't race
   other files' global sweeps over the shared test DB), and it is the unit a
   future dispatcher enqueues one job per business for.
+- **Test fixtures build tenants the way the app does (TEST-02).** An owner
+  reaches a business through `org_membership` — use `tests/helpers/org.ts`
+  (`makeOrgWithTwoLocations`, `attachOwner`) — never by writing the legacy
+  `users.business_id` pointer, which production sets only at onboarding for
+  the first location. A fixture that creates digest-eligible data (an owner
+  plus a form response) should switch `form_digest_enabled` off unless the
+  digest is the subject, because every file's sweep runs over the shared DB.
 
 ### Observability
 

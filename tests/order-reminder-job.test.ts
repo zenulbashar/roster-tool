@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { businesses, users } from "@/lib/db/schema";
 import { createTenantRepo, type TenantRepo } from "@/lib/tenant/repository";
 import { handleOrderReminders } from "@/lib/jobs/handlers";
+import { attachOwner } from "./helpers/org";
 
 /**
  * Integration coverage of the daily order-reminder job: it picks the right items
@@ -51,12 +52,9 @@ describe("order reminder job", () => {
     bizNoOwner = n!.id;
     repoA = createTenantRepo(bizA);
     repoB = createTenantRepo(bizB);
-    await db
-      .insert(users)
-      .values({ email: OWNER_EMAILS[0]!, businessId: bizA });
-    await db
-      .insert(users)
-      .values({ email: OWNER_EMAILS[1]!, businessId: bizB });
+    // Owners via org membership, as in production (TEST-02).
+    await attachOwner(bizA, OWNER_EMAILS[0]!);
+    await attachOwner(bizB, OWNER_EMAILS[1]!);
     // bizNoOwner intentionally has no user.
 
     // Business A: two suppliers both delivering Mon (cutoff 2 → order-by Sat).

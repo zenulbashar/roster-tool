@@ -96,12 +96,12 @@ describe("notification controls + suggestions", () => {
   it("does not remind a staff member who was pre-filled", async () => {
     const m = await repo.addStaff({ name: "Ned", email: "ned@notify.test" });
     const { token, tokenHash } = generateToken();
-    const req = await repo.createRequest({
+    const req = (await repo.createRequest({
       rosterPeriodId: periodId,
       staffMemberId: m.id,
       tokenHash,
       expiresAt: new Date(Date.now() + 86_400_000),
-    });
+    }))!;
     await repo.markRequestSent(req.id);
     // Owner pre-fills them after the request was sent.
     await repo.markAvailableManually(m.id, periodId);

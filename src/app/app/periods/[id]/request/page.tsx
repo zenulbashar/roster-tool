@@ -109,6 +109,9 @@ export default async function ChooseRecipientsPage({
         tokenHash,
         expiresAt,
       });
+      // Null = not this location's period or not a member here (a forged
+      // recipient id): nothing to send.
+      if (!req) continue;
       await enqueueAvailabilityRequest({ requestId: req.id, token });
       if (reminderAt) {
         await scheduleAvailabilityReminder(

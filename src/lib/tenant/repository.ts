@@ -106,6 +106,43 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
   const noticeVisibleTo = (staffMemberId: string) =>
     sql`(${staffNotifications.businessId} = ${businessId} or ${staffNotifications.businessId} in (select ${businesses.id} from ${businesses} inner join ${staffMembers} on ${staffMembers.orgId} = ${businesses.orgId} where ${staffMembers.id} = ${staffMemberId} and ${staffMembers.orgId} is not null))`;
 
+  /**
+   * Membership guards for writes keyed on a person (TEST-03). A creator given
+   * another tenant's staff id must REFUSE, never insert a row under this
+   * business that points at them; and the /me notice reads, which may reach
+   * a notice at another location in the person's org, still require the
+   * ACTING location to have the person.
+   */
+  const staffIsMemberHere = (staffMemberId: string) =>
+    sql`exists(select 1 from ${staffMembers} where ${staffMembers.id} = ${staffMemberId} and ${memberHere})`;
+  const isMemberHere = async (staffMemberId: string): Promise<boolean> => {
+    const row = await first(
+      database
+        .select({ id: staffMembers.id })
+        .from(staffMembers)
+        .where(and(eq(staffMembers.id, staffMemberId), memberHere)),
+    );
+    return Boolean(row);
+  };
+  /** Which of these staff ids are members here. */
+  const memberIds = async (ids: string[]): Promise<Set<string>> => {
+    if (ids.length === 0) return new Set();
+    const rows = await database
+      .select({ id: staffMembers.id })
+      .from(staffMembers)
+      .where(and(inArray(staffMembers.id, ids), memberHere));
+    return new Set(rows.map((r) => r.id));
+  };
+  /** Which of these shift ids belong to this business. */
+  const ownedShiftIds = async (ids: string[]): Promise<Set<string>> => {
+    if (ids.length === 0) return new Set();
+    const rows = await database
+      .select({ id: shifts.id })
+      .from(shifts)
+      .where(and(inArray(shifts.id, ids), eq(shifts.businessId, businessId)));
+    return new Set(rows.map((r) => r.id));
+  };
+
   return {
     businessId,
 
@@ -435,9 +472,23 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       }>,
     ) {
       if (rows.length === 0) return [];
+      // Scoped: a row for another tenant's period is dropped (TEST-03).
+      const periodIds = [...new Set(rows.map((r) => r.rosterPeriodId))];
+      const ownedPeriods = await database
+        .select({ id: rosterPeriods.id })
+        .from(rosterPeriods)
+        .where(
+          and(
+            inArray(rosterPeriods.id, periodIds),
+            eq(rosterPeriods.businessId, businessId),
+          ),
+        );
+      const ok = new Set(ownedPeriods.map((p) => p.id));
+      const kept = rows.filter((r) => ok.has(r.rosterPeriodId));
+      if (kept.length === 0) return [];
       return database
         .insert(shifts)
-        .values(rows.map((r) => ({ ...r, businessId })))
+        .values(kept.map((r) => ({ ...r, businessId })))
         .returning();
     },
 
@@ -484,11 +535,25 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       tokenHash: string;
       expiresAt: Date;
     }) {
+      // Scoped: the period must be this business's and the person a member
+      // here — a foreign pair never gets a request row (TEST-03).
+      const period = await first(
+        database
+          .select({ id: rosterPeriods.id })
+          .from(rosterPeriods)
+          .where(
+            and(
+              eq(rosterPeriods.id, input.rosterPeriodId),
+              eq(rosterPeriods.businessId, businessId),
+            ),
+          ),
+      );
+      if (!period || !(await isMemberHere(input.staffMemberId))) return null;
       const [row] = await database
         .insert(availabilityRequests)
         .values({ ...input, businessId })
         .returning();
-      return row!;
+      return row ?? null;
     },
 
     async markRequestSent(id: string, sentAt: Date = new Date()) {
@@ -664,6 +729,21 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       entries: Array<{ shiftId: string; available: boolean }>,
     ) {
       if (entries.length === 0) return;
+      // Scoped: the request must be THIS business's. The upsert's conflict
+      // target is (request, shift) alone, so an unchecked call with another
+      // tenant's request id would overwrite THEIR answers (TEST-03 caught it).
+      const owned = await first(
+        database
+          .select({ id: availabilityRequests.id })
+          .from(availabilityRequests)
+          .where(
+            and(
+              eq(availabilityRequests.id, requestId),
+              eq(availabilityRequests.businessId, businessId),
+            ),
+          ),
+      );
+      if (!owned) return;
       await database
         .insert(availabilityResponses)
         .values(
@@ -765,6 +845,18 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     },
 
     async assign(shiftId: string, staffMemberId: string) {
+      // Scoped: the shift must be THIS business's. The upsert's conflict
+      // target is (shift, staff) alone, so an unchecked call with another
+      // tenant's shift id would confirm THEIR suggestion (TEST-03 caught it).
+      const shift = await first(
+        database
+          .select({ id: shifts.id })
+          .from(shifts)
+          .where(
+            and(eq(shifts.id, shiftId), eq(shifts.businessId, businessId)),
+          ),
+      );
+      if (!shift) return null;
       const [row] = await database
         .insert(rosterAssignments)
         .values({ shiftId, staffMemberId, businessId, status: "confirmed" })
@@ -937,10 +1029,22 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       rows: Array<{ shiftId: string; staffMemberId: string }>,
     ) {
       if (rows.length === 0) return [];
+      // Scoped: only this business's shifts and this location's members. A
+      // foreign pair is dropped, never inserted under this business.
+      const owned = await ownedShiftIds([
+        ...new Set(rows.map((r) => r.shiftId)),
+      ]);
+      const members = await memberIds([
+        ...new Set(rows.map((r) => r.staffMemberId)),
+      ]);
+      const kept = rows.filter(
+        (r) => owned.has(r.shiftId) && members.has(r.staffMemberId),
+      );
+      if (kept.length === 0) return [];
       return database
         .insert(rosterAssignments)
         .values(
-          rows.map((r) => ({ ...r, businessId, status: "suggested" as const })),
+          kept.map((r) => ({ ...r, businessId, status: "suggested" as const })),
         )
         .onConflictDoNothing({
           target: [rosterAssignments.shiftId, rosterAssignments.staffMemberId],
@@ -1162,6 +1266,12 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         withinGeofence?: boolean | null;
       } = {},
     ) {
+      // Scoped: the clock surfaces authenticate the person first (PIN, via
+      // the membership-scoped getStaff), so a non-member here is a
+      // programming error or an attack — refuse loudly (TEST-03).
+      if (!(await isMemberHere(staffMemberId))) {
+        throw new Error("clockIn: not a member of this business");
+      }
       const [row] = await database
         .insert(timesheetEntries)
         .values({
@@ -2726,9 +2836,38 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       }>,
     ) {
       if (rows.length === 0) return [];
+      // A supplier id that isn't this business's is coerced to null — never a
+      // link to another tenant's supplier (the same rule as addItem).
+      const wanted = [
+        ...new Set(
+          rows.map((r) => r.supplierId).filter((s): s is string => Boolean(s)),
+        ),
+      ];
+      const owned = new Set(
+        wanted.length === 0
+          ? []
+          : (
+              await database
+                .select({ id: suppliers.id })
+                .from(suppliers)
+                .where(
+                  and(
+                    inArray(suppliers.id, wanted),
+                    eq(suppliers.businessId, businessId),
+                  ),
+                )
+            ).map((r) => r.id),
+      );
       return database
         .insert(items)
-        .values(rows.map((r) => ({ ...r, businessId })))
+        .values(
+          rows.map((r) => ({
+            ...r,
+            supplierId:
+              r.supplierId && owned.has(r.supplierId) ? r.supplierId : null,
+            businessId,
+          })),
+        )
         .returning();
     },
 
@@ -2890,6 +3029,21 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     },
 
     async publish(rosterPeriodId: string, publicSlug: string) {
+      // Scoped: the period must be THIS business's. The upsert's conflict
+      // target is the period id alone, so an unchecked call with another
+      // tenant's period id would bump THEIR published_at (TEST-03 caught it).
+      const period = await first(
+        database
+          .select({ id: rosterPeriods.id })
+          .from(rosterPeriods)
+          .where(
+            and(
+              eq(rosterPeriods.id, rosterPeriodId),
+              eq(rosterPeriods.businessId, businessId),
+            ),
+          ),
+      );
+      if (!period) return null;
       const [row] = await database
         .insert(publishedRosters)
         .values({ rosterPeriodId, publicSlug, businessId })
@@ -2940,6 +3094,16 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       formId: string;
       formTitle: string;
     }) {
+      // Scoped: only this business's forms notify this business (TEST-03).
+      const form = await first(
+        database
+          .select({ id: forms.id })
+          .from(forms)
+          .where(
+            and(eq(forms.id, input.formId), eq(forms.businessId, businessId)),
+          ),
+      );
+      if (!form) return;
       const groupKey = `form_response:${input.formId}`;
       await database
         .insert(notifications)
@@ -3051,6 +3215,8 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       body?: string | null;
       dedupeKey?: string | null;
     }) {
+      // Scoped: only a member here can be notified from here (TEST-03).
+      if (!(await isMemberHere(input.staffMemberId))) return null;
       const [row] = await database
         .insert(staffNotifications)
         .values({
@@ -3077,6 +3243,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .where(
           and(
             eq(staffNotifications.staffMemberId, staffMemberId),
+            staffIsMemberHere(staffMemberId),
             noticeVisibleTo(staffMemberId),
           ),
         )
@@ -3094,6 +3261,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .where(
           and(
             eq(staffNotifications.staffMemberId, staffMemberId),
+            staffIsMemberHere(staffMemberId),
             noticeVisibleTo(staffMemberId),
             eq(staffNotifications.isRead, false),
           ),
@@ -3114,6 +3282,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           and(
             eq(staffNotifications.id, id),
             eq(staffNotifications.staffMemberId, staffMemberId),
+            staffIsMemberHere(staffMemberId),
             noticeVisibleTo(staffMemberId),
           ),
         )
@@ -3129,6 +3298,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .where(
           and(
             eq(staffNotifications.staffMemberId, staffMemberId),
+            staffIsMemberHere(staffMemberId),
             noticeVisibleTo(staffMemberId),
             eq(staffNotifications.isRead, false),
           ),
@@ -4095,11 +4265,13 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       driveWebLink: string;
       mimeType: string;
     }) {
+      // Scoped: a document can only be attached to a member here (TEST-03).
+      if (!(await isMemberHere(input.staffMemberId))) return null;
       const [row] = await database
         .insert(staffDocuments)
         .values({ ...input, businessId })
         .returning();
-      return row!;
+      return row ?? null;
     },
 
     async deleteStaffDocument(id: string) {
@@ -4338,6 +4510,8 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       earningsRateId: string | null;
       payrollCalendarId: string | null;
     }) {
+      // Scoped: only a member here can be mapped from here (TEST-03).
+      if (!(await isMemberHere(input.staffMemberId))) return null;
       const [row] = await database
         .insert(xeroEmployeeMaps)
         .values({ ...input, businessId })
@@ -4352,7 +4526,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           },
         })
         .returning();
-      return row!;
+      return row ?? null;
     },
 
     /** Remove a staff member's mapping. Business-scoped. */
@@ -4463,6 +4637,8 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       attempt: number;
       now?: Date;
     }) {
+      // Scoped: a push row can only be recorded for a member here (TEST-03).
+      if (!(await isMemberHere(input.staffMemberId))) return null;
       const now = input.now ?? new Date();
       const [row] = await database
         .insert(xeroTimesheetPushes)
@@ -4523,6 +4699,8 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       attempt: number;
       now?: Date;
     }) {
+      // Scoped: a push row can only be recorded for a member here (TEST-03).
+      if (!(await isMemberHere(input.staffMemberId))) return null;
       const now = input.now ?? new Date();
       const [row] = await database
         .insert(xeroTimesheetPushes)
