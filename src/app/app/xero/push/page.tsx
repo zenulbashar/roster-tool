@@ -296,8 +296,8 @@ export default async function XeroPushPage({
         }
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
-      {loadError ? <Banner tone="warn">{loadError}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
+      {loadError ? <Banner tone="error">{loadError}</Banner> : null}
       {sp.cancelled ? (
         <Banner tone="success">Draft removed from Xero.</Banner>
       ) : null}

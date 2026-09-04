@@ -75,7 +75,7 @@ export default async function FormsPage({
         subtitle="Build your own forms — pick the questions and the answer types. Saved as drafts; publishing comes later."
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.deleted ? <Banner tone="success">Form deleted.</Banner> : null}
 
       {pendingDelete ? (

@@ -66,7 +66,7 @@ export default async function PeoplePage({
       ) : null}
       {loanError ? (
         <div className="mb-4">
-          <Banner tone="warn">
+          <Banner tone="error">
             {loanError === "home"
               ? "That person already works at that location."
               : loanError === "dates"

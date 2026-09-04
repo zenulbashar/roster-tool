@@ -36,7 +36,7 @@ export default async function LocationsPage({
 
       {error ? (
         <div className="mb-4">
-          <Banner tone="warn">
+          <Banner tone="error">
             Please enter a location name and pick a timezone.
           </Banner>
         </div>

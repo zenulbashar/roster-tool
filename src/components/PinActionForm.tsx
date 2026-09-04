@@ -47,7 +47,7 @@ export function PinActionForm({
 
       {state.status === "error" ? (
         <div className="mt-4">
-          <Banner tone="warn">{state.message}</Banner>
+          <Banner tone="error">{state.message}</Banner>
         </div>
       ) : null}
 

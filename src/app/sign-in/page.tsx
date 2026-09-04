@@ -73,7 +73,7 @@ export default async function SignInPage({
 
           {errorMessage ? (
             <div className="mt-4">
-              <Banner tone="warn">{errorMessage}</Banner>
+              <Banner tone="error">{errorMessage}</Banner>
             </div>
           ) : null}
 

@@ -144,7 +144,7 @@ export default async function LeavePage({
         subtitle="Approve or deny — staff get notified instantly and the roster updates."
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.approved ? <Banner tone="success">Leave approved.</Banner> : null}
       {sp.denied ? <Banner tone="success">Leave declined.</Banner> : null}
       {sp.added ? <Banner tone="success">Leave recorded.</Banner> : null}

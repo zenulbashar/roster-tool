@@ -1682,24 +1682,43 @@ board, kiosk and `/me`. **Migration:** additive; no behaviour change for pointer
 pass + an accessibility statement. **Priority:** **P1** — Level A, cheap, and a blocker for
 public-sector or enterprise buyers who request a VPAT early. **Customer impact:** the board becomes
 operable without a mouse. **Operational impact:** removes the highest-risk accessibility claim.
+**Resolution (milestone 0.9, this branch):** `KeyboardSensor` registered with a grid coordinate
+getter — a LOGICAL walk over (person, day) from `src/lib/board-keyboard.ts` (`nextBoardTarget`; no
+wrap-around, the Open row reachable below the last person for an assignment, never for an open
+block) rather than dnd-kit's geometric nearest-rect guess; the keyboard's chosen cell is returned
+directly by the collision detector when there are no pointer coordinates, so what is announced is
+exactly what a drop does. Each chip gained a dedicated **move handle** button (the dnd-kit activator
+node), so Enter on the inner "change times" button still opens the editor and the chip no longer
+nests an interactive control inside `role="button"`. `accessibility.announcements` speak pick-up,
+every hover (person, day, availability reply, leave, "no block that day — dropping creates one",
+"removes them from the shift"), drop and cancel; `screenReaderInstructions` describe the gesture;
+focus follows the moved chip after a keyboard drop. Pure logic + wording unit-tested
+(`tests/board-keyboard.test.ts`). Still open from this finding: axe in CI and the manual
+VoiceOver/NVDA pass.
 
-**UX-03 · No live regions: no server-action result is ever announced · Medium-High (NEW, rev 2)**
-`aria-live` appears **nowhere in the codebase** (exhaustive grep). `role="status"`/`role="alert"` —
-which carry implicit live semantics — appear in only **three components** (`RosterBoard`, `ui.tsx`'s
-toast, `ImpersonationBanner`), against ~50 surfaces that render an action result. A census of all 42
-pages found **zero** live regions on any page. **Root cause:** results are rendered as ordinary
-banners; nothing marks them as status messages. **Impact:** a screen-reader user submits a form and
-hears nothing — success, validation error, "That PIN didn't match", "Couldn't save" are all silent.
-This is worst on the **kiosk and `/clock`**, where the entire interaction is submit-then-read-result
-and there is no other feedback channel; a blind staff member cannot tell whether they clocked in.
-**WCAG 4.1.3 Status Messages (Level AA) failure.** **Industry comparison:** baseline; a `Banner`
-component is the natural single place to fix it. **Fix:** give `Banner` (and the kiosk/clock result
-surfaces) `role="status"` for success/info and `role="alert"` for errors — because every result
-already routes through the shared `ui.tsx` primitives, this is close to a one-component change. Add an
-axe rule and a test asserting result banners carry a live role. **Migration:** additive, presentational
-only. **Dependencies:** none. **Effort:** 2 days including the kiosk surfaces and tests.
-**Priority:** **P1** — one component, Level AA, and it fixes ~50 surfaces at once.
-**Customer impact:** the product becomes usable with a screen reader on the surfaces staff use most.
+**UX-03 · Result messages are not reliably announced: errors are polite, kiosk success screens are not live regions · Medium-High (NEW, rev 2; scope corrected in rev 5)**
+`aria-live` appears **nowhere in the codebase** (exhaustive grep). **Correction (rev 5):** the shared
+`Banner` in `ui.tsx` DID already render `role="status"`, so the ~50 surfaces that route their result
+through it were polite live regions — the rev 2 census under-counted (it credited only the toast,
+`RosterBoard` and `ImpersonationBanner`). The real gaps were narrower: (1) **every error was rendered
+as `tone="warn"`, i.e. a POLITE `status`**, which screen readers queue behind other speech and may
+drop — "That PIN didn't match" and "Couldn't save" need an assertive `alert`; (2) the **kiosk and
+`/clock` success screens** (`KioskClockForm`, `PersonalClockForm`, `KioskSuccess`) were plain `div`s
+with no live role at all, and those are the surfaces where the entire interaction is
+submit-then-read-the-result — a blind staff member could not tell whether they clocked in. **WCAG
+4.1.3 Status Messages (Level AA)** is still the criterion. **Fix:** an `error` tone on `Banner` that
+renders `role="alert"` (danger palette), every failed-action message switched to it (owner pages'
+`sp.error`, the PIN/leave/stock/swap/notices/form forms' `state.message`, the phone clock's location
+error), `role="status"` on the three success panels, and a source-scan guard test so a result banner
+can never regress to `warn`. **Migration:** additive, presentational only. **Dependencies:** none.
+**Effort:** 1 day. **Priority:** **P1**. **Customer impact:** the product becomes usable with a screen
+reader on the surfaces staff use most. **Resolution (milestone 0.9):** built as described; the
+phone clock's client-side "enter your PIN first" check was also found to still require exactly four
+digits after SEC-06 widened PINs to 4–6 and was fixed in the same change.
+(`tests/live-regions.test.ts`.) Note the remaining caveat: a banner mounted WITH its content is
+announced by NVDA/JAWS/Chrome and (for `alert`) VoiceOver, but a persistent hidden live region that
+receives the text is the most robust pattern — worth adopting if the manual screen-reader pass finds
+a gap.
 
 **UX-04 · Seven of nine destructive actions have no confirmation; one destroys payroll evidence in a single click · Medium (NEW, rev 2)**
 Nine `delete*` server actions exist across the owner area. `window.confirm` appears **nowhere**;

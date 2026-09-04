@@ -299,7 +299,7 @@ export default async function SettingsPage({
         subtitle="Clock-in links, what you get notified about, and where documents are stored."
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.locationSaved ? (
         <Banner tone="success">Shop location saved.</Banner>
       ) : null}
@@ -311,7 +311,7 @@ export default async function SettingsPage({
           Google Drive disconnected. Files already in your Drive are untouched.
         </Banner>
       ) : null}
-      {sp.driveError ? <Banner tone="warn">{sp.driveError}</Banner> : null}
+      {sp.driveError ? <Banner tone="error">{sp.driveError}</Banner> : null}
       {sp.xeroConnected ? (
         <Banner tone="success">
           Xero connected. Confirm your organisation below to finish.
@@ -330,7 +330,7 @@ export default async function SettingsPage({
           Bookkeeper invite created — copy the link below and send it to them.
         </Banner>
       ) : null}
-      {sp.xeroError ? <Banner tone="warn">{sp.xeroError}</Banner> : null}
+      {sp.xeroError ? <Banner tone="error">{sp.xeroError}</Banner> : null}
 
       <div className="grid grid-cols-1 items-start gap-[18px] lg:grid-cols-2">
         {/* LEFT COLUMN */}

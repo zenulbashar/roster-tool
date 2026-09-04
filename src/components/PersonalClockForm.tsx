@@ -42,7 +42,8 @@ export function PersonalClockForm({
   // submit) so we can resolve coordinates first.
   const clockNow = () => {
     setGeoError(null);
-    if (!pinRef.current || pinRef.current.value.length !== 4) {
+    // PINs are 4–6 digits (SEC-06); the server re-validates the shape.
+    if (!pinRef.current || !/^\d{4,6}$/.test(pinRef.current.value)) {
       setGeoError("Enter your PIN first.");
       return;
     }
@@ -70,7 +71,10 @@ export function PersonalClockForm({
 
   if (state.status === "success") {
     return (
-      <div className="mt-2 w-full rounded-[22px] border border-[#166534] bg-[#14532D] p-10 text-center">
+      <div
+        role="status"
+        className="mt-2 w-full rounded-[22px] border border-[#166534] bg-[#14532D] p-10 text-center"
+      >
         <div className="mx-auto mb-[18px] flex h-[72px] w-[72px] items-center justify-center rounded-full bg-[#5FA875]">
           <span className="material-symbols-rounded fill text-[42px] text-[#111827]">
             check
@@ -104,12 +108,12 @@ export function PersonalClockForm({
 
       {state.status === "error" ? (
         <div className="mt-4">
-          <Banner tone="warn">{state.message}</Banner>
+          <Banner tone="error">{state.message}</Banner>
         </div>
       ) : null}
       {geoError ? (
         <div className="mt-4">
-          <Banner tone="warn">{geoError}</Banner>
+          <Banner tone="error">{geoError}</Banner>
         </div>
       ) : null}
       {!locationConfigured ? (

@@ -146,7 +146,7 @@ export default async function ItemsPage({
         }
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.added ? <Banner tone="success">Item added.</Banner> : null}
       {sp.updated ? <Banner tone="success">Item updated.</Banner> : null}
       {sp.deleted ? <Banner tone="success">Item removed.</Banner> : null}

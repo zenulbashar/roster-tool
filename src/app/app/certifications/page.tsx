@@ -191,7 +191,7 @@ export default async function CertificationsPage({
         }
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.added ? <Banner tone="success">Certification added.</Banner> : null}
       {sp.updated ? (
         <Banner tone="success">Certification updated.</Banner>

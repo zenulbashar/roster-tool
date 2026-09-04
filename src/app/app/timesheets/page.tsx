@@ -223,7 +223,7 @@ export default async function TimesheetsPage({
         }
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.saved ? <Banner tone="success">Timesheet updated.</Banner> : null}
 
       {/* Xero payroll — push approved hours as DRAFT timesheets. */}

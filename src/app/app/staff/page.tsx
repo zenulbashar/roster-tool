@@ -444,7 +444,7 @@ export default async function StaffPage({
         subtitle="Your team, their rates, certifications and documents — all in one place."
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.added ? <Banner tone="success">Staff member added.</Banner> : null}
       {sp.saved ? <Banner tone="success">Details saved.</Banner> : null}
       {sp.staffDeleted ? (

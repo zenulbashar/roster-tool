@@ -134,8 +134,8 @@ export default async function XeroRulesPage({
 
       {sp.saved ? <Banner tone="success">Rule saved.</Banner> : null}
       {sp.deleted ? <Banner tone="success">Rule deleted.</Banner> : null}
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
-      {loadError ? <Banner tone="warn">{loadError}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
+      {loadError ? <Banner tone="error">{loadError}</Banner> : null}
 
       <Banner tone="info">
         Rules are yours: each one moves matching hours onto a{" "}

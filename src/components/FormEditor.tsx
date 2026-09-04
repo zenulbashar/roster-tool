@@ -219,7 +219,7 @@ export function FormEditor({
       <input type="hidden" name="payload" value={JSON.stringify(payload)} />
 
       {state.status === "error" ? (
-        <Banner tone="warn">{state.message}</Banner>
+        <Banner tone="error">{state.message}</Banner>
       ) : null}
       {state.status === "success" ? (
         <Banner tone="success">{state.message}</Banner>

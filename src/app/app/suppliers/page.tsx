@@ -158,7 +158,7 @@ export default async function SuppliersPage({
         }
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.added ? <Banner tone="success">Supplier added.</Banner> : null}
       {sp.updated ? <Banner tone="success">Supplier updated.</Banner> : null}
       {sp.deleted ? <Banner tone="success">Supplier removed.</Banner> : null}

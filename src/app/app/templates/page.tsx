@@ -370,7 +370,7 @@ export default async function TemplatesPage({
         }
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.added ? <Banner tone="success">Shift type added.</Banner> : null}
       {sp.saved ? <Banner tone="success">Shift type updated.</Banner> : null}
       {sp.deleted ? <Banner tone="success">Shift type deleted.</Banner> : null}

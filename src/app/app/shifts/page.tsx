@@ -140,7 +140,7 @@ export default async function ShiftsPage({
         subtitle="Shift swaps and open shifts. Staff offer up a shift or claim an open one; you approve the handover. The original person stays on until you approve a replacement."
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.approved ? (
         <Banner tone="success">
           Claim approved — the shift was handed over.

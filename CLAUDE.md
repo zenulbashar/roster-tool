@@ -282,8 +282,10 @@ time.ts`) — "6 pm – 2 am (next day)" — never a hand-rolled `start – end`
   only). Pure maths in `src/lib/assignment-schedule.ts`; transactional
   `moveAssignment`/`setAssignmentSchedule` on the tenant repo; zod-validated
   board actions in the build page re-derive every id server-side. The
-  tap-a-name editor below the board is unchanged (the fully
-  keyboard-accessible path). Plan + invariants:
+  board itself is keyboard-operable (a per-chip move handle + arrow-key grid
+  walk with spoken announcements — see UI / accessibility below); the
+  tap-a-name editor below the board remains as the form-based path for the
+  same moves. Plan + invariants:
   `docs/drag-drop-roster-plan.md`. NOT built (flag first): overnight
   per-person times, carrying overrides across weeks in drafts, multiple/custom
   breaks, drag on staff surfaces.
@@ -1019,6 +1021,24 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
   `--color-brand` (blue) stays reserved for links, focus rings and info
   banners; the semantic status colours are unchanged. Shared primitives
   (`Button`/`Card`/`PageHeader`/`Banner`/`Badge`) are in `src/components/ui.tsx`.
+- **Result messages are live regions (WCAG 4.1.3).** `Banner` renders
+  `role="alert"` for `tone="error"` and `role="status"` for `info`/`success`/
+  `warn`. Use **`error` for a failed action's message** (`sp.error`, a form's
+  `state.message`, a location/PIN failure) and `warn` only for a standing
+  caution ("3 shifts are understaffed", "Xero needs reconnecting") — a test
+  (`tests/live-regions.test.ts`) fails the build if a result banner is
+  rendered with `warn`. The kiosk / phone clock-in success panels and
+  `KioskSuccess` carry `role="status"` for the same reason.
+- **The roster board is keyboard-operable (WCAG 2.1.1).** Every chip has a
+  "move" handle button (dnd-kit's activator): Space/Enter picks it up, the
+  arrow keys walk the (person, day) grid LOGICALLY via
+  `src/lib/board-keyboard.ts` (`nextBoardTarget` — no wrap; the Open row sits
+  below the last person for an assignment, never for an open block), Space/
+  Enter drops, Escape cancels; the keyboard's chosen cell is what the
+  collision detector returns, so the spoken announcement (pick-up, hover with
+  availability/leave, drop, cancel — `announce*` in the same module) matches
+  what the drop does. Pointer drags still start anywhere on the chip. Keep the
+  announcements in the pure module (unit-tested), never inline in the board.
   Four keyframes (`rosterFade`/`rosterPulse`/`rosterToast`/`rosterShimmer`) are
   used sparingly — dropdowns, the bell badge, toasts, skeletons — and all
   non-essential motion is disabled under `prefers-reduced-motion`.
