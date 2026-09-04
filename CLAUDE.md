@@ -182,12 +182,17 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
     (existing rows still work). `requireAdmin()` 404s a signed-in non-admin (the
     area doesn't exist for them). Pure allow-list logic in `src/lib/admin/allowlist.ts`.
   - **Impersonation ("view as venue")** — a red-headed entry-confirm modal spells
-    out FULL read/write to the client's LIVE account, then sets a **signed, 2 h,
+    out FULL read/write to the client's LIVE account, then sets a **signed, 30 min,
     httpOnly `roster_impersonation` cookie** (HMAC over adminUserId+org+location,
     `src/lib/admin/impersonation.ts`, mirroring the notices proof) bound to
-    (admin, org, entry location). `resolveImpersonation` re-validates EVERY request:
-    HMAC + freshness, the acting user is STILL a `platform_admin` (revoking admin
-    instantly ends it), and the bound location still belongs to the bound org.
+    (admin, org, entry location). **The cookie is NOT a bearer token**: it resolves
+    ONLY when presented by a session signed in as the very admin it is bound to
+    (`resolveImpersonationFor` in `src/lib/admin/impersonation-resolve.ts` — pure,
+    unit-tested; the session check runs before any DB lookup). `resolveImpersonation`
+    re-validates EVERY request: HMAC + freshness, session ⇔ bound admin, the acting
+    user is STILL a `platform_admin` (revoking admin instantly ends it), and the
+    bound location still belongs to the bound org. Every sign-out/sign-in path
+    clears the cookie, so a grant never outlives the session it was bound to.
     `requireOwner` then resolves the org from the GRANT (not a membership) — while
     the in-app location switcher still works, since the active-location cookie is
     honoured on top. Nothing is stored server-side; it can't be refreshed without

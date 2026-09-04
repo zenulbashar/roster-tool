@@ -64,11 +64,18 @@ export interface OwnerContext {
 }
 
 export async function requireOwner(): Promise<OwnerContext> {
-  // M37: an admin impersonating a tenant resolves the org from the signed
-  // impersonation grant (re-validated in resolveImpersonation), NOT from an
-  // org_membership — an admin has none. The active-location cookie still
-  // applies, so the in-app location switcher works while impersonating.
-  const imp = await resolveImpersonation();
+  // Resolve the session FIRST — it is the identity every branch below is
+  // bound to. M37: an admin impersonating a tenant resolves the org from the
+  // signed impersonation grant (re-validated in resolveImpersonation, which
+  // requires the grant to be bound to THIS session's user — the cookie alone
+  // is never sufficient), NOT from an org_membership — an admin has none. The
+  // active-location cookie still applies, so the location switcher works while
+  // impersonating.
+  const session = await auth();
+  if (!session?.user) redirect("/sign-in");
+  const userId = session.user.id;
+
+  const imp = await resolveImpersonation(userId);
   if (imp) {
     const businessId = await resolveActiveLocation(imp.orgId, imp.businessId);
     if (!businessId) redirect("/admin/clients");
@@ -84,9 +91,6 @@ export async function requireOwner(): Promise<OwnerContext> {
     };
   }
 
-  const session = await auth();
-  if (!session?.user) redirect("/sign-in");
-  const userId = session.user.id;
   const orgId = await resolveOrgForUser(userId);
   if (!orgId) {
     // A platform admin who isn't impersonating has no org — send them to the

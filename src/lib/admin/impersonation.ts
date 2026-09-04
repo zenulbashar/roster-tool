@@ -19,7 +19,12 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * src/lib/notices-verification.ts.
  */
 
-export const IMPERSONATION_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+/**
+ * Short: a support interaction, not a shift. Re-enter from the console after
+ * it lapses. (Was 2 h; shortened because the grant is full read/write on a
+ * client's live account and there is no server-side revocation yet.)
+ */
+export const IMPERSONATION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 export const IMPERSONATION_COOKIE = "roster_impersonation";
 
 export interface ImpersonationClaims {

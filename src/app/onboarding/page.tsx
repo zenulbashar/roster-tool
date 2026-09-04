@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { signOut } from "@/lib/auth";
 import { requireSession } from "@/lib/auth/context";
+import { clearImpersonationCookie } from "@/lib/admin/impersonation-session";
 import { db } from "@/lib/db";
 import {
   businesses,
@@ -79,6 +80,7 @@ export default async function OnboardingPage() {
   // sign-out elsewhere keeps going to "/").
   async function signOutToSignIn() {
     "use server";
+    await clearImpersonationCookie();
     await signOut({ redirectTo: "/sign-in" });
   }
 

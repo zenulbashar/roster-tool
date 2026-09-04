@@ -82,14 +82,18 @@ export async function logImpersonatedWrite(input: {
   action: string;
   detail?: string;
 }): Promise<void> {
+  // resolveImpersonation requires the grant to be bound to the CURRENT session's
+  // user, so only the impersonating admin can reach this. The text is
+  // client-supplied context only (the server-side audit decorator is the
+  // authoritative record) — bound its length so the log can't be stuffed.
   const imp = await resolveImpersonation();
   if (!imp) return;
   const adminName = await getAdminDisplayName(imp.adminUserId);
   await createAdminRepo().recordActivity({
     adminUserId: imp.adminUserId,
     adminName,
-    action: input.action?.trim() || "Saved a change",
-    detail: input.detail?.trim() || null,
+    action: (input.action?.trim() || "Saved a change").slice(0, 200),
+    detail: input.detail?.trim().slice(0, 1000) || null,
     isWrite: true,
     orgId: imp.orgId,
     businessId: imp.businessId,
@@ -113,7 +117,8 @@ export async function setPlanStatus(formData: FormData): Promise<void> {
     adminName: admin.name,
     action: "Set plan status",
     detail: status,
-    isWrite: false,
+    // A vendor-side write to `organisation` — flagged as such in the log.
+    isWrite: true,
     orgId,
   });
   revalidatePath(`/admin/clients/${orgId}`);
