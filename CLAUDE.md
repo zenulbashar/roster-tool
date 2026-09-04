@@ -1171,7 +1171,16 @@ staff_member_id)`. A person appears at a location when their home is there OR
   rostering or clock-in (a flag, matching the app's flag-not-block philosophy).
 - `staff_member.pin_hash` — salted scrypt hash of the kiosk PIN (`scrypt$salt$hash`).
   `failed_pin_attempts` / `pin_locked_until` back the per-staff brute-force guard
-  (5 wrong PINs → 60s cooldown). Helpers (hash, verify, lockout) are pure in
+  — an ESCALATING ladder on a CUMULATIVE counter (every 5th wrong PIN locks for
+  1 min → 5 → 15 → 60; only a correct PIN resets it, SEC-06). PINs are 4–6
+  digits; NEW PINs must pass `isValidNewPin` (no repeats/runs/top-guessed —
+  `newPinSchema`), existing 4-digit PINs keep working. `verifyPin` is ASYNC
+  (SEC-07 — never block the event loop on scrypt). **Every PIN surface goes
+  through the ONE shared `authenticateStaffPin` core** (`src/lib/pin-auth.ts`):
+  per-DEVICE attempt ceiling keyed on the capability token's hash (20/min,
+  200/h — caps the attacker so nobody can lock a whole venue out), then the
+  per-staff lockout, then verify; one generic error for wrong/missing/PIN-less.
+  Never re-implement the PIN check inline. Helpers (hash, verify, lockout) are pure in
   `src/lib/pin.ts`; the PIN itself is never stored or logged.
 - `business.kiosk_token_hash` — SHA-256 hash of the kiosk capability token (only
   the hash is stored; raw token lives in the link/cookie). `require_clock_in_photo`

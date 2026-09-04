@@ -1,13 +1,9 @@
 import { createTenantRepo, type TenantRepo } from "@/lib/tenant/repository";
 import type { OrgRepo } from "@/lib/tenant/org-repository";
 import {
-  verifyPin,
-  isLockedOut,
-  registerFailedAttempt,
-  clearedLockout,
-  PIN_LOCKOUT_MS,
-} from "@/lib/pin";
-import { pinSchema } from "@/lib/validation";
+  authenticateStaffPinFromForm,
+  type PinAuthResult,
+} from "@/lib/pin-auth";
 import { timesOverlap } from "@/lib/shift-offer";
 import { formatDateOnly, formatTimeRange } from "@/lib/time";
 import { notifyOwner } from "@/lib/notifications";
@@ -25,60 +21,19 @@ export type ShiftActionResult =
   | { status: "success"; message: string }
   | { status: "error"; message: string };
 
-type Staff = NonNullable<Awaited<ReturnType<TenantRepo["getStaff"]>>>;
+type AuthOpts = { deviceKey?: string };
 
-type AuthResult = { ok: true; staff: Staff } | { ok: false; message: string };
-
-/** Verify staffId + PIN from the form with the per-staff brute-force guard. */
-async function authStaff(
+/** Verify staffId + PIN from the form: the shared, rate-limited PIN core. */
+function authStaff(
   repo: TenantRepo,
   formData: FormData,
   now: Date,
-): Promise<AuthResult> {
-  const staffId = formData.get("staffId");
-  const pinParsed = pinSchema.safeParse(formData.get("pin"));
-  if (typeof staffId !== "string" || !staffId || !pinParsed.success) {
-    return { ok: false, message: "Enter your 4-digit PIN." };
-  }
-  const staff = await repo.getStaff(staffId);
-  if (!staff || !staff.active || !staff.pinHash) {
-    return { ok: false, message: "That PIN didn't match. Try again." };
-  }
-  const lock = isLockedOut(
-    {
-      failedPinAttempts: staff.failedPinAttempts,
-      pinLockedUntil: staff.pinLockedUntil,
-    },
+  opts: AuthOpts,
+): Promise<PinAuthResult> {
+  return authenticateStaffPinFromForm(repo, formData, {
+    deviceKey: opts.deviceKey,
     now,
-  );
-  if (lock.locked) {
-    const secs = Math.ceil(lock.retryAfterMs / 1000);
-    return {
-      ok: false,
-      message: `Too many wrong PINs. Please wait ${secs}s and try again.`,
-    };
-  }
-  if (!verifyPin(pinParsed.data, staff.pinHash)) {
-    const next = registerFailedAttempt(
-      {
-        failedPinAttempts: staff.failedPinAttempts,
-        pinLockedUntil: staff.pinLockedUntil,
-      },
-      now,
-    );
-    await repo.updateStaffLockout(staff.id, next);
-    if (next.pinLockedUntil) {
-      const secs = Math.ceil(PIN_LOCKOUT_MS / 1000);
-      return {
-        ok: false,
-        message: `Too many wrong PINs. Please wait ${secs}s and try again.`,
-      };
-    }
-    return { ok: false, message: "That PIN didn't match. Try again." };
-  }
-  // Correct PIN: wipe the brute-force counter.
-  await repo.updateStaffLockout(staff.id, clearedLockout());
-  return { ok: true, staff };
+  });
 }
 
 /** A staff member offers up (releases) a confirmed shift they hold. */
@@ -86,8 +41,9 @@ export async function releaseShiftForStaff(
   repo: TenantRepo,
   formData: FormData,
   now: Date = new Date(),
+  opts: AuthOpts = {},
 ): Promise<ShiftActionResult> {
-  const auth = await authStaff(repo, formData, now);
+  const auth = await authStaff(repo, formData, now, opts);
   if (!auth.ok) return { status: "error", message: auth.message };
 
   const shiftId = formData.get("shiftId");
@@ -124,8 +80,9 @@ export async function claimShiftForStaff(
   repo: TenantRepo,
   formData: FormData,
   now: Date = new Date(),
+  opts: AuthOpts = {},
 ): Promise<ShiftActionResult> {
-  const auth = await authStaff(repo, formData, now);
+  const auth = await authStaff(repo, formData, now, opts);
   if (!auth.ok) return { status: "error", message: auth.message };
 
   const offerId = formData.get("offerId");
@@ -184,8 +141,9 @@ export async function claimOrgOfferForStaff(
   orgRepo: OrgRepo,
   formData: FormData,
   now: Date = new Date(),
+  opts: AuthOpts = {},
 ): Promise<ShiftActionResult> {
-  const auth = await authStaff(repo, formData, now);
+  const auth = await authStaff(repo, formData, now, opts);
   if (!auth.ok) return { status: "error", message: auth.message };
 
   const offerId = formData.get("offerId");
@@ -223,8 +181,9 @@ export async function withdrawOwnOffer(
   repo: TenantRepo,
   formData: FormData,
   now: Date = new Date(),
+  opts: AuthOpts = {},
 ): Promise<ShiftActionResult> {
-  const auth = await authStaff(repo, formData, now);
+  const auth = await authStaff(repo, formData, now, opts);
   if (!auth.ok) return { status: "error", message: auth.message };
 
   const offerId = formData.get("offerId");

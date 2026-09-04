@@ -159,13 +159,13 @@ export function KioskClockForm({
             type="password"
             inputMode="numeric"
             autoComplete="off"
-            pattern="\d{4}"
-            maxLength={4}
+            pattern="\d{4,6}"
+            maxLength={6}
             required
             autoFocus
             placeholder="••••"
             className="block w-full rounded-[14px] border border-[#2A3344] bg-[#0E1320] px-4 py-4 text-center font-archivo text-3xl tracking-[0.5em] text-white outline-none placeholder:text-[#4B5563] focus:border-[#5FA875]"
-            aria-label="Your 4-digit PIN"
+            aria-label="Your PIN"
           />
         </label>
         <button

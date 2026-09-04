@@ -88,6 +88,44 @@ export async function consumeFormSubmission(
 }
 
 /**
+ * Per-DEVICE PIN-attempt ceiling (SEC-06). The per-staff lockout caps how fast
+ * one PERSON's PIN can be guessed, but it is keyed on the victim: anyone with
+ * a kiosk link could lock every staff member out of clocking in with five
+ * wrong PINs each, indefinitely. This caps the ATTACKER instead — attempts
+ * per capability token (the kiosk, personal-clock or /me link), whichever
+ * staff member they target. Generous enough that a real shift change never
+ * hits it; tight enough that a guessing loop does within a minute.
+ */
+export const PIN_ATTEMPT_LIMITS = [
+  { kind: "min", windowMs: 60_000, max: 20 },
+  { kind: "hour", windowMs: 3_600_000, max: 200 },
+] as const;
+
+/**
+ * Consume one PIN attempt for a device key (the SHA-256 of its capability
+ * token — never a staff identifier, so the bucket reveals nothing about who
+ * is being targeted). Returns true when still under every ceiling.
+ */
+export async function consumePinAttempt(
+  deviceKey: string,
+  database: Db = defaultDb,
+  now: number = Date.now(),
+): Promise<boolean> {
+  let allowed = true;
+  for (const limit of PIN_ATTEMPT_LIMITS) {
+    const ok = await consumeWindow(
+      database,
+      `pin:${deviceKey}:${limit.kind}`,
+      limit.max,
+      limit.windowMs,
+      now,
+    );
+    if (!ok) allowed = false;
+  }
+  return allowed;
+}
+
+/**
  * COARSE per-form flood ceiling for ANONYMOUS internal (staff) submissions.
  *
  * Anonymous internal responses store NO respondent, so the partial-unique

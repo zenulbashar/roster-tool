@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { ownerRepo, requireOwner } from "@/lib/auth/context";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { env } from "@/lib/env";
-import { staffSchema, pinSchema, payRateSchema } from "@/lib/validation";
+import { staffSchema, newPinSchema, payRateSchema } from "@/lib/validation";
 import { hashPin } from "@/lib/pin";
 import { generateToken } from "@/lib/tokens";
 import { logger } from "@/lib/logger";
@@ -299,9 +299,12 @@ export default async function StaffPage({
     "use server";
     const repo = await ownerRepo();
     const id = String(formData.get("id"));
-    const parsed = pinSchema.safeParse(formData.get("pin"));
+    // New PINs: 4–6 digits and not trivially guessable (SEC-06). Existing
+    // PINs are never re-validated — only a new one has to clear this bar.
+    const parsed = newPinSchema.safeParse(formData.get("pin"));
     if (!parsed.success) {
-      const msg = parsed.error.issues[0]?.message ?? "Enter a 4-digit PIN";
+      const msg =
+        parsed.error.issues[0]?.message ?? "Enter a PIN of 4–6 digits";
       redirect(`${PATH}?s=${id}&error=${encodeURIComponent(msg)}`);
     }
     // Hash before storing; the PIN itself is never persisted or logged.
@@ -826,10 +829,10 @@ export default async function StaffPage({
                         name="pin"
                         inputMode="numeric"
                         autoComplete="off"
-                        pattern="\d{4}"
-                        maxLength={4}
+                        pattern="\d{4,6}"
+                        maxLength={6}
                         required
-                        placeholder="4 digits"
+                        placeholder="4–6 digits"
                         className="w-28"
                         aria-label={`Set clock-in PIN for ${selected.name}`}
                       />

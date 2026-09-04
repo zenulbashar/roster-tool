@@ -6,14 +6,9 @@ import { createOrgRepo } from "@/lib/tenant/org-repository";
 import { resolveKioskBusiness } from "@/lib/tenant/kiosk-access";
 import { resolveOrgIdForBusiness } from "@/lib/tenant/org-access";
 import { KIOSK_COOKIE } from "@/lib/kiosk-cookie";
-import {
-  verifyPin,
-  isLockedOut,
-  registerFailedAttempt,
-  clearedLockout,
-  PIN_LOCKOUT_MS,
-} from "@/lib/pin";
-import { pinSchema, parseClockPhoto } from "@/lib/validation";
+import { authenticateStaffPinFromForm } from "@/lib/pin-auth";
+import { hashToken } from "@/lib/tokens";
+import { parseClockPhoto } from "@/lib/validation";
 import { businessDateOf, formatTimeOnly } from "@/lib/time";
 import { formatElapsed, entryDurationMs } from "@/lib/clock";
 import {
@@ -70,57 +65,16 @@ export async function clockAction(
     };
   }
 
-  const staffId = formData.get("staffId");
-  const pinParsed = pinSchema.safeParse(formData.get("pin"));
-  if (typeof staffId !== "string" || !staffId || !pinParsed.success) {
-    return { status: "error", message: "Enter your 4-digit PIN." };
-  }
-
   const repo = createTenantRepo(business.businessId);
-  const staff = await repo.getStaff(staffId);
-  // Same generic message whether the person is missing, inactive or PIN-less,
-  // so the kiosk doesn't reveal who has a PIN.
-  if (!staff || !staff.active || !staff.pinHash) {
-    return { status: "error", message: "That PIN didn't match. Try again." };
-  }
-
   const now = new Date();
-  const lock = isLockedOut(
-    {
-      failedPinAttempts: staff.failedPinAttempts,
-      pinLockedUntil: staff.pinLockedUntil,
-    },
+  // The shared, rate-limited PIN core: device limit (this kiosk link) →
+  // per-staff escalating lockout → async verify. Generic errors throughout.
+  const auth = await authenticateStaffPinFromForm(repo, formData, {
+    deviceKey: hashToken(token),
     now,
-  );
-  if (lock.locked) {
-    const secs = Math.ceil(lock.retryAfterMs / 1000);
-    return {
-      status: "error",
-      message: `Too many wrong PINs. Please wait ${secs}s and try again.`,
-    };
-  }
-
-  if (!verifyPin(pinParsed.data, staff.pinHash)) {
-    const next = registerFailedAttempt(
-      {
-        failedPinAttempts: staff.failedPinAttempts,
-        pinLockedUntil: staff.pinLockedUntil,
-      },
-      now,
-    );
-    await repo.updateStaffLockout(staff.id, next);
-    if (next.pinLockedUntil) {
-      const secs = Math.ceil(PIN_LOCKOUT_MS / 1000);
-      return {
-        status: "error",
-        message: `Too many wrong PINs. Please wait ${secs}s and try again.`,
-      };
-    }
-    return { status: "error", message: "That PIN didn't match. Try again." };
-  }
-
-  // Correct PIN: wipe the brute-force counter.
-  await repo.updateStaffLockout(staff.id, clearedLockout());
+  });
+  if (!auth.ok) return { status: "error", message: auth.message };
+  const staff = auth.staff;
 
   const open = await repo.getOpenEntry(staff.id);
   let entryId: string;
@@ -182,15 +136,27 @@ export async function kioskLeaveAction(
       message: "This kiosk link is no longer active. Ask your manager.",
     };
   }
-  return submitStaffLeave(createTenantRepo(business.businessId), formData);
+  return submitStaffLeave(
+    createTenantRepo(business.businessId),
+    formData,
+    new Date(),
+    { deviceKey: hashToken(token) },
+  );
 }
 
-/** Resolve the kiosk business from the cookie, or null. */
+/**
+ * Resolve the kiosk business from the cookie, or null. Also yields the
+ * per-device PIN rate-limit key (the token's hash — never a staff id).
+ */
 async function kioskRepo() {
   const cookieStore = await cookies();
   const token = cookieStore.get(KIOSK_COOKIE)?.value ?? "";
   const business = await resolveKioskBusiness(token);
-  return business ? createTenantRepo(business.businessId) : null;
+  if (!business) return null;
+  return {
+    repo: createTenantRepo(business.businessId),
+    deviceKey: hashToken(token),
+  };
 }
 
 const KIOSK_LINK_GONE =
@@ -201,9 +167,11 @@ export async function kioskReleaseAction(
   _prev: ShiftActionResult,
   formData: FormData,
 ): Promise<ShiftActionResult> {
-  const repo = await kioskRepo();
-  if (!repo) return { status: "error", message: KIOSK_LINK_GONE };
-  return releaseShiftForStaff(repo, formData);
+  const k = await kioskRepo();
+  if (!k) return { status: "error", message: KIOSK_LINK_GONE };
+  return releaseShiftForStaff(k.repo, formData, new Date(), {
+    deviceKey: k.deviceKey,
+  });
 }
 
 /** Claim an open shift from the shared kiosk. */
@@ -211,9 +179,11 @@ export async function kioskClaimAction(
   _prev: ShiftActionResult,
   formData: FormData,
 ): Promise<ShiftActionResult> {
-  const repo = await kioskRepo();
-  if (!repo) return { status: "error", message: KIOSK_LINK_GONE };
-  return claimShiftForStaff(repo, formData);
+  const k = await kioskRepo();
+  if (!k) return { status: "error", message: KIOSK_LINK_GONE };
+  return claimShiftForStaff(k.repo, formData, new Date(), {
+    deviceKey: k.deviceKey,
+  });
 }
 
 /** Cancel your own still-open offer from the shared kiosk. */
@@ -221,9 +191,11 @@ export async function kioskCancelOfferAction(
   _prev: ShiftActionResult,
   formData: FormData,
 ): Promise<ShiftActionResult> {
-  const repo = await kioskRepo();
-  if (!repo) return { status: "error", message: KIOSK_LINK_GONE };
-  return withdrawOwnOffer(repo, formData);
+  const k = await kioskRepo();
+  if (!k) return { status: "error", message: KIOSK_LINK_GONE };
+  return withdrawOwnOffer(k.repo, formData, new Date(), {
+    deviceKey: k.deviceKey,
+  });
 }
 
 /** Claim an org-scoped open shift from ANOTHER location (M29 Phase 3). */
@@ -241,6 +213,8 @@ export async function kioskClaimOrgAction(
     createTenantRepo(business.businessId),
     createOrgRepo(orgId),
     formData,
+    new Date(),
+    { deviceKey: hashToken(token) },
   );
 }
 
@@ -249,7 +223,9 @@ export async function kioskStockCheckAction(
   _prev: StockCheckResult,
   formData: FormData,
 ): Promise<StockCheckResult> {
-  const repo = await kioskRepo();
-  if (!repo) return { status: "error", message: KIOSK_LINK_GONE };
-  return submitStockCheck(repo, formData);
+  const k = await kioskRepo();
+  if (!k) return { status: "error", message: KIOSK_LINK_GONE };
+  return submitStockCheck(k.repo, formData, new Date(), {
+    deviceKey: k.deviceKey,
+  });
 }
