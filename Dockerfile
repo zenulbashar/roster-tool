@@ -19,5 +19,15 @@ ENV NODE_ENV=production
 # anyone running the entrypoint directly.
 ENV ROSTER_ROLE=worker
 
+# Never run the worker as root (SEC-14). The image only reads /app; the
+# heartbeat file lives in /tmp, which `node` can write.
+RUN chown -R node:node /app
+USER node
+
+# Liveness (OPS-01): the worker touches a heartbeat file every minute; a stale
+# file means the process is wedged or dead and the platform should restart it.
+HEALTHCHECK --interval=60s --timeout=5s --start-period=30s --retries=3 \
+  CMD ["node", "scripts/worker-healthcheck.mjs"]
+
 # Same command as `npm run worker` locally — behavior is unchanged.
 CMD ["npm", "run", "worker"]

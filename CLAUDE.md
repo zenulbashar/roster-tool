@@ -987,7 +987,17 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
 
 - Use the `logger` from `src/lib/logger.ts`. Structured logs only.
 - No swallowed errors. Let jobs fail (so pg-boss retries) rather than catching
-  and ignoring.
+  and ignoring. Where a failure is deliberately turned into a status (the Xero
+  push's `failed` outcomes), `logger.error` the provider error first — a
+  generic reason with no payload is undiagnosable (OPS-07).
+- **Health + readiness are first-class** (OPS-01): `GET /api/health` is
+  liveness (process up, no dependencies); `GET /api/ready` checks the database
+  AND that a worker heartbeat (`worker_heartbeat`, written every minute by
+  `scripts/worker.ts`) is under 5 minutes old, answering 503 otherwise. Point
+  the uptime monitor at `/api/ready` — every email flows through the worker,
+  and a dead worker used to be undetectable. The worker container's
+  `HEALTHCHECK` reads a local heartbeat file (`scripts/worker-healthcheck.mjs`)
+  so the check can't itself depend on the database.
 
 ### UI / accessibility
 
@@ -1089,9 +1099,12 @@ staff↔location membership), `staff_loan` (M29 date-ranged lend), `user` (owner
   (reached per location via `staff_location`); `organisation`/`org_membership`/
   `staff_location` are org-scoped. Plus non-tenant infrastructure tables:
   `sso_consumed_tokens` (the inbound prompt2eat SSO replay guard — no `business_id`,
-  like the Auth.js `session`/`verificationToken` tables), and the M37 vendor
+  like the Auth.js `session`/`verificationToken` tables), the M37 vendor
   admin tables `platform_admin` + `admin_activity` (the Zale IT console — no
-  `business_id`; the console is the single explicit cross-tenant exception).
+  `business_id`; the console is the single explicit cross-tenant exception),
+  and `worker_heartbeat` (one row per background-worker instance, overwritten
+  every minute; `/api/ready` reports 503 when the newest is >5 min old — the
+  alert for a dead or wedged worker, OPS-01).
 
 Notable columns / conventions:
 

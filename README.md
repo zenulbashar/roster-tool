@@ -190,6 +190,20 @@ an availability request. You should receive a real email from
 `roster@zaleit.com.au` within a minute (sent by the Railway worker). If emails
 don't arrive, check the Railway worker logs and the Resend dashboard.
 
+### Health & readiness (set up monitoring)
+
+- `GET https://<your-domain>/api/health` — liveness: the web app is up.
+- `GET https://<your-domain>/api/ready` — readiness: the database answers AND
+  the background worker has written its heartbeat in the last 5 minutes. It
+  returns **503** otherwise, with the failing check named.
+
+Point an uptime monitor (Better Uptime, UptimeRobot, Vercel checks…) at
+`/api/ready` and alert on non-200. **This is the alert that catches a dead or
+wedged worker** — every email the product sends goes through it, and without
+this check the first sign of a stopped worker is a customer asking where their
+roster went. The worker image also carries a Docker `HEALTHCHECK` (a local
+heartbeat file), so Railway restarts a wedged process on its own.
+
 ### 6. (Optional) Enable Google Drive document storage
 
 This lets owners connect their own Google Drive and upload staff documents

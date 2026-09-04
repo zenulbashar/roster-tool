@@ -273,6 +273,23 @@ export const ssoConsumedTokens = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
+/* Operations (non-tenant infrastructure)                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Liveness record for the background worker (OPS-01). Every email in the
+ * product flows through pg-boss, so a worker that dies quietly stops all of
+ * it — and nothing used to notice. Each worker instance upserts its row every
+ * minute; `/api/ready` reports the newest `seen_at` and goes 503 when it is
+ * stale, which is the single alert that catches a wedged or dead worker. One
+ * row per instance id, no tenant data, no history (the row is overwritten).
+ */
+export const workerHeartbeats = pgTable("worker_heartbeat", {
+  id: text("id").primaryKey(),
+  seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/* -------------------------------------------------------------------------- */
 /* Zale IT platform admin (vendor back-office — M37)                          */
 /* NON-TENANT: these two tables belong to the vendor, not any one business.   */
 /* They are reachable ONLY behind requireAdmin(); the cross-tenant admin repo  */
