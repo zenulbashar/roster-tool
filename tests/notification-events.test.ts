@@ -6,7 +6,7 @@ import { createTenantRepo, type TenantRepo } from "@/lib/tenant/repository";
 import { hashPin } from "@/lib/pin";
 import { submitStaffLeave } from "@/lib/leave-submission";
 import { submitStockCheck } from "@/lib/stock-check-submission";
-import { handleCertificationReminders } from "@/lib/jobs/handlers";
+import { remindCertificationsForBusiness } from "@/lib/jobs/handlers";
 import { attachOwner } from "./helpers/org";
 
 /**
@@ -135,9 +135,20 @@ describe("notification event wiring", () => {
       expiryDate: "2026-06-09",
     });
 
-    await handleCertificationReminders(now, {
-      send: async () => {},
-    });
+    // Drive the PER-BUSINESS body, not the global sweep: a global sweep here
+    // would also advance every other test file's cert cursors (the shared DB
+    // race the conventions warn about).
+    const biz = (await repo.getBusiness())!;
+    await remindCertificationsForBusiness(
+      {
+        id: biz.id,
+        name: biz.name,
+        timezone: biz.timezone,
+        leadDays: biz.certReminderLeadDays,
+      },
+      now,
+      { send: async () => {} },
+    );
 
     // The subject of THIS test is the in-app notification wiring (the email
     // path is certification-reminders.test.ts's job). The sweep covers EVERY

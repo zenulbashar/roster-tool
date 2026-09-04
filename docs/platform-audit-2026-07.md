@@ -304,6 +304,21 @@ What a fourth pass would still add, now polish rather than risk:
 
 ### SEC-04 — 17 known-vulnerable dependencies in production, including a beta authentication library, with no supply-chain gate
 
+> **Resolution (milestones 0.14 + 0.2, this branch):** production dependencies now audit clean at
+> `--audit-level=high` — `next` 16.2.7 → 16.3.4 (with it `sharp` 0.35.4, `postcss` 8.5.23,
+> `nanoid` 3.3.18), `next-auth` beta.31 → beta.32 on `@auth/core` 0.41.3 (the release fixing the
+> email-normaliser homoglyph bypass, the malformed-`Bearer` exception and the OAuth check-cookie
+> binding), `@auth/drizzle-adapter` 1.11.3, `google-auth-library` 9 → 11 (`gaxios` 7 / `uuid` fixed),
+> and `nodemailer` 7 → 10 forced into every copy via `overrides` (Auth.js's declared peer range,
+> `^7 || ^8`, is itself the vulnerable range). Typecheck, lint, the full suite and a production build
+> pass on the upgraded tree, and `npm ci` was rehearsed against the new lockfile. CI now runs
+> `npm audit --audit-level=high --omit=dev` on every push/PR and generates a CycloneDX SBOM artifact;
+> Dependabot is configured (0.14). **`SECURITY.md`** records the reporting channel, the remediation
+> SLA (7 / 30 / 90 days) and the accepted-risk register — the one knowing exception is Auth.js v5
+> still being a beta (no v5 stable exists; v4 is a different API on the same advisory chain), with
+> its mitigations and review trigger written down. CodeQL is not enabled: it needs GitHub Advanced
+> Security on a private repository — turn it on in the repository settings if the plan allows.
+
 - **Severity:** Critical (aggregate)
 - **Category:** Security — supply chain
 - **Evidence:** `npm audit` on the committed lockfile: **2 critical, 9 high, 6 moderate; 17 total**

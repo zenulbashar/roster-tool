@@ -1140,7 +1140,14 @@ totals with the committed `coverage-baseline.json`: coverage may rise freely,
 never fall by more than a quarter point; lock a gain in with
 `npm run coverage:ratchet -- --update`). The lcov report is uploaded as a
 build artifact. `.github/dependabot.yml` opens one grouped npm PR a week plus
-Actions bumps. Keep it green.
+Actions bumps. CI also runs `npm audit --audit-level=high --omit=dev` (a
+high/critical advisory in a PRODUCTION dependency is red; dev tooling only
+reports) and uploads a CycloneDX SBOM. `SECURITY.md` holds the reporting
+channel, the remediation SLA and the accepted-risk register — `next-auth` v5
+is still a beta by necessity (no stable exists) and `overrides.nodemailer`
+forces nodemailer 10 into every copy because Auth.js's declared peer range is
+the vulnerable one; record any new exception there WITH a mitigation and a
+review trigger. Keep it green.
 
 ## Deployment
 
