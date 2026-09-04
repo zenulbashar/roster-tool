@@ -1214,6 +1214,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         staffShiftRemindersEnabled: boolean;
         formDigestEnabled: boolean;
         payRuleThresholdBasis: "net" | "gross";
+        allowCrossLocationCover: boolean;
       }>,
     ) {
       const [row] = await database
@@ -2156,6 +2157,19 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       return rows.length;
     },
 
+    /**
+     * PROD-15: may shifts at THIS location be covered by staff from the
+     * owner's other locations? True only when the owner turned it on for this
+     * location AND the org actually has another location. The single choke
+     * point every offer's scope passes through — a caller can ASK for `org`,
+     * but only this decides whether it is honoured.
+     */
+    async getCrossLocationCoverEnabled(): Promise<boolean> {
+      const biz = await this.getBusiness();
+      if (!biz?.allowCrossLocationCover) return false;
+      return (await this.getOrgLocationCount()) > 1;
+    },
+
     async releaseOwnShift(
       staffMemberId: string,
       shiftId: string,
@@ -2180,9 +2194,20 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           reason: "This shift has already been offered up.",
         };
       }
+      // A requested `org` scope is honoured only where the owner allows it
+      // (PROD-15); otherwise the offer stays local, silently and safely.
+      const effectiveScope: OfferScope =
+        scope === "org" && (await this.getCrossLocationCoverEnabled())
+          ? "org"
+          : "location";
       const [row] = await database
         .insert(shiftOffers)
-        .values({ businessId, shiftId, offeredByStaffId: staffMemberId, scope })
+        .values({
+          businessId,
+          shiftId,
+          offeredByStaffId: staffMemberId,
+          scope: effectiveScope,
+        })
         .returning();
       return { ok: true as const, offer: row! };
     },
@@ -2224,9 +2249,19 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           reason: "This shift is already open for claims.",
         };
       }
+      // PROD-15: `org` only where the owner allows cross-location cover.
+      const effectiveScope: OfferScope =
+        scope === "org" && (await this.getCrossLocationCoverEnabled())
+          ? "org"
+          : "location";
       const [row] = await database
         .insert(shiftOffers)
-        .values({ businessId, shiftId, offeredByStaffId: null, scope })
+        .values({
+          businessId,
+          shiftId,
+          offeredByStaffId: null,
+          scope: effectiveScope,
+        })
         .returning();
       return { ok: true as const, offer: row! };
     },

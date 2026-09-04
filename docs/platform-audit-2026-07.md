@@ -1191,6 +1191,28 @@ smallest surviving instance. **Fix:** use the existing `memberHere` predicate. *
 **Effort:** 0.5 day with a test. **Priority:** P2. **Note:** the scan is the useful output here — with
 this fixed, staff scoping in the tenant repo is membership-based everywhere.
 
+**COR-12 · The shift offer-up / claim / cancel PIN forms never posted `staffId`, so every one of those
+actions has failed since it shipped · High (NEW, found during PROD-15)**
+`src/components/PinActionForm.tsx` — the single form behind "Offer up this shift?", "Claim this
+shift?", the cross-location claim and "Cancel your offer" on BOTH clock surfaces — posted only the
+target id (`shiftId`/`offerId`) and the `pin`. Every submission core (`releaseShiftForStaff`,
+`claimShiftForStaff`, `claimOrgOfferForStaff`, `withdrawOwnOffer`) authenticates via
+`authenticateStaffPinFromForm`, which reads **`staffId` + `pin`** (and did so before the SEC-06
+rewrite too: the original `authStaff` read `formData.get("staffId")`). With `staffId` null the core
+returns the generic "PIN didn't match", so from M11 onward **no staff member could offer up, claim or
+cancel a shift from the kiosk or their phone** — the owner-side `/app/shifts` page and the
+repo-level flows worked, which is why the suite was green: every test drove the cores with
+hand-built `FormData` that included `staffId`, and nothing rendered the form. **Root cause:** the
+component was written against the page's `selected` staff member but never given it; the other
+five PIN forms (`KioskClockForm`, `PersonalClockForm`, `LeaveRequestForm`, `StockCheckForm`,
+the `/me` gate) each carry a hidden `staffId`. **Impact:** the M11 shift-swap feature was
+non-functional for staff in production; owners would have seen "no one ever offers up a shift".
+**Fix (this branch):** `PinActionForm` takes `staffId` and posts it; all eight call sites pass the
+selected person; `tests/pin-action-form.test.ts` renders the form and asserts both fields the
+core reads are present, so the contract between a PIN form and the core is now pinned at the
+component level, not only at the core. **Lesson recorded in `CLAUDE.md`:** a PIN form must post
+exactly what `authenticateStaffPinFromForm` reads, and a new form gets a render test.
+
 **COR-08 · Pay-rule hour thresholds cumulate on gross clock span, so unpaid break time pushes hours onto higher-paid pay items · Medium (NEW, rev 2)**
 In `classifyEntries` (`src/lib/xero/pay-rules.ts:296-341`) the `daily_hours_beyond` and
 `weekly_hours_beyond` breakpoints are computed from `exactHours` — the **gross** clock span — while the
@@ -1354,6 +1376,16 @@ at other locations", default off for orgs created after the change, on for exist
 orgs to preserve behaviour), plus a per-release choice when it is enabled. **Migration:** one boolean
 with a behaviour-preserving default. **Effort:** 2 days. **Priority:** P2 — becomes P1 the moment a
 franchise or multi-brand customer signs.
+**Resolution (this branch):** `business.allow_cross_location_cover` (default OFF; migration `0041`
+switched it ON for every location already in a multi-location org, so no existing owner's behaviour
+changed), a Settings toggle ("Let staff from my other locations cover shifts here"), and a per-release
+choice — the "Offer up this shift?" screen on the kiosk and the personal phone shows a "let staff at
+my other locations cover it" box (ticked by default, unticking keeps it venue-only) only where the
+owner allows it. The tenant repo is the single authority: `getCrossLocationCoverEnabled()` (setting
+AND another location exists) gates BOTH `releaseOwnShift` and `postOpenShift`, downgrading a
+requested `org` scope to `location` wherever it is not allowed, so neither surface can widen an
+offer past the owner's setting. Flow-tested: setting off → local regardless of the request; on →
+honoured; the staff choice respected; the owner's open-shift post gated the same way.
 
 ### Security
 

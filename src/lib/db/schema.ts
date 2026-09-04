@@ -145,6 +145,17 @@ export const businesses = pgTable("business", {
   // day when forms received new responses; counts + titles only, never
   // answer content or respondent identity). Settings toggle, on by default.
   formDigestEnabled: boolean("form_digest_enabled").notNull().default(true),
+  // PROD-15 — whether shifts at THIS location may be covered by staff from
+  // the owner's OTHER locations (an `org`-scoped offer). Off by default: a
+  // second location no longer implies staff mobility (different brands,
+  // awards, franchisees, distance). Migration 0041 turned it ON for every
+  // location that already sat in a multi-location org, so nobody's existing
+  // behaviour changed. When on, the staff member offering up a shift still
+  // chooses per release ("my venue only" stays possible), and the owner
+  // approves every handover as before.
+  allowCrossLocationCover: boolean("allow_cross_location_cover")
+    .notNull()
+    .default(false),
   // Idempotency cursor: the sweep counts responses submitted AFTER this and
   // advances it only after a successful send (null = never sent → the first
   // digest covers the last 24 h, not all history).

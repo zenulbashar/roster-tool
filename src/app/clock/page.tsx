@@ -171,15 +171,29 @@ export default async function PersonalClockPage({
     if (mode === "release" && shiftParam) {
       const shift = await repo.getPublishedShift(shiftParam);
       if (shift) {
+        // PROD-15: the cross-location choice is offered only where the owner
+        // allows it for this location; the repo enforces it again on submit.
+        const crossCover = await repo.getCrossLocationCoverEnabled();
         return (
           <PinActionForm
             action={personalClockReleaseAction}
             heading="Offer up this shift?"
             details={shiftDetail(shift)}
+            staffId={selected.id}
             hiddenName="shiftId"
             hiddenValue={shift.id}
             submitLabel="Offer it up"
             backHref={myShiftsHref}
+            choice={
+              crossCover
+                ? {
+                    name: "coverElsewhere",
+                    label: "Let staff at my other locations cover it",
+                    hint: "Untick to keep it to this venue only. Your manager approves whoever takes it.",
+                    defaultChecked: true,
+                  }
+                : undefined
+            }
           />
         );
       }
@@ -194,6 +208,7 @@ export default async function PersonalClockPage({
             action={personalClockClaimAction}
             heading="Claim this shift?"
             details={shiftDetail(shift)}
+            staffId={selected.id}
             hiddenName="offerId"
             hiddenValue={offer.id}
             submitLabel="Claim it"
@@ -219,6 +234,7 @@ export default async function PersonalClockPage({
                 <span className="mt-1 block">at {offer.locationName}</span>
               </>
             }
+            staffId={selected.id}
             hiddenName="offerId"
             hiddenValue={offer.offerId}
             submitLabel="Offer to cover it"
@@ -237,6 +253,7 @@ export default async function PersonalClockPage({
             action={personalClockCancelOfferAction}
             heading="Cancel this offer?"
             details={shiftDetail(shift)}
+            staffId={selected.id}
             hiddenName="offerId"
             hiddenValue={offer.id}
             submitLabel="Cancel offer"

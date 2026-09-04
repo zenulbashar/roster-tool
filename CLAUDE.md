@@ -146,10 +146,20 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
   - **Owner surfaces**: `/app/locations` (list/switch/add locations, org-scoped)
     and `/app/people` (the shared pool — everyone org-wide + per-location
     membership chips). New people are still added on a location's `/app/staff`.
-  - **Cross-location shift cover (Phase 3, built)**: `shift_offer.scope`
-    (`location`|`org`). Offering up a shift in a MULTI-location business makes it
-    `org`-scoped (the owner can also post an open shift as org-scoped on
-    `/app/shifts`); it then shows in the "Cover at another location" section of
+  - **Cross-location shift cover (Phase 3, built; opt-in since PROD-15)**:
+    `shift_offer.scope` (`location`|`org`). An offer reaches the owner's OTHER
+    locations only when **`business.allow_cross_location_cover`** is on for
+    the shift's location (Settings → "Shift cover between locations"; default
+    OFF, migration `0041` turned it on for locations already in a
+    multi-location org) AND the staff member ticked "let staff at my other
+    locations cover it" on the offer-up screen (ticked by default where
+    offered; unticking keeps it venue-only) — or the owner chose "Any of my
+    locations" when opening an empty shift on `/app/shifts`. **The tenant repo
+    is the authority**: `getCrossLocationCoverEnabled()` (setting AND another
+    location exists) gates BOTH `releaseOwnShift` and `postOpenShift`,
+    downgrading a requested `org` to `location` wherever it isn't allowed, so
+    no surface can widen an offer past the setting. An `org` offer then shows
+    in the "Cover at another location" section of
     every OTHER location's kiosk/clock "Open shifts" and is claimable there by
     any org member (PIN-gated; `createOrgRepo.claimOrgOffer`, N3: claimer + offer
     must share the org, can't claim your own). The owner approves on `/app/shifts`
@@ -1371,7 +1381,11 @@ staff_member_id)`. A person appears at a location when their home is there OR
   per-DEVICE attempt ceiling keyed on the capability token's hash (20/min,
   200/h — caps the attacker so nobody can lock a whole venue out), then the
   per-staff lockout, then verify; one generic error for wrong/missing/PIN-less.
-  Never re-implement the PIN check inline. Helpers (hash, verify, lockout) are pure in
+  Never re-implement the PIN check inline. The form variant reads EXACTLY
+  `staffId` + `pin`, so every PIN form must post both (`PinActionForm` carries
+  the selected staff member as a hidden `staffId` — it didn't, and every
+  offer-up/claim/cancel silently failed as "PIN didn't match" until COR-12;
+  `tests/pin-action-form.test.ts` pins it). Helpers (hash, verify, lockout) are pure in
   `src/lib/pin.ts`; the PIN itself is never stored or logged.
 - `business.kiosk_token_hash` — SHA-256 hash of the kiosk capability token (only
   the hash is stored; raw token lives in the link/cookie). `require_clock_in_photo`
@@ -1383,6 +1397,10 @@ staff_member_id)`. A person appears at a location when their home is there OR
   personal-phone clock-in (never the kiosk). `personal_clock_token_hash` is the
   SHA-256 hash of the SEPARATE personal-phone clock-in capability token (distinct
   from `kiosk_token_hash`); rotating it revokes old personal links.
+  `allow_cross_location_cover` (NOT NULL default false, PROD-15) — whether
+  shifts at this location may be covered by staff from the owner's other
+  locations (an `org`-scoped offer); the repo's `getCrossLocationCoverEnabled`
+  is the single gate for both staff releases and owner-posted open shifts.
 - `staff_member.pay_rate_cents` (nullable) + `rate_type` (`flat`/`award`, NOT
   NULL default `flat`) + `rate_label` — a per-employee hourly rate the owner
   typed, stored in cents, with an optional label. A stored number + label only;

@@ -82,6 +82,8 @@ export default async function SettingsPage({
     : null;
   const hasClockLink = Boolean(business.personalClockTokenHash);
   const locationSet = business.latitude !== null && business.longitude !== null;
+  // PROD-15: the cross-location cover toggle only bites with 2+ locations.
+  const crossCoverPossible = (await repo.getOrgLocationCount()) > 1;
 
   // Google Drive document storage. The connect/callback live in API routes; the
   // owner manages the connection here.
@@ -188,6 +190,16 @@ export default async function SettingsPage({
     const repo = await ownerRepo();
     await repo.updateBusinessSettings({ formDigestEnabled });
     revalidatePath(PATH);
+  }
+
+  /** PROD-15: may staff from the owner's other locations cover shifts here? */
+  async function setCrossLocationCover(formData: FormData) {
+    "use server";
+    const allowCrossLocationCover = formData.get("enabled") === "true";
+    const repo = await ownerRepo();
+    await repo.updateBusinessSettings({ allowCrossLocationCover });
+    revalidatePath(PATH);
+    revalidatePath("/app/shifts");
   }
 
   async function generateClockLink() {
@@ -567,6 +579,42 @@ export default async function SettingsPage({
 
         {/* RIGHT COLUMN */}
         <div className="flex flex-col gap-[18px]">
+          {/* Shift cover between locations (PROD-15) ----------------- */}
+          <SectionCard title="Shift cover between locations">
+            <p className="text-[13px] leading-relaxed text-[var(--color-text-secondary)]">
+              When this is on, a shift at this location that someone offers up
+              (or that you open up) can be claimed by staff from your other
+              locations. You still approve every handover, and the person
+              offering it up can keep it to this venue. When it&rsquo;s off,
+              shifts here are only ever covered by this location&rsquo;s own
+              team.
+            </p>
+            {!crossCoverPossible ? (
+              <p className="mt-2 text-[12px] text-[var(--color-text-muted)]">
+                You have one location, so this has no effect until you add
+                another.
+              </p>
+            ) : null}
+            <form action={setCrossLocationCover} className="mt-2">
+              <input
+                type="hidden"
+                name="enabled"
+                value={String(!business.allowCrossLocationCover)}
+              />
+              <button
+                type="submit"
+                role="switch"
+                aria-checked={business.allowCrossLocationCover}
+                className="flex w-full items-center justify-between gap-3 py-[10px] text-left"
+              >
+                <span className="block text-[13.5px] font-medium text-[#111827]">
+                  Let staff from my other locations cover shifts here
+                </span>
+                <Switch on={business.allowCrossLocationCover} />
+              </button>
+            </form>
+          </SectionCard>
+
           {/* Notifications ------------------------------------------- */}
           <SectionCard title="Notifications" bodyClassName="px-[18px] py-[6px]">
             {NOTIFICATION_TYPES.map((type, i) => {

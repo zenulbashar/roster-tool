@@ -33,9 +33,10 @@ describe("cross-location shift swap (Phase 3)", () => {
       .values({ name: "Cover Org" })
       .returning();
     org = o!.id;
+    // PROD-15: cross-location cover is opt-in per location; Downtown allows it.
     const [a] = await db
       .insert(businesses)
-      .values({ name: "Downtown", orgId: org })
+      .values({ name: "Downtown", orgId: org, allowCrossLocationCover: true })
       .returning();
     const [b] = await db
       .insert(businesses)

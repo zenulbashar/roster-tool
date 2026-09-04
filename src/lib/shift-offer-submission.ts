@@ -50,12 +50,20 @@ export async function releaseShiftForStaff(
   if (typeof shiftId !== "string" || !shiftId) {
     return { status: "error", message: "Something went wrong. Try again." };
   }
-  // In a multi-location business the offer is claimable org-wide (staff at any
-  // location can cover it); a single-location business keeps the local scope.
+  // PROD-15: the offer reaches the owner's OTHER locations only when the owner
+  // allows cross-location cover for this location AND the staff member chose
+  // it for this release (the form's "coverElsewhere" box, ticked by default
+  // where it is offered — "my venue only" is always a choice). The repo is the
+  // final authority: an `org` request is downgraded where it isn't allowed.
   // Either way the owner approves the handover.
-  const scope = (await repo.getOrgLocationCount()) > 1 ? "org" : "location";
-  const res = await repo.releaseOwnShift(auth.staff.id, shiftId, scope);
+  const wantsOrg = formData.get("coverElsewhere") === "1";
+  const res = await repo.releaseOwnShift(
+    auth.staff.id,
+    shiftId,
+    wantsOrg ? "org" : "location",
+  );
   if (!res.ok) return { status: "error", message: res.reason };
+  const scope = res.offer.scope;
 
   // Best-effort owner notification; the owner manages offers on /app/shifts.
   const reach =
