@@ -13,6 +13,13 @@ import {
   setImpersonationCookie,
   clearImpersonationCookie,
 } from "@/lib/admin/impersonation-session";
+import {
+  isFlagKey,
+  setGlobalFlag,
+  setOrgFlagOverride,
+  clearOrgFlagOverride,
+  type FlagKey,
+} from "@/lib/flags";
 
 /**
  * Server actions for the Zale IT admin console (M37): begin / end impersonation,
@@ -123,4 +130,70 @@ export async function setPlanStatus(formData: FormData): Promise<void> {
   });
   revalidatePath(`/admin/clients/${orgId}`);
   revalidatePath("/admin/clients");
+}
+
+/* ----- Feature flags (OPS-05) ----- */
+
+const flagKeySchema = z
+  .string()
+  .refine((k): k is FlagKey => isFlagKey(k), "Unknown feature flag");
+
+/**
+ * Set a flag for EVERYONE: on, off, or back to the code default. A vendor-side
+ * write, recorded in the admin activity log like a plan-status change.
+ */
+export async function setFeatureFlagGlobal(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const key = flagKeySchema.parse(formData.get("key"));
+  const value = z.enum(["on", "off", "default"]).parse(formData.get("value"));
+  await setGlobalFlag(
+    key,
+    value === "default" ? null : value === "on",
+    admin.name,
+  );
+  await createAdminRepo().recordActivity({
+    adminUserId: admin.userId,
+    adminName: admin.name,
+    action: "Set feature flag",
+    detail: `${key} → ${value} for everyone`,
+    isWrite: true,
+  });
+  revalidatePath("/admin/flags");
+}
+
+/**
+ * Set (or clear) a flag for ONE client organisation — the dark-launch / kill
+ * switch for a single client. The override wins over the global value.
+ */
+export async function setFeatureFlagOverride(
+  formData: FormData,
+): Promise<void> {
+  const admin = await requireAdmin();
+  const key = flagKeySchema.parse(formData.get("key"));
+  const orgId = orgIdSchema.parse(formData.get("orgId"));
+  const value = z.enum(["on", "off", "clear"]).parse(formData.get("value"));
+
+  let venueName: string | null;
+  if (value === "clear") {
+    venueName = (await clearOrgFlagOverride(key, orgId)).orgName;
+  } else {
+    const res = await setOrgFlagOverride(
+      key,
+      orgId,
+      value === "on",
+      admin.name,
+    );
+    if (!res.ok) redirect("/admin/flags?error=unknown_org");
+    venueName = res.orgName;
+  }
+  await createAdminRepo().recordActivity({
+    adminUserId: admin.userId,
+    adminName: admin.name,
+    action: "Set feature flag for a client",
+    detail: `${key} → ${value}`,
+    isWrite: true,
+    orgId,
+    venueName,
+  });
+  revalidatePath("/admin/flags");
 }

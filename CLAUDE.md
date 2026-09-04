@@ -222,6 +222,27 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
   - **`organisation.plan_status`** (`active`/`trial`/`paused`) is a vendor
     account-lifecycle label the admin sets — **NOT billing/wage data**; billing
     stays out of scope (client detail states payments are handled outside Roster).
+- **Feature flags (OPS-05)**: rollout control for CODE PATHS — dark-launch a
+  change on one client, roll it out to everyone, or kill it without a deploy.
+  **The registry is code** (`src/lib/flags/registry.ts`: every key with a
+  description + its code default; the accessor is typed on `FlagKey`, so a typo
+  is a build error, never a silent "off"). **The database holds only
+  deviations**: `feature_flag` (the value for everyone, present once an admin
+  sets it) and `feature_flag_override` (the value for ONE organisation, which
+  wins). Resolution = org override → global → code default (`evaluateFlag`,
+  pure, unit-tested). **`isFeatureEnabled(key, { orgId })`** is the ONE way
+  code asks; pass the acting owner's `orgId` from `requireOwner()` (never
+  request input), omit it in org-less contexts (sign-up, global sweeps). It is
+  memoised per request with `React.cache` (one query for globals, one for the
+  org's overrides). Zale IT sets flags on **`/admin/flags`** (global on/off/
+  code-default + per-client overrides; every change is an `is_write` row in
+  `admin_activity`). **Flags are never product settings** — a per-client
+  configuration belongs on `business`; and access decisions never go through
+  flags. Retire a flag once its consumer settles (flip the default, remove the
+  reads, delete the key). Live flags: `owner_signups` (default on — the
+  onboarding kill switch: off shows "sign-ups are paused", the action refuses;
+  existing owners unaffected) and `audit_events` (default off — registered
+  ahead of its milestone-1.8 consumer so the rollout switch exists first).
 - **Shifts**: business defines reusable **shift templates** (label + start/end +
   weekday flags + an optional owner-chosen **colour** + a **staffing target**,
   `required_staff`, default 1 — hospitality shifts often need several people).
@@ -1201,9 +1222,11 @@ staff↔location membership), `staff_loan` (M29 date-ranged lend), `user` (owner
   like the Auth.js `session`/`verificationToken` tables), the M37 vendor
   admin tables `platform_admin` + `admin_activity` (the Zale IT console — no
   `business_id`; the console is the single explicit cross-tenant exception),
-  and `worker_heartbeat` (one row per background-worker instance, overwritten
+  `worker_heartbeat` (one row per background-worker instance, overwritten
   every minute; `/api/ready` reports 503 when the newest is >5 min old — the
-  alert for a dead or wedged worker, OPS-01).
+  alert for a dead or wedged worker, OPS-01), and the OPS-05 flag tables
+  `feature_flag` + `feature_flag_override` (vendor-set rollout switches; the
+  registry is code).
 
 Notable columns / conventions:
 
@@ -1231,6 +1254,15 @@ Notable columns / conventions:
   legible after either is deleted). Indexed on `created_at` + `org_id`. Written by
   the admin actions (enter/exit) + the best-effort `logImpersonatedWrite`.
   Non-tenant infra table.
+- `feature_flag` / `feature_flag_override` (OPS-05) — the stored DEVIATIONS from
+  the code flag registry (`src/lib/flags/registry.ts`). `feature_flag`: `key`
+  (PK, a registry key), `enabled`, `updated_by` (admin display-name snapshot),
+  `updated_at` — present only once Zale IT has set the flag for everyone.
+  `feature_flag_override`: `flag_key` + `org_id` (→ `organisation`, cascade;
+  unique together, indexed on `org_id`), `enabled`, `updated_by`, `updated_at`
+  — one organisation's value, which wins over the global one. Read by
+  `isFeatureEnabled` (keyed on the caller's own org id), written only behind
+  `requireAdmin()` from `/admin/flags`. Non-tenant infra tables.
 - `org_membership` (M29) — which owners can reach which org. `org_id` (cascade),
   `user_id` → `user` (cascade), `role` (`org_role`, v1 `owner` only), unique
   `(org_id, user_id)`. The source of "what can this signed-in owner reach",

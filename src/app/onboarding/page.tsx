@@ -13,6 +13,7 @@ import {
   orgMemberships,
 } from "@/lib/db/schema";
 import { setActiveLocationCookie } from "@/lib/tenant/org-access";
+import { isFeatureEnabled } from "@/lib/flags";
 import { AccountIdentity } from "@/components/AccountIdentity";
 import { AU_TIMEZONES } from "@/lib/timezones";
 
@@ -24,11 +25,18 @@ const onboardingSchema = z.object({
 export default async function OnboardingPage() {
   const session = await requireSession();
   if (session.user.businessId) redirect("/app");
+  // OPS-05 kill switch: Zale IT can pause new sign-ups (an incident, a
+  // migration) without a deploy. Existing owners are unaffected — this page is
+  // only reached by a signed-in user with no business yet.
+  const signupsOpen = await isFeatureEnabled("owner_signups");
 
   async function createBusiness(formData: FormData) {
     "use server";
     const current = await requireSession();
     if (current.user.businessId) redirect("/app");
+    // Re-checked in the action: a form rendered while sign-ups were open must
+    // not create a business after they were paused.
+    if (!(await isFeatureEnabled("owner_signups"))) redirect("/onboarding");
 
     const parsed = onboardingSchema.safeParse({
       name: formData.get("name"),
@@ -129,65 +137,82 @@ export default async function OnboardingPage() {
             </AccountIdentity>
           </div>
 
-          <div className="p-[30px]">
-            <div className="font-archivo text-[11.5px] font-bold uppercase tracking-[0.08em] text-[#13301F]">
-              Step 1 of 1 — almost there
+          {!signupsOpen ? (
+            <div className="p-[30px]" role="status">
+              <div className="font-archivo text-[11.5px] font-bold uppercase tracking-[0.08em] text-[#B45309]">
+                Sign-ups are paused
+              </div>
+              <h1 className="mt-2.5 font-archivo text-[25px] font-extrabold tracking-[-0.01em] text-[#111827]">
+                We&rsquo;re not taking new businesses right now.
+              </h1>
+              <p className="mt-1.5 text-[14px] leading-[1.5] text-[#6B7280]">
+                New sign-ups are paused for a short while. Nothing is wrong with
+                your account — please try again a little later. If you already
+                run a business on Roster, you may have signed in with a
+                different email address.
+              </p>
             </div>
-            <h1 className="mt-2.5 font-archivo text-[25px] font-extrabold tracking-[-0.01em] text-[#111827]">
-              Let&rsquo;s set up your business.
-            </h1>
-            <p className="mb-[22px] mt-1.5 text-[14px] leading-[1.5] text-[#6B7280]">
-              Just a name to start. You can add staff, shifts and suppliers
-              next.
-            </p>
+          ) : (
+            <div className="p-[30px]">
+              <div className="font-archivo text-[11.5px] font-bold uppercase tracking-[0.08em] text-[#13301F]">
+                Step 1 of 1 — almost there
+              </div>
+              <h1 className="mt-2.5 font-archivo text-[25px] font-extrabold tracking-[-0.01em] text-[#111827]">
+                Let&rsquo;s set up your business.
+              </h1>
+              <p className="mb-[22px] mt-1.5 text-[14px] leading-[1.5] text-[#6B7280]">
+                Just a name to start. You can add staff, shifts and suppliers
+                next.
+              </p>
 
-            <form action={createBusiness}>
-              <label
-                htmlFor="business-name"
-                className="mb-[7px] block text-[12.5px] font-semibold text-[#374151]"
-              >
-                Business name
-              </label>
-              <input
-                id="business-name"
-                name="name"
-                required
-                maxLength={120}
-                placeholder="e.g. Brew & Bite Café"
-                autoFocus
-                className="w-full rounded-[11px] border border-[#D1D5DB] px-3.5 py-[13px] text-[14.5px] text-[#111827] outline-none focus:border-[#13301F] focus:ring-[3px] focus:ring-[rgba(19,48,31,0.18)]"
-              />
+              <form action={createBusiness}>
+                <label
+                  htmlFor="business-name"
+                  className="mb-[7px] block text-[12.5px] font-semibold text-[#374151]"
+                >
+                  Business name
+                </label>
+                <input
+                  id="business-name"
+                  name="name"
+                  required
+                  maxLength={120}
+                  placeholder="e.g. Brew & Bite Café"
+                  autoFocus
+                  className="w-full rounded-[11px] border border-[#D1D5DB] px-3.5 py-[13px] text-[14.5px] text-[#111827] outline-none focus:border-[#13301F] focus:ring-[3px] focus:ring-[rgba(19,48,31,0.18)]"
+                />
 
-              <label
-                htmlFor="business-tz"
-                className="mb-[7px] mt-4 block text-[12.5px] font-semibold text-[#374151]"
-              >
-                Time zone
-              </label>
-              <select
-                id="business-tz"
-                name="timezone"
-                defaultValue="Australia/Sydney"
-                className="w-full rounded-[11px] border border-[#D1D5DB] bg-white px-3.5 py-[13px] text-[14.5px] text-[#111827] outline-none focus:border-[#13301F] focus:ring-[3px] focus:ring-[rgba(19,48,31,0.18)]"
-              >
-                {AU_TIMEZONES.map((tz) => (
-                  <option key={tz} value={tz}>
-                    {tz.replace("Australia/", "")}
-                  </option>
-                ))}
-              </select>
+                <label
+                  htmlFor="business-tz"
+                  className="mb-[7px] mt-4 block text-[12.5px] font-semibold text-[#374151]"
+                >
+                  Time zone
+                </label>
+                <select
+                  id="business-tz"
+                  name="timezone"
+                  defaultValue="Australia/Sydney"
+                  className="w-full rounded-[11px] border border-[#D1D5DB] bg-white px-3.5 py-[13px] text-[14.5px] text-[#111827] outline-none focus:border-[#13301F] focus:ring-[3px] focus:ring-[rgba(19,48,31,0.18)]"
+                >
+                  {AU_TIMEZONES.map((tz) => (
+                    <option key={tz} value={tz}>
+                      {tz.replace("Australia/", "")}
+                    </option>
+                  ))}
+                </select>
 
-              <button
-                type="submit"
-                className="mt-4 flex w-full items-center justify-center gap-2 rounded-[11px] bg-[#13301F] py-3.5 font-archivo text-[15px] font-bold text-white hover:bg-[#1D4A2E]"
-              >
-                Create my business
-                <span className="material-symbols-rounded text-[20px]">
-                  arrow_forward
-                </span>
-              </button>
-            </form>
-          </div>
+                <button
+                  type="submit"
+                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-[11px] bg-[#13301F] py-3.5 font-archivo text-[15px] font-bold text-white hover:bg-[#1D4A2E]"
+                >
+                  Create my business
+                  <span className="material-symbols-rounded text-[20px]">
+                    arrow_forward
+                  </span>
+                </button>
+              </form>
+            </div>
+          )}
         </div>
       </div>
     </main>

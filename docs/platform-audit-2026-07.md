@@ -1710,6 +1710,16 @@ enforcement, the storage dual-write, the audit decorator) are materially safer b
 **Fix:** a minimal `feature_flag` table plus a per-org override and a typed accessor; no vendor
 needed at this scale. **Effort:** 3 days. **Priority:** P1 — it de-risks everything sequenced after
 it, which is why it appears early in the roadmap.
+**Resolution (milestone 1.3, this branch):** built as specified, no vendor. The registry is code
+(`src/lib/flags/registry.ts` — every key with a description and a code default; the accessor is typed
+on `FlagKey`), the database holds only deviations (`feature_flag` for everyone, `feature_flag_override`
+per organisation, migration `0038`), and `isFeatureEnabled(key, { orgId })` resolves override →
+global → default, memoised per request with `React.cache`. Zale IT manages flags on `/admin/flags`
+(global on/off/code-default + per-client overrides), every change audited in `admin_activity`. First
+consumer: `owner_signups`, the onboarding kill switch (page + action both check it). `audit_events`
+is registered ahead of milestone 1.8 so the dark-launch switch exists before the code does. Pure
+resolver and the full flow (default, global, org-wins-for-that-org-only, clear, cascade, status view)
+are tested.
 
 **OPS-06 · Single region · Medium**
 `vercel.json` pins `regions: ["syd1"]`; the worker is one Railway container; Neon is one region.

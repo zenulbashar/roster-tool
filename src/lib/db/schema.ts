@@ -378,6 +378,51 @@ export const adminActivities = pgTable(
   ],
 );
 
+/**
+ * Feature flags (OPS-05) — rollout control, set by Zale IT in the admin
+ * console. The REGISTRY of flags and their code defaults lives in
+ * `src/lib/flags/registry.ts`; these tables hold only deviations from it:
+ *
+ *  - `feature_flag`: the flag's value for EVERYONE, present only once an admin
+ *    has set it (no row = the code default). `key` must be a registry key.
+ *  - `feature_flag_override`: the flag's value for ONE organisation, which wins
+ *    over the global value — the dark-launch / per-client kill-switch lever.
+ *
+ * Non-tenant infrastructure tables (no `business_id`): reads from tenant code
+ * are keyed on the caller's own org id (`isFeatureEnabled`), writes happen only
+ * behind `requireAdmin()`. `updated_by` snapshots the admin's display name so a
+ * row stays legible after the admin is gone. Flags are never product settings
+ * — a per-client configuration belongs on `business`.
+ */
+export const featureFlags = pgTable("feature_flag", {
+  key: text("key").primaryKey(),
+  enabled: boolean("enabled").notNull(),
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const featureFlagOverrides = pgTable(
+  "feature_flag_override",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    flagKey: text("flag_key").notNull(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull(),
+    updatedBy: text("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("feature_flag_override_key_org_unique").on(t.flagKey, t.orgId),
+    index("feature_flag_override_org_idx").on(t.orgId),
+  ],
+);
+
 /* -------------------------------------------------------------------------- */
 /* Domain (all business-scoped)                                               */
 /* -------------------------------------------------------------------------- */
