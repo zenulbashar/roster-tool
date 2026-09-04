@@ -15,6 +15,7 @@ import {
   type StaffShiftReminderJob,
   type StaffLoanExpiryJob,
   type FormResponseDigestJob,
+  type DataRetentionJob,
 } from "./queues";
 import {
   handleAvailabilityRequest,
@@ -28,6 +29,7 @@ import {
   handleStaffShiftReminders,
   handleStaffLoanExpiry,
   handleFormResponseDigests,
+  handleDataRetention,
 } from "./handlers";
 
 /** Cron for the daily clock-in photo retention sweep: 03:00 UTC every day. */
@@ -53,6 +55,12 @@ const STAFF_LOAN_EXPIRY_CRON = "0 1 * * *";
  * Australia/Sydney — the owner reads yesterday's responses with their coffee.
  */
 const FORM_DIGEST_CRON = "0 21 * * *";
+
+/**
+ * Cron for the daily platform data-retention sweep (PERF-10): 04:00 UTC, an
+ * hour after photo retention and clear of the reminder/digest sends.
+ */
+const DATA_RETENTION_CRON = "0 4 * * *";
 
 /**
  * pg-boss singleton. One instance per process (Next dev hot-reload safe via
@@ -287,6 +295,11 @@ export async function registerWorkers(): Promise<void> {
     guarded(QUEUES.formResponseDigest, () => handleFormResponseDigests()),
   );
 
+  await boss.work<DataRetentionJob>(
+    QUEUES.dataRetention,
+    guarded(QUEUES.dataRetention, () => handleDataRetention()),
+  );
+
   // Daily cron sweep of expired clock-in photos. Re-scheduling with the same
   // queue name is idempotent (pg-boss upserts the schedule), so booting the
   // worker repeatedly is safe. singletonKey collapses any overlapping runs.
@@ -338,6 +351,15 @@ export async function registerWorkers(): Promise<void> {
     FORM_DIGEST_CRON,
     {},
     { ...RETRY, tz: "UTC", singletonKey: QUEUES.formResponseDigest },
+  );
+
+  // Daily platform data-retention sweep (04:00 UTC). Idempotent reschedule;
+  // every policy deletes only rows past its own cutoff, in bounded batches.
+  await boss.schedule(
+    QUEUES.dataRetention,
+    DATA_RETENTION_CRON,
+    {},
+    { ...RETRY, tz: "UTC", singletonKey: QUEUES.dataRetention },
   );
 
   logger.info("Workers registered");

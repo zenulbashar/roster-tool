@@ -274,6 +274,13 @@
       "when": 1788553291459,
       "tag": "0038_feature_flags",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1788554472043,
+      "tag": "0039_data_retention_indexes",
+      "breakpoints": true
     }
   ]
 }

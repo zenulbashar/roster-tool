@@ -1063,6 +1063,17 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
   `sendFormDigestForBusiness`. Test the per-business function (it can't race
   other files' global sweeps over the shared test DB), and it is the unit a
   future dispatcher enqueues one job per business for.
+- **Tables that only grow have a retention policy (PERF-10).** The daily
+  `data-retention` job (04:00 UTC) runs `sweepRetention` in
+  `src/lib/data-retention.ts` — one CODE policy per table (reviewed in a
+  diff, never an env var): owner notifications + staff notices 180 days read /
+  365 unread, `admin_activity` 730 days (confirm the compliance floor before
+  shortening), `form_rate_limit` by `expires_at`, worker heartbeats 7 days,
+  expired Auth.js sessions/verification tokens + consumed SSO ids after a
+  day. Bounded batches, idempotent, counts logged. Clock-in photos keep their
+  own per-business `photo-retention` job. A NEW table that can grow without a
+  natural delete path gets a policy here in the same PR (and an index on the
+  sweep's predicate).
 - **Test fixtures build tenants the way the app does (TEST-02).** An owner
   reaches a business through `org_membership` — use `tests/helpers/org.ts`
   (`makeOrgWithTwoLocations`, `attachOwner`) — never by writing the legacy

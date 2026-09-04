@@ -12,6 +12,7 @@ export const QUEUES = {
   staffShiftReminder: "staff-shift-reminder",
   staffLoanExpiry: "staff-loan-expiry",
   formResponseDigest: "form-response-digest",
+  dataRetention: "data-retention",
 } as const;
 
 /** Sends one staff member their availability magic link. */
@@ -100,3 +101,13 @@ export type StaffLoanExpiryJob = Record<string, never>;
  * send). Quiet days send nothing.
  */
 export type FormResponseDigestJob = Record<string, never>;
+
+/**
+ * Daily platform-level retention sweep (PERF-10): applies one explicit
+ * policy per table that otherwise only grows — owner notifications, staff
+ * notices, the admin audit log, form rate-limit buckets, worker heartbeats,
+ * expired Auth.js sessions/verification tokens and consumed SSO token ids.
+ * Cron-scheduled (no payload); bounded batches; idempotent. Clock-in photos
+ * keep their own per-business `photo-retention` job.
+ */
+export type DataRetentionJob = Record<string, never>;

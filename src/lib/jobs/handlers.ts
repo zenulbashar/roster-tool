@@ -46,6 +46,7 @@ import {
 } from "@/lib/order-reminder";
 import { buildShiftReminders } from "@/lib/staff-shift-reminder";
 import { digestWindowStart, orderDigestItems } from "@/lib/form-digest";
+import { sweepRetention, totalDeleted } from "@/lib/data-retention";
 import { logger } from "@/lib/logger";
 import { notifyOwner } from "@/lib/notifications";
 import type {
@@ -703,6 +704,19 @@ export async function handlePhotoRetention(
     { businesses: rows.length, photosPurged: purged },
     "Clock-in photo retention sweep complete",
   );
+}
+
+/**
+ * Daily platform-level data retention (PERF-10): one explicit policy per
+ * table that used to grow without bound (see `src/lib/data-retention.ts`).
+ * Not tenant-scoped — these are infrastructure/notification rows swept by
+ * their own timestamps — and idempotent, so a retry is safe. Returns the
+ * total rows removed.
+ */
+export async function handleDataRetention(
+  now: Date = new Date(),
+): Promise<number> {
+  return totalDeleted(await sweepRetention(now));
 }
 
 /**

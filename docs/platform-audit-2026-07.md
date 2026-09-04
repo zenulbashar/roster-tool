@@ -1619,6 +1619,16 @@ fastest for successful customers. **Fix:** a single `retention` job with per-tab
 (notifications 180 days read / 365 unread; `admin_activity` 24 months — check the compliance
 requirement before choosing; `form_rate_limit` delete `expires_at < now()`, plus an index on
 `expires_at` to make it cheap); configure pg-boss archive. **Effort:** 3 days. **Priority:** P2.
+**Resolution (milestones 1.4 + 1.9, this branch):** pg-boss finished-job retention is set to 14
+days per queue (1.4). The daily `data-retention` job (04:00 UTC; `src/lib/data-retention.ts`)
+applies one code-reviewed policy per table — owner notifications and staff notices 180 days read /
+365 unread, `admin_activity` 730 days (the compliance floor is recorded as an open question; the
+constant is the place to change it), `form_rate_limit` by `expires_at` (indexed in 0.4), worker
+heartbeats after 7 days, expired Auth.js sessions and verification tokens after a day, and consumed
+SSO token ids after a day — in bounded batches, idempotent, with per-policy counts logged.
+Migration `0039` adds the `(is_read, created_at)` indexes the sweep's predicate needs. Tested
+per policy against Postgres (`tests/data-retention-flow.test.ts`) plus the policy invariants
+(`tests/data-retention.test.ts`).
 
 **PERF-11 · No caching layer of any kind · Medium**
 No Redis, no `unstable_cache`, no `revalidate`, no HTTP caching. Every owner page is fully dynamic

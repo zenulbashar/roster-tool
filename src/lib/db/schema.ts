@@ -1348,6 +1348,9 @@ export const notifications = pgTable(
   (t) => [
     index("notification_business_read_idx").on(t.businessId, t.isRead),
     index("notification_business_created_idx").on(t.businessId, t.createdAt),
+    // PERF-10: the platform retention sweep deletes by (is_read, created_at)
+    // across every tenant; without this it is a full scan nightly.
+    index("notification_read_created_idx").on(t.isRead, t.createdAt),
     // At most one ACTIVE (unread) coalesced row per (business, group). The
     // predicate MUST match the upsert's ON CONFLICT arbiter so Postgres uses
     // this partial unique index. Non-coalesced rows (group_key NULL) are
@@ -1399,6 +1402,8 @@ export const staffNotifications = pgTable(
       t.businessId,
       t.createdAt,
     ),
+    // PERF-10: the platform retention sweep's predicate.
+    index("staff_notification_read_created_idx").on(t.isRead, t.createdAt),
     uniqueIndex("staff_notification_dedupe_key_idx").on(t.dedupeKey),
   ],
 );
