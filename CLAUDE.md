@@ -953,6 +953,18 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
 - All email sending (availability requests, reminders, published rosters) goes
   through pg-boss jobs.
 - Jobs MUST be idempotent and safe to retry.
+- **Owner recipients resolve through the org, never the legacy pointer.** A
+  per-business sweep finds who to email with `ownerEmailsForBusiness` (business
+  → `org_id` → `org_membership` role `owner` → user). `users.business_id` is set
+  ONCE at onboarding for the owner's FIRST location and never for locations
+  added later — keying a sweep on it silently skipped every other location
+  (COR-01). A business that resolves to zero recipients is `logger.warn`ed, not
+  silently skipped.
+- **Per-business sweep bodies are separate functions.** Each daily sweep is a
+  thin loop over `remind…ForBusiness(biz, now, deps)` /
+  `sendFormDigestForBusiness`. Test the per-business function (it can't race
+  other files' global sweeps over the shared test DB), and it is the unit a
+  future dispatcher enqueues one job per business for.
 
 ### Observability
 

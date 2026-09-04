@@ -12,6 +12,7 @@ import {
   users,
   staffLoans,
   staffLocations,
+  orgMemberships,
 } from "@/lib/db/schema";
 import {
   sendEmail,
@@ -64,6 +65,37 @@ const defaultDeps: HandlerDeps = { send: sendEmail };
 
 export function magicLink(token: string): string {
   return `${env.APP_URL}/a/${token}`;
+}
+
+/**
+ * Email addresses of the OWNERS to notify for a location.
+ *
+ * Resolves through the M29 ownership edge — business → org →
+ * `org_membership` (role `owner`) → user — NOT the legacy `users.business_id`
+ * pointer alone. That pointer is written once, at onboarding, for the owner's
+ * FIRST location and never for locations added later, so a sweep keyed on it
+ * silently skipped every other location's reminders (COR-01). The legacy
+ * pointer is still unioned in for any business without an org (pre-backfill
+ * data / minimal fixtures); results are de-duplicated.
+ */
+export async function ownerEmailsForBusiness(
+  businessId: string,
+): Promise<string[]> {
+  const [viaOrg, viaLegacy] = await Promise.all([
+    db
+      .select({ email: users.email })
+      .from(businesses)
+      .innerJoin(orgMemberships, eq(orgMemberships.orgId, businesses.orgId))
+      .innerJoin(users, eq(users.id, orgMemberships.userId))
+      .where(
+        and(eq(businesses.id, businessId), eq(orgMemberships.role, "owner")),
+      ),
+    db
+      .select({ email: users.email })
+      .from(users)
+      .where(eq(users.businessId, businessId)),
+  ]);
+  return [...new Set([...viaOrg, ...viaLegacy].map((u) => u.email))];
 }
 
 /**
@@ -460,67 +492,12 @@ export async function handleCertificationReminders(
 
   let totalSent = 0;
   let businessesEmailed = 0;
-
   for (const biz of bizRows) {
-    const ownerEmails = (
-      await db
-        .select({ email: users.email })
-        .from(users)
-        .where(eq(users.businessId, biz.id))
-    ).map((u) => u.email);
-    if (ownerEmails.length === 0) continue;
-
-    const today = businessDateOf(now, biz.timezone);
-    const repo = createTenantRepo(biz.id);
-    const certs = await repo.listCertifications({ activeOnly: true });
-
-    const due = certs.flatMap((c) => {
-      const stage = dueReminderStage(
-        c.expiryDate,
-        today,
-        biz.leadDays,
-        c.lastReminderStage,
-      );
-      return stage ? [{ cert: c, stage }] : [];
-    });
-    if (due.length === 0) continue;
-
-    const items = due.map(({ cert }) => ({
-      staffName: cert.staffName,
-      certName: certDisplayLabel(cert.certType, cert.certLabel),
-      phrase: expiryPhrase(daysUntil(cert.expiryDate, today)),
-      expiryText: formatDateOnly(cert.expiryDate),
-    }));
-
-    const email = certificationReminderEmail({
-      businessName: biz.name,
-      items,
-    });
-    for (const to of ownerEmails) {
-      await deps.send({ ...email, to });
+    const sent = await remindCertificationsForBusiness(biz, now, deps);
+    if (sent > 0) {
+      totalSent += sent;
+      businessesEmailed += 1;
     }
-
-    // Advance cursors only after a successful send.
-    for (const { cert, stage } of due) {
-      await repo.updateCertReminderStage(cert.id, stage);
-    }
-
-    // Best-effort in-app notification mirroring the digest (email unchanged).
-    await notifyOwner(repo, {
-      type: "cert_expiring",
-      title:
-        due.length === 1
-          ? `${items[0]!.staffName}'s ${items[0]!.certName} ${items[0]!.phrase}`
-          : `${due.length} certifications need attention`,
-      body:
-        due.length === 1
-          ? `Expires ${items[0]!.expiryText}`
-          : "Some are expiring soon or have expired.",
-      linkPath: "/app/certifications",
-    });
-
-    totalSent += due.length;
-    businessesEmailed += 1;
   }
 
   logger.info(
@@ -528,6 +505,81 @@ export async function handleCertificationReminders(
     "Certification reminder sweep complete",
   );
   return totalSent;
+}
+
+/**
+ * The per-business body of the certification sweep: one location's digest,
+ * tenant-scoped through its own repo. Split out so it can be exercised for a
+ * single location (tests) and, later, dispatched as one job per business
+ * rather than one global serial loop. Returns the number of reminder lines
+ * sent (0 = nothing due, or no reachable owner).
+ */
+export async function remindCertificationsForBusiness(
+  biz: { id: string; name: string; timezone: string; leadDays: number },
+  now: Date = new Date(),
+  deps: HandlerDeps = defaultDeps,
+): Promise<number> {
+  const ownerEmails = await ownerEmailsForBusiness(biz.id);
+  if (ownerEmails.length === 0) {
+    // A tenant with no reachable owner is an operational anomaly, not a quiet
+    // day — say so, or a silent skip is indistinguishable from "nothing due".
+    logger.warn(
+      { businessId: biz.id },
+      "No owner recipient for business; skipping reminder",
+    );
+    return 0;
+  }
+
+  const today = businessDateOf(now, biz.timezone);
+  const repo = createTenantRepo(biz.id);
+  const certs = await repo.listCertifications({ activeOnly: true });
+
+  const due = certs.flatMap((c) => {
+    const stage = dueReminderStage(
+      c.expiryDate,
+      today,
+      biz.leadDays,
+      c.lastReminderStage,
+    );
+    return stage ? [{ cert: c, stage }] : [];
+  });
+  if (due.length === 0) return 0;
+
+  const items = due.map(({ cert }) => ({
+    staffName: cert.staffName,
+    certName: certDisplayLabel(cert.certType, cert.certLabel),
+    phrase: expiryPhrase(daysUntil(cert.expiryDate, today)),
+    expiryText: formatDateOnly(cert.expiryDate),
+  }));
+
+  const email = certificationReminderEmail({
+    businessName: biz.name,
+    items,
+  });
+  for (const to of ownerEmails) {
+    await deps.send({ ...email, to });
+  }
+
+  // Advance cursors only after a successful send.
+  for (const { cert, stage } of due) {
+    await repo.updateCertReminderStage(cert.id, stage);
+  }
+
+  // Best-effort in-app notification mirroring the digest (email unchanged).
+  await notifyOwner(repo, {
+    type: "cert_expiring",
+    title:
+      due.length === 1
+        ? `${items[0]!.staffName}'s ${items[0]!.certName} ${items[0]!.phrase}`
+        : `${due.length} certifications need attention`,
+    body:
+      due.length === 1
+        ? `Expires ${items[0]!.expiryText}`
+        : "Some are expiring soon or have expired.",
+    linkPath: "/app/certifications",
+  });
+
+  return due.length;
 }
 
 /**
@@ -557,55 +609,12 @@ export async function handleOrderReminders(
 
   let totalSuppliers = 0;
   let businessesEmailed = 0;
-
   for (const biz of bizRows) {
-    const ownerEmails = (
-      await db
-        .select({ email: users.email })
-        .from(users)
-        .where(eq(users.businessId, biz.id))
-    ).map((u) => u.email);
-    if (ownerEmails.length === 0) continue;
-
-    const today = businessDateOf(now, biz.timezone);
-    const repo = createTenantRepo(biz.id);
-    const [suppliers, statuses] = await Promise.all([
-      repo.listSuppliersForReminder(),
-      repo.itemsWithCurrentStatus(),
-    ]);
-
-    const items: ItemStatusForReminder[] = statuses
-      .filter((s) => s.status !== null)
-      .map((s) => ({
-        itemId: s.itemId,
-        name: s.name,
-        supplierId: s.supplierId,
-        status: s.status!,
-        quantity: s.quantity,
-      }));
-
-    const due = selectOrderReminders(suppliers, items, today);
-    if (due.length === 0) continue;
-
-    const email = orderReminderEmail({
-      businessName: biz.name,
-      suppliers: due.map((d) => ({
-        supplierName: d.supplierName,
-        deliveryText: formatDateOnly(d.deliveryDate),
-        needsOrder: d.needsOrder,
-        low: d.low,
-      })),
-    });
-    for (const to of ownerEmails) {
-      await deps.send({ ...email, to });
+    const sent = await remindOrdersForBusiness(biz, now, deps);
+    if (sent > 0) {
+      totalSuppliers += sent;
+      businessesEmailed += 1;
     }
-
-    // Advance cursors only after a successful send.
-    for (const d of due) {
-      await repo.markSupplierOrderReminded(d.supplierId, d.deliveryDate);
-    }
-    totalSuppliers += due.length;
-    businessesEmailed += 1;
   }
 
   logger.info(
@@ -613,6 +622,65 @@ export async function handleOrderReminders(
     "Order reminder sweep complete",
   );
   return totalSuppliers;
+}
+
+/**
+ * The per-business body of the order-reminder sweep (see
+ * `remindCertificationsForBusiness` for why it is split out). Returns the
+ * number of suppliers reminded (0 = nothing due, or no reachable owner).
+ */
+export async function remindOrdersForBusiness(
+  biz: { id: string; name: string; timezone: string },
+  now: Date = new Date(),
+  deps: HandlerDeps = defaultDeps,
+): Promise<number> {
+  const ownerEmails = await ownerEmailsForBusiness(biz.id);
+  if (ownerEmails.length === 0) {
+    logger.warn(
+      { businessId: biz.id },
+      "No owner recipient for business; skipping reminder",
+    );
+    return 0;
+  }
+
+  const today = businessDateOf(now, biz.timezone);
+  const repo = createTenantRepo(biz.id);
+  const [suppliers, statuses] = await Promise.all([
+    repo.listSuppliersForReminder(),
+    repo.itemsWithCurrentStatus(),
+  ]);
+
+  const items: ItemStatusForReminder[] = statuses
+    .filter((s) => s.status !== null)
+    .map((s) => ({
+      itemId: s.itemId,
+      name: s.name,
+      supplierId: s.supplierId,
+      status: s.status!,
+      quantity: s.quantity,
+    }));
+
+  const due = selectOrderReminders(suppliers, items, today);
+  if (due.length === 0) return 0;
+
+  const email = orderReminderEmail({
+    businessName: biz.name,
+    suppliers: due.map((d) => ({
+      supplierName: d.supplierName,
+      deliveryText: formatDateOnly(d.deliveryDate),
+      needsOrder: d.needsOrder,
+      low: d.low,
+    })),
+  });
+  for (const to of ownerEmails) {
+    await deps.send({ ...email, to });
+  }
+
+  // Advance cursors only after a successful send.
+  for (const d of due) {
+    await repo.markSupplierOrderReminded(d.supplierId, d.deliveryDate);
+  }
+  return due.length;
 }
 
 /**
@@ -780,42 +848,56 @@ export async function handleFormResponseDigests(
 
   let businessesEmailed = 0;
   for (const biz of bizRows) {
-    if (!biz.enabled) continue;
-    const ownerEmails = (
-      await db
-        .select({ email: users.email })
-        .from(users)
-        .where(eq(users.businessId, biz.id))
-    ).map((u) => u.email);
-    if (ownerEmails.length === 0) continue;
-
-    const repo = createTenantRepo(biz.id);
-    const counts = await repo.countResponsesSince(
-      digestWindowStart(biz.lastAt, now),
-      now,
-    );
-    if (counts.length === 0) continue;
-
-    const email = formResponseDigestEmail({
-      businessName: biz.name,
-      items: orderDigestItems(counts).map((c) => ({
-        title: c.title,
-        count: c.count,
-        url: `${env.APP_URL}/app/forms/${c.formId}/responses`,
-      })),
-    });
-    for (const to of ownerEmails) {
-      await deps.send({ ...email, to });
-    }
-
-    // Advance the cursor only after a successful send.
-    await db
-      .update(businesses)
-      .set({ formDigestLastAt: now })
-      .where(eq(businesses.id, biz.id));
-    businessesEmailed += 1;
+    if (await sendFormDigestForBusiness(biz, now, deps)) businessesEmailed += 1;
   }
 
   logger.info({ businessesEmailed }, "Form-response digest sweep complete");
   return businessesEmailed;
+}
+
+/**
+ * The per-business body of the form-digest sweep (see
+ * `remindCertificationsForBusiness` for why it is split out). Returns true
+ * when a digest was sent for this business.
+ */
+export async function sendFormDigestForBusiness(
+  biz: { id: string; name: string; enabled: boolean; lastAt: Date | null },
+  now: Date = new Date(),
+  deps: HandlerDeps = defaultDeps,
+): Promise<boolean> {
+  if (!biz.enabled) return false;
+  const ownerEmails = await ownerEmailsForBusiness(biz.id);
+  if (ownerEmails.length === 0) {
+    logger.warn(
+      { businessId: biz.id },
+      "No owner recipient for business; skipping reminder",
+    );
+    return false;
+  }
+
+  const repo = createTenantRepo(biz.id);
+  const counts = await repo.countResponsesSince(
+    digestWindowStart(biz.lastAt, now),
+    now,
+  );
+  if (counts.length === 0) return false;
+
+  const email = formResponseDigestEmail({
+    businessName: biz.name,
+    items: orderDigestItems(counts).map((c) => ({
+      title: c.title,
+      count: c.count,
+      url: `${env.APP_URL}/app/forms/${c.formId}/responses`,
+    })),
+  });
+  for (const to of ownerEmails) {
+    await deps.send({ ...email, to });
+  }
+
+  // Advance the cursor only after a successful send.
+  await db
+    .update(businesses)
+    .set({ formDigestLastAt: now })
+    .where(eq(businesses.id, biz.id));
+  return true;
 }

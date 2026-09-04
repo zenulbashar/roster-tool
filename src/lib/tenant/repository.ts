@@ -93,6 +93,19 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
    */
   const memberHere = sql`(${staffMembers.businessId} = ${businessId} or exists (select 1 from ${staffLocations} where ${staffLocations.staffMemberId} = ${staffMembers.id} and ${staffLocations.businessId} = ${businessId} and ${staffLocations.active} = true))`;
 
+  /**
+   * M29: staff notices FOLLOW THE PERSON. A staff member reads their notices on
+   * /me, whose repo is scoped to their HOME location — but a notice created at
+   * ANOTHER location of the same org (cross-location cover, a loan, the daily
+   * reminder at the lent-to venue) must still reach them. Visible = a notice at
+   * this location OR at any location in the person's own org. Always paired
+   * with a `staff_member_id` equality, so another person's notices — and any
+   * other org's — never match. The staff id is server-resolved from the /me
+   * capability token, never client input.
+   */
+  const noticeVisibleTo = (staffMemberId: string) =>
+    sql`(${staffNotifications.businessId} = ${businessId} or ${staffNotifications.businessId} in (select ${businesses.id} from ${businesses} inner join ${staffMembers} on ${staffMembers.orgId} = ${businesses.orgId} where ${staffMembers.id} = ${staffMemberId} and ${staffMembers.orgId} is not null))`;
+
   return {
     businessId,
 
@@ -1089,7 +1102,9 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       const flags = await first(
         database
           .select({
-            hasStaff: sql<boolean>`exists(select 1 from ${staffMembers} where ${staffMembers.businessId} = ${businessId})`,
+            // Membership-based (M29): a location staffed only through
+            // `staff_location` still counts as having staff.
+            hasStaff: sql<boolean>`exists(select 1 from ${staffMembers} where ${memberHere})`,
             hasShiftTemplate: sql<boolean>`exists(select 1 from ${shiftTemplates} where ${shiftTemplates.businessId} = ${businessId})`,
             hasRosterPeriod: sql<boolean>`exists(select 1 from ${rosterPeriods} where ${rosterPeriods.businessId} = ${businessId})`,
             hasClockInLink: sql<boolean>`(${businesses.kioskTokenHash} is not null or ${businesses.personalClockTokenHash} is not null)`,
@@ -2979,22 +2994,25 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       return row ?? null;
     },
 
-    /** One staff member's notices, newest first. Scoped to business AND staff. */
+    /**
+     * One staff member's notices, newest first — this location's AND any from
+     * other locations in the person's org (notices follow the person, M29).
+     */
     listStaffNotifications(staffMemberId: string, limit = 50) {
       return database
         .select()
         .from(staffNotifications)
         .where(
           and(
-            eq(staffNotifications.businessId, businessId),
             eq(staffNotifications.staffMemberId, staffMemberId),
+            noticeVisibleTo(staffMemberId),
           ),
         )
         .orderBy(desc(staffNotifications.createdAt))
         .limit(limit);
     },
 
-    /** Unread count for one staff member. */
+    /** Unread count for one staff member (org-wide, see listStaffNotifications). */
     async countUnreadStaffNotifications(
       staffMemberId: string,
     ): Promise<number> {
@@ -3003,8 +3021,8 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .from(staffNotifications)
         .where(
           and(
-            eq(staffNotifications.businessId, businessId),
             eq(staffNotifications.staffMemberId, staffMemberId),
+            noticeVisibleTo(staffMemberId),
             eq(staffNotifications.isRead, false),
           ),
         );
@@ -3012,8 +3030,9 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     },
 
     /**
-     * Mark one notice read — scoped to business AND the given staff member, so
-     * a foreign id (another person's notice, another tenant's) no-ops.
+     * Mark one notice read — scoped to the given staff member AND a location
+     * they can see notices from, so a foreign id (another person's notice,
+     * another org's) no-ops.
      */
     async markStaffNotificationRead(id: string, staffMemberId: string) {
       const [row] = await database
@@ -3022,23 +3041,23 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .where(
           and(
             eq(staffNotifications.id, id),
-            eq(staffNotifications.businessId, businessId),
             eq(staffNotifications.staffMemberId, staffMemberId),
+            noticeVisibleTo(staffMemberId),
           ),
         )
         .returning();
       return row ?? null;
     },
 
-    /** Mark all of one staff member's unread notices read. */
+    /** Mark all of one staff member's unread notices read (org-wide). */
     async markAllStaffNotificationsRead(staffMemberId: string) {
       await database
         .update(staffNotifications)
         .set({ isRead: true })
         .where(
           and(
-            eq(staffNotifications.businessId, businessId),
             eq(staffNotifications.staffMemberId, staffMemberId),
+            noticeVisibleTo(staffMemberId),
             eq(staffNotifications.isRead, false),
           ),
         );
