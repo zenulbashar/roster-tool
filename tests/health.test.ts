@@ -5,8 +5,11 @@ import { workerHeartbeats } from "@/lib/db/schema";
 import {
   heartbeatIsFresh,
   latestWorkerHeartbeat,
+  oldestQueuedJobAgeMs,
+  queueIsDraining,
   readinessChecks,
   recordWorkerHeartbeat,
+  QUEUE_BACKLOG_STALE_MS,
   WORKER_HEARTBEAT_STALE_MS,
 } from "@/lib/health";
 
@@ -53,12 +56,23 @@ describe("worker heartbeat + readiness (OPS-01)", () => {
   it("readiness reports the database up and the worker fresh only when it beat recently", async () => {
     const now = new Date();
     await recordWorkerHeartbeat(ID, db, now);
-    expect(await readinessChecks(db, now)).toEqual({
+    expect(await readinessChecks(db, now)).toMatchObject({
       database: true,
       worker: true,
+      queue: true,
     });
     // Far in the future, that same beat is stale.
     const later = new Date(now.getTime() + WORKER_HEARTBEAT_STALE_MS * 2);
     expect((await readinessChecks(db, later)).worker).toBe(false);
+  });
+
+  it("treats the queue as draining unless a due job has waited too long; unknown is not a failure", async () => {
+    expect(queueIsDraining(null)).toBe(true);
+    expect(queueIsDraining(0)).toBe(true);
+    expect(queueIsDraining(QUEUE_BACKLOG_STALE_MS - 1)).toBe(true);
+    expect(queueIsDraining(QUEUE_BACKLOG_STALE_MS)).toBe(false);
+    // On a database with or without the pg-boss schema the probe never throws.
+    const age = await oldestQueuedJobAgeMs(db, new Date());
+    expect(age === null || age >= 0).toBe(true);
   });
 });

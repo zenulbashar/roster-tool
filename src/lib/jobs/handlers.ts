@@ -744,25 +744,39 @@ export async function handleStaffShiftReminders(
 
   let created = 0;
   for (const biz of bizRows) {
-    if (!biz.enabled) continue;
-    const tomorrow = addDays(businessDateOf(now, biz.timezone), 1);
-    const repo = createTenantRepo(biz.id);
-    const rows = await repo.listConfirmedShiftsOnDate(tomorrow);
-    for (const reminder of buildShiftReminders(rows, tomorrow)) {
-      const inserted = await repo.createStaffNotification({
-        staffMemberId: reminder.staffMemberId,
-        type: "shift_reminder",
-        title: reminder.title,
-        body: reminder.body,
-        dedupeKey: reminder.dedupeKey,
-      });
-      if (inserted) created++;
-    }
+    created += await remindShiftsForBusiness(biz, now);
   }
   logger.info(
     { businesses: bizRows.length, remindersCreated: created },
     "Staff shift reminder sweep complete",
   );
+  return created;
+}
+
+/**
+ * The per-business body of the staff shift-reminder sweep (see
+ * `remindCertificationsForBusiness` for why it is split out). Returns the
+ * number of notices created (0 when the business has the reminder off).
+ */
+export async function remindShiftsForBusiness(
+  biz: { id: string; timezone: string; enabled: boolean },
+  now: Date = new Date(),
+): Promise<number> {
+  if (!biz.enabled) return 0;
+  const tomorrow = addDays(businessDateOf(now, biz.timezone), 1);
+  const repo = createTenantRepo(biz.id);
+  const rows = await repo.listConfirmedShiftsOnDate(tomorrow);
+  let created = 0;
+  for (const reminder of buildShiftReminders(rows, tomorrow)) {
+    const inserted = await repo.createStaffNotification({
+      staffMemberId: reminder.staffMemberId,
+      type: "shift_reminder",
+      title: reminder.title,
+      body: reminder.body,
+      dedupeKey: reminder.dedupeKey,
+    });
+    if (inserted) created++;
+  }
   return created;
 }
 
@@ -783,55 +797,78 @@ export async function handleStaffLoanExpiry(
 
   let ended = 0;
   for (const biz of bizRows) {
-    const today = businessDateOf(now, biz.timezone);
-    const expired = await db
-      .select()
-      .from(staffLoans)
-      .where(
-        and(
-          eq(staffLoans.toBusinessId, biz.id),
-          eq(staffLoans.active, true),
-          lt(staffLoans.endDate, today),
-        ),
-      );
-    for (const loan of expired) {
-      await db.transaction(async (tx) => {
-        const [other] = await tx
-          .select({ id: staffLoans.id })
-          .from(staffLoans)
-          .where(
-            and(
-              eq(staffLoans.staffMemberId, loan.staffMemberId),
-              eq(staffLoans.toBusinessId, loan.toBusinessId),
-              eq(staffLoans.active, true),
-              ne(staffLoans.id, loan.id),
-            ),
-          );
-        if (!other) {
-          await tx
-            .update(staffLocations)
-            .set({ active: false })
-            .where(
-              and(
-                eq(staffLocations.businessId, loan.toBusinessId),
-                eq(staffLocations.staffMemberId, loan.staffMemberId),
-                isNotNull(staffLocations.loanId),
-              ),
-            );
-        }
-        await tx
-          .update(staffLoans)
-          .set({ active: false })
-          .where(eq(staffLoans.id, loan.id));
-      });
-      ended++;
-    }
+    ended += await expireLoansForBusiness(biz, now);
   }
   logger.info(
     { businesses: bizRows.length, loansEnded: ended },
     "Staff loan expiry sweep complete",
   );
   return ended;
+}
+
+/**
+ * The per-business body of the loan-expiry sweep: loans TO this location
+ * whose end date has passed in its local calendar. Returns loans ended.
+ */
+export async function expireLoansForBusiness(
+  biz: { id: string; timezone: string },
+  now: Date = new Date(),
+): Promise<number> {
+  const today = businessDateOf(now, biz.timezone);
+  const expired = await db
+    .select()
+    .from(staffLoans)
+    .where(
+      and(
+        eq(staffLoans.toBusinessId, biz.id),
+        eq(staffLoans.active, true),
+        lt(staffLoans.endDate, today),
+      ),
+    );
+  let ended = 0;
+  for (const loan of expired) {
+    await db.transaction(async (tx) => {
+      const [other] = await tx
+        .select({ id: staffLoans.id })
+        .from(staffLoans)
+        .where(
+          and(
+            eq(staffLoans.staffMemberId, loan.staffMemberId),
+            eq(staffLoans.toBusinessId, loan.toBusinessId),
+            eq(staffLoans.active, true),
+            ne(staffLoans.id, loan.id),
+          ),
+        );
+      if (!other) {
+        await tx
+          .update(staffLocations)
+          .set({ active: false })
+          .where(
+            and(
+              eq(staffLocations.businessId, loan.toBusinessId),
+              eq(staffLocations.staffMemberId, loan.staffMemberId),
+              isNotNull(staffLocations.loanId),
+            ),
+          );
+      }
+      await tx
+        .update(staffLoans)
+        .set({ active: false })
+        .where(eq(staffLoans.id, loan.id));
+    });
+    ended++;
+  }
+  return ended;
+}
+
+/**
+ * The per-business body of the photo-retention sweep. Returns photos purged.
+ */
+export async function purgePhotosForBusiness(
+  biz: { id: string },
+  now: Date = new Date(),
+): Promise<number> {
+  return createTenantRepo(biz.id).deleteExpiredPhotos(now);
 }
 
 /**

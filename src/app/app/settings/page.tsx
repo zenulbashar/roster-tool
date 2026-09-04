@@ -6,6 +6,7 @@ import { createTenantRepo } from "@/lib/tenant/repository";
 import { env } from "@/lib/env";
 import { generateToken } from "@/lib/tokens";
 import { PHOTO_RETENTION_DAYS, parsePhotoRetentionDays } from "@/lib/retention";
+import { LOCAL_HOURS, isLocalHour } from "@/lib/jobs/dispatch";
 import {
   coordinatesSchema,
   parseGeofenceRadius,
@@ -50,6 +51,7 @@ export default async function SettingsPage({
   searchParams: Promise<{
     error?: string;
     locationSaved?: string;
+    sendTimesSaved?: string;
     driveConnected?: string;
     driveDisconnected?: string;
     driveError?: string;
@@ -192,6 +194,23 @@ export default async function SettingsPage({
     revalidatePath(PATH);
   }
 
+  /**
+   * PERF-03: when this location's daily sends happen, in its own local time.
+   * Validated to whole hours 0–23; the hourly dispatcher reads the columns.
+   */
+  async function setSendHours(formData: FormData) {
+    "use server";
+    const digestHourLocal = Number(formData.get("digestHourLocal"));
+    const reminderHourLocal = Number(formData.get("reminderHourLocal"));
+    if (!isLocalHour(digestHourLocal) || !isLocalHour(reminderHourLocal)) {
+      redirect(`${PATH}?error=${encodeURIComponent("Pick an hour for each")}`);
+    }
+    const repo = await ownerRepo();
+    await repo.updateBusinessSettings({ digestHourLocal, reminderHourLocal });
+    revalidatePath(PATH);
+    redirect(`${PATH}?sendTimesSaved=1`);
+  }
+
   /** PROD-15: may staff from the owner's other locations cover shifts here? */
   async function setCrossLocationCover(formData: FormData) {
     "use server";
@@ -312,6 +331,12 @@ export default async function SettingsPage({
       />
 
       {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
+      {sp.sendTimesSaved ? (
+        <Banner tone="success">
+          Send times saved — digests and reminders now go out at those hours in
+          this location&rsquo;s time zone.
+        </Banner>
+      ) : null}
       {sp.locationSaved ? (
         <Banner tone="success">Shop location saved.</Banner>
       ) : null}
@@ -622,6 +647,54 @@ export default async function SettingsPage({
 
           {/* Notifications ------------------------------------------- */}
           <SectionCard title="Notifications" bodyClassName="px-[18px] py-[6px]">
+            {/* PERF-03: per-location send times (business-local). */}
+            <form
+              action={setSendHours}
+              className="border-b border-[#F3F4F6] py-[12px]"
+            >
+              <p className="mb-2 text-[13.5px] font-medium text-[#111827]">
+                When we send
+                <span className="ml-1 text-[12px] font-normal text-[#9CA3AF]">
+                  ({business.timezone})
+                </span>
+              </p>
+              <div className="flex flex-wrap items-end gap-3">
+                <Field label="Morning digests">
+                  <select
+                    name="digestHourLocal"
+                    defaultValue={String(business.digestHourLocal)}
+                    className="block rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-[12px] py-[9px] text-[13.5px] text-[var(--color-ink)] outline-none focus:border-[var(--color-button)]"
+                  >
+                    {LOCAL_HOURS.map((h) => (
+                      <option key={h} value={h}>
+                        {hourLabel(h)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Tomorrow's-shift reminders">
+                  <select
+                    name="reminderHourLocal"
+                    defaultValue={String(business.reminderHourLocal)}
+                    className="block rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-[12px] py-[9px] text-[13.5px] text-[var(--color-ink)] outline-none focus:border-[var(--color-button)]"
+                  >
+                    {LOCAL_HOURS.map((h) => (
+                      <option key={h} value={h}>
+                        {hourLabel(h)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Button type="submit" variant="secondary">
+                  Save
+                </Button>
+              </div>
+              <p className="mt-2 text-[12px] text-[#9CA3AF]">
+                Certification, order and form-response digests use the first;
+                the staff &ldquo;you work tomorrow&rdquo; notice uses the
+                second.
+              </p>
+            </form>
             {NOTIFICATION_TYPES.map((type, i) => {
               const meta = NOTIFICATION_PREFS[type];
               const on = business[meta.column];
@@ -999,4 +1072,11 @@ export default async function SettingsPage({
       </div>
     </>
   );
+}
+
+/** "7:00 am" / "5:00 pm" for the send-time selects. */
+function hourLabel(h: number): string {
+  const suffix = h < 12 ? "am" : "pm";
+  const twelve = h % 12 === 0 ? 12 : h % 12;
+  return `${twelve}:00 ${suffix}`;
 }

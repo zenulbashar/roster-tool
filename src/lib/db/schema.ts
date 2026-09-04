@@ -157,6 +157,15 @@ export const businesses = pgTable("business", {
   allowCrossLocationCover: boolean("allow_cross_location_cover")
     .notNull()
     .default(false),
+  // PERF-03 — WHEN this location's daily sends happen, in ITS OWN local
+  // time. `digest_hour_local` (default 7): the owner digests — certification
+  // reminders, order reminders, the form-response digest. `reminder_hour_local`
+  // (default 17): the staff "you work tomorrow" notice. The hourly dispatcher
+  // enqueues each sweep once the local clock reaches the hour (see
+  // src/lib/jobs/dispatch.ts). The defaults reproduce the old fixed-UTC crons
+  // for a Sydney venue; a Perth or London venue now gets its own morning.
+  digestHourLocal: integer("digest_hour_local").notNull().default(7),
+  reminderHourLocal: integer("reminder_hour_local").notNull().default(17),
   // Idempotency cursor: the sweep counts responses submitted AFTER this and
   // advances it only after a successful send (null = never sent → the first
   // digest covers the last 24 h, not all history).
@@ -319,6 +328,35 @@ export const workerHeartbeats = pgTable("worker_heartbeat", {
   id: text("id").primaryKey(),
   seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Exactly-once record for the hourly daily-sweep dispatcher (PERF-02 /
+ * PERF-03): one row per (sweep kind, business, business-local run date),
+ * inserted ON CONFLICT DO NOTHING just before the per-business job is
+ * enqueued. A dispatcher tick that runs twice in an hour, a DST hour that
+ * repeats, or a late tick after a skipped hour therefore never enqueues the
+ * same tenant's sweep twice in one local day. Not tenant data (an operations
+ * ledger keyed on the business id; cascades with the business); swept after
+ * 90 days by the retention job.
+ */
+export const jobDispatches = pgTable(
+  "job_dispatch",
+  {
+    kind: text("kind").notNull(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    runDate: date("run_date").notNull(),
+    enqueuedAt: timestamp("enqueued_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.kind, t.businessId, t.runDate] }),
+    // PERF-10: the retention sweep's predicate.
+    index("job_dispatch_enqueued_idx").on(t.enqueuedAt),
+  ],
+);
 
 /* -------------------------------------------------------------------------- */
 /* Zale IT platform admin (vendor back-office — M37)                          */

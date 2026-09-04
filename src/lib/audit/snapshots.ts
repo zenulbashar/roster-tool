@@ -47,6 +47,8 @@ export const ENTITY_FIELDS = {
     "formDigestEnabled",
     "payRuleThresholdBasis",
     "allowCrossLocationCover",
+    "digestHourLocal",
+    "reminderHourLocal",
     "notifyLeaveRequested",
     "notifyShiftOfferActivity",
     "notifyStockNeedsOrder",

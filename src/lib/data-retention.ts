@@ -5,6 +5,7 @@ import {
   staffNotifications,
   adminActivities,
   auditEvents,
+  jobDispatches,
   formRateLimits,
   workerHeartbeats,
   sessions,
@@ -55,6 +56,8 @@ export const RETENTION_DAYS = {
   // The tenant audit trail is time-and-wages evidence: Fair Work record-
   // keeping expects 7 years. Never shorten without a compliance decision.
   auditEvent: 2555,
+  // The dispatcher's exactly-once ledger only needs to outlive a local day.
+  jobDispatch: 90,
   workerHeartbeat: 7,
   authSessionExpired: 1,
   verificationTokenExpired: 1,
@@ -70,6 +73,7 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
   "staffNotificationUnread",
   "adminActivity",
   "auditEvent",
+  "jobDispatch",
   "formRateLimit",
   "workerHeartbeat",
   "authSessionExpired",
@@ -243,6 +247,11 @@ export async function sweepRetention(
             ),
         ),
       batchSize,
+    ),
+    jobDispatch: rowCount(
+      await database
+        .delete(jobDispatches)
+        .where(lt(jobDispatches.enqueuedAt, cut(RETENTION_DAYS.jobDispatch))),
     ),
     workerHeartbeat: rowCount(
       await database

@@ -1258,6 +1258,8 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         formDigestEnabled: boolean;
         payRuleThresholdBasis: "net" | "gross";
         allowCrossLocationCover: boolean;
+        digestHourLocal: number;
+        reminderHourLocal: number;
       }>,
     ) {
       const [row] = await database

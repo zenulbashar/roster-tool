@@ -16,7 +16,14 @@ import {
   type StaffLoanExpiryJob,
   type FormResponseDigestJob,
   type DataRetentionJob,
+  type SweepDispatchJob,
+  type BusinessSweepJob,
+  type DeadLetterJob,
+  LEGACY_SWEEP_QUEUES,
 } from "./queues";
+import { dispatchDailySweeps, runBusinessSweep } from "./sweeps";
+import { handleDeadLetter } from "./dead-letter";
+import { sweepSingletonKey } from "./dispatch";
 import {
   handleAvailabilityRequest,
   handleAvailabilityReminder,
@@ -31,30 +38,6 @@ import {
   handleFormResponseDigests,
   handleDataRetention,
 } from "./handlers";
-
-/** Cron for the daily clock-in photo retention sweep: 03:00 UTC every day. */
-const PHOTO_RETENTION_CRON = "0 3 * * *";
-
-/** Cron for the daily certification expiry reminder sweep: 02:00 UTC. */
-const CERT_REMINDER_CRON = "0 2 * * *";
-
-/** Cron for the daily stock order-reminder sweep: 06:00 UTC. */
-const ORDER_REMINDER_CRON = "0 6 * * *";
-
-/**
- * Cron for the daily IN-APP staff shift reminder ("you work tomorrow"):
- * 07:00 UTC ≈ 5–6 pm in Australia/Sydney — the evening before the shift.
- */
-const STAFF_SHIFT_REMINDER_CRON = "0 7 * * *";
-
-/** Cron for the daily staff-loan expiry sweep: 01:00 UTC every day. */
-const STAFF_LOAN_EXPIRY_CRON = "0 1 * * *";
-
-/**
- * Cron for the daily form-response email digest: 21:00 UTC ≈ 7–8 am in
- * Australia/Sydney — the owner reads yesterday's responses with their coffee.
- */
-const FORM_DIGEST_CRON = "0 21 * * *";
 
 /**
  * Cron for the daily platform data-retention sweep (PERF-10): 04:00 UTC, an
@@ -95,6 +78,20 @@ export const JOB_RETENTION_SECONDS = 14 * 24 * 60 * 60;
 
 const QUEUE_DEFAULTS = { deleteAfterSeconds: JOB_RETENTION_SECONDS } as const;
 
+/**
+ * Every queue except the dead-letter queue itself dead-letters into it
+ * (OPS-02): a job that exhausts its retries is moved there instead of being
+ * abandoned, and `handleDeadLetter` makes it visible.
+ */
+function queueOptions(name: string) {
+  return name === QUEUES.deadLetter
+    ? QUEUE_DEFAULTS
+    : { ...QUEUE_DEFAULTS, deadLetter: QUEUES.deadLetter };
+}
+
+/** Cron for the hourly daily-sweep dispatcher (PERF-02 / PERF-03). */
+const SWEEP_DISPATCH_CRON = "0 * * * *";
+
 export async function getBoss(): Promise<PgBoss> {
   if (globalForBoss.__boss) return globalForBoss.__boss;
 
@@ -112,9 +109,11 @@ export async function getBoss(): Promise<PgBoss> {
   });
   await boss.start();
   if (isWorker) {
+    // The dead-letter queue first: every other queue references it.
+    await boss.createQueue(QUEUES.deadLetter, queueOptions(QUEUES.deadLetter));
     for (const name of Object.values(QUEUES)) {
-      await boss.createQueue(name, QUEUE_DEFAULTS);
-      await boss.updateQueue(name, QUEUE_DEFAULTS);
+      await boss.createQueue(name, queueOptions(name));
+      await boss.updateQueue(name, queueOptions(name));
     }
     globalForBoss.__bossQueues = new Set(Object.values(QUEUES));
   }
@@ -131,10 +130,29 @@ async function producer(queue: string): Promise<PgBoss> {
   const boss = await getBoss();
   const known = (globalForBoss.__bossQueues ??= new Set<string>());
   if (!known.has(queue)) {
-    await boss.createQueue(queue, QUEUE_DEFAULTS);
+    await boss.createQueue(queue, queueOptions(queue));
     known.add(queue);
   }
   return boss;
+}
+
+/**
+ * One daily sweep for one business (the dispatcher's unit of work). The
+ * singleton key holds exactly one queued/active job per tenant per sweep per
+ * local day; the `job_dispatch` ledger holds exactly-once across ticks.
+ */
+export async function enqueueBusinessSweep(
+  payload: BusinessSweepJob,
+): Promise<void> {
+  const boss = await producer(QUEUES.businessSweep);
+  await boss.send(QUEUES.businessSweep, payload, {
+    ...RETRY,
+    singletonKey: sweepSingletonKey(
+      payload.kind,
+      payload.businessId,
+      payload.runDate,
+    ),
+  });
 }
 
 export async function enqueueAvailabilityRequest(
@@ -300,58 +318,51 @@ export async function registerWorkers(): Promise<void> {
     guarded(QUEUES.dataRetention, () => handleDataRetention()),
   );
 
-  // Daily cron sweep of expired clock-in photos. Re-scheduling with the same
-  // queue name is idempotent (pg-boss upserts the schedule), so booting the
-  // worker repeatedly is safe. singletonKey collapses any overlapping runs.
-  await boss.schedule(
-    QUEUES.photoRetention,
-    PHOTO_RETENTION_CRON,
-    {},
-    { ...RETRY, tz: "UTC", singletonKey: QUEUES.photoRetention },
+  // PERF-02 / PERF-03: the hourly dispatcher fans the daily sweeps out to one
+  // job per business; those run with bounded local concurrency so a slow
+  // tenant never blocks the rest and email load stays paced.
+  await boss.work<SweepDispatchJob>(
+    QUEUES.sweepDispatch,
+    guarded(QUEUES.sweepDispatch, () =>
+      dispatchDailySweeps(new Date(), enqueueBusinessSweep),
+    ),
+  );
+  await boss.work<BusinessSweepJob>(
+    QUEUES.businessSweep,
+    { localConcurrency: 4 },
+    guarded(QUEUES.businessSweep, (job) => runBusinessSweep(job.data)),
   );
 
-  // Daily certification expiry reminders (02:00 UTC). Idempotent reschedule.
-  await boss.schedule(
-    QUEUES.certReminder,
-    CERT_REMINDER_CRON,
-    {},
-    { ...RETRY, tz: "UTC", singletonKey: QUEUES.certReminder },
+  // OPS-02: jobs that exhausted their retries on ANY queue land here.
+  await boss.work<DeadLetterJob>(
+    QUEUES.deadLetter,
+    { includeMetadata: true },
+    guarded(QUEUES.deadLetter, (job) =>
+      handleDeadLetter({
+        id: job.id,
+        name: job.name,
+        data: job.data,
+        output: (job as { output?: unknown }).output,
+        retryCount: (job as { retryCount?: number }).retryCount,
+        createdOn: (job as { createdOn?: Date }).createdOn,
+      }),
+    ),
   );
 
-  // Daily stock order reminders (06:00 UTC). Idempotent reschedule.
+  // PERF-02 / PERF-03: the six global daily crons are replaced by ONE hourly
+  // dispatcher that fans each sweep out per business at that business's own
+  // local send hour. Re-scheduling is idempotent (pg-boss upserts); the
+  // legacy schedules are removed so a worker upgraded in place never runs
+  // both. The legacy queues stay registered above as a manual rollback path.
   await boss.schedule(
-    QUEUES.orderReminder,
-    ORDER_REMINDER_CRON,
+    QUEUES.sweepDispatch,
+    SWEEP_DISPATCH_CRON,
     {},
-    { ...RETRY, tz: "UTC", singletonKey: QUEUES.orderReminder },
+    { ...RETRY, tz: "UTC", singletonKey: QUEUES.sweepDispatch },
   );
-
-  // Daily in-app staff shift reminders (07:00 UTC). Idempotent reschedule;
-  // the handler itself dedupes per staff member per date.
-  await boss.schedule(
-    QUEUES.staffShiftReminder,
-    STAFF_SHIFT_REMINDER_CRON,
-    {},
-    { ...RETRY, tz: "UTC", singletonKey: QUEUES.staffShiftReminder },
-  );
-
-  // Daily staff-loan expiry (01:00 UTC). Idempotent reschedule; the handler
-  // only acts on still-active loans past their end date.
-  await boss.schedule(
-    QUEUES.staffLoanExpiry,
-    STAFF_LOAN_EXPIRY_CRON,
-    {},
-    { ...RETRY, tz: "UTC", singletonKey: QUEUES.staffLoanExpiry },
-  );
-
-  // Daily form-response email digest (21:00 UTC). Idempotent reschedule; the
-  // handler advances a per-business cursor only after a successful send.
-  await boss.schedule(
-    QUEUES.formResponseDigest,
-    FORM_DIGEST_CRON,
-    {},
-    { ...RETRY, tz: "UTC", singletonKey: QUEUES.formResponseDigest },
-  );
+  for (const legacy of LEGACY_SWEEP_QUEUES) {
+    await boss.unschedule(legacy);
+  }
 
   // Daily platform data-retention sweep (04:00 UTC). Idempotent reschedule;
   // every policy deletes only rows past its own cutoff, in bounded batches.

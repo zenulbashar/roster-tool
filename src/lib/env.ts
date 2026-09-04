@@ -108,6 +108,13 @@ const baseEnvSchema = z.object({
   // envelope protocol over fetch.
   SENTRY_DSN: z.string().optional(),
   SENTRY_ENVIRONMENT: z.string().optional(),
+
+  // Operations alerting (OPS-02). Where the worker emails when a background
+  // job has exhausted its retries and landed in the dead-letter queue (a
+  // roster publish email that will never go out, a digest that keeps
+  // failing). OPTIONAL and FAIL CLOSED: unset means the dead-letter handler
+  // logs + reports to the error tracker only. Comma-separated addresses.
+  OPS_ALERT_EMAIL: z.string().optional(),
 });
 
 const envSchema = baseEnvSchema.superRefine((val, ctx) => {

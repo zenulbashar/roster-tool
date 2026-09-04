@@ -548,6 +548,18 @@ bizRows)` and `await`s 2–6 queries plus N email sends per business, strictly s
 - **Expected customer impact:** none immediately; prevents total, silent reminder failure at scale.
 - **Expected operational impact:** failures become per-tenant and visible; sweep wall-clock becomes
   a function of worker count rather than tenant count.
+- **Resolution (milestone 1.5, this branch):** items 1–5 as recommended. An hourly `sweep-dispatch`
+  cron runs `dispatchDailySweeps` (`src/lib/jobs/sweeps.ts`): keyset pagination over `business`
+  (`created_at, id`, pages of 500), one `business-sweep` job per tenant per sweep kind per local day
+  (`{kind, businessId, runDate}`, singleton key `kind:business:date`), exactly-once across ticks via
+  the `job_dispatch` ledger (migration `0043`; a failed enqueue releases the claim). Every sweep body
+  is a per-business function (`remind…ForBusiness`, `sendFormDigestForBusiness`,
+  `remindShiftsForBusiness`, `purgePhotosForBusiness`, `expireLoansForBusiness`); the worker runs the
+  per-business queue with bounded `localConcurrency`; every queue dead-letters into `dead-letter`
+  (OPS-02); the dispatcher logs tenants scanned / enqueued per kind / wall clock and every job logs
+  its duration. The six global crons are unscheduled at boot (queues kept one release as rollback).
+  Flow-tested against Postgres with an injected enqueue: per-tenant local-hour dispatch, exactly once
+  per local day, re-arming next day, claim release on enqueue failure, per-kind handler routing.
 
 ### PERF-03 — Reminder scheduling is fixed-UTC while the product is timezone-per-location
 
@@ -584,6 +596,13 @@ bizRows)` and `await`s 2–6 queries plus N email sends per business, strictly s
 - **Priority:** **P1** — blocking for any non-AU customer.
 - **Expected customer impact:** reminders arrive when intended, everywhere.
 - **Expected operational impact:** email load spreads from six spikes to a rolling hourly profile.
+- **Resolution (milestone 1.6, this branch):** `business.digest_hour_local` (default 7) and
+  `business.reminder_hour_local` (default 17) — the defaults reproduce the old crons' Sydney intent, so
+  nothing changes for existing tenants — set per location in Settings → Notifications → "When we
+  send". The hourly dispatcher's `sweepDue` compares each location's LOCAL hour (Intl, `h23`) with
+  its target and fires once the hour is at or past it, so a DST-skipped hour still fires that day and
+  a repeated hour is deduped by the ledger. Pure-tested across Sydney/Perth/London/Los Angeles at one
+  instant and at both Sydney DST boundaries (`tests/job-dispatch.test.ts`).
 
 ### OPS-01 — No observability: a dead worker stops every email in the system, undetectably
 
@@ -655,8 +674,9 @@ bizRows)` and `await`s 2–6 queries plus N email sends per business, strictly s
   `src/instrumentation.ts` (`onRequestError`, every server failure with its `digest` + request id)
   and the worker's per-job `guarded` wrapper (report, then re-throw so pg-boss retries);
   `error.tsx`/`global-error.tsx`/`not-found.tsx`/`loading.tsx` give every route group a branded
-  boundary whose reference code IS the logged digest. Items 5 (queue metrics + DLQ) and 7 (SLOs)
-  are scheduled with the job fan-out (1.2/1.5).
+  boundary whose reference code IS the logged digest. Item 5 landed in 1.2/1.5: per-job duration
+  logs, per-dispatch counters, a dead-letter queue with alerting, and the oldest-pending-age check on
+  `/api/ready`. Item 7 (published SLOs) is recorded in `docs/operations.md` (1.7).
 
 ### SEC-05 — No security headers of any kind
 
@@ -1758,6 +1778,12 @@ unit testing, and means each action re-derives context independently. **Fix:** e
 **OPS-02 · No dead-letter handling or job-failure alerting · Medium** — covered under `OPS-01`
 item 5 and `PERF-02` item 4. After five retries a job is abandoned with no notification: a roster
 publish email can be permanently lost with no signal. **Priority:** P1 (bundle with `OPS-01`).
+**Resolution (milestone 1.2, this branch):** every queue is created with `deadLetter: "dead-letter"`,
+so an exhausted job is MOVED there by pg-boss; `handleDeadLetter` logs it (sanitised payload, last
+error), reports it to the error tracker and emails `OPS_ALERT_EMAIL` when set (fail closed: unset =
+log + report). `/api/ready` gains the oldest-pending-age metric and answers 503 when a due job has
+waited over an hour — the check that catches a worker that is alive but not draining. Unit-tested
+(`tests/dead-letter.test.ts`, `tests/health.test.ts`).
 
 **OPS-04 · No tenant-facing audit log · Medium**
 `admin_activity` covers vendor actions only. Tenant-side, there is **no history of who changed

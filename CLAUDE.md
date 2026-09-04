@@ -539,7 +539,8 @@ NULL AND is_read = false` is the upsert's ON CONFLICT arbiter, so a flood is
     public, attributed and anonymous responses (an anonymous internal response
     can never imply who submitted). The deferred EMAIL phase is built as the
     **daily form-response digest (M35)**: a `form-response-digest` pg-boss cron
-    (21:00 UTC ≈ 7–8 am Sydney) emails each owner ONE consolidated summary of
+    (dispatched per business at the location's `digest_hour_local`, default
+    7 am local — PERF-03) emails each owner ONE consolidated summary of
     responses since the last digest — the SAME privacy rule (counts + titles +
     links, never content/identity), sent only on days something arrived.
     Idempotent via the `business.form_digest_last_at` cursor (window is
@@ -597,7 +598,8 @@ hmac`, AUTH_SECRET-signed, 15 min — `src/lib/notices-verification.ts`,
     owner server actions via **best-effort `notifyStaff`**
     (`src/lib/staff-notifications.ts`) — a notice failure never breaks the
     decision/publish.
-  - **Daily shift reminder job** (`staff-shift-reminder`, 07:00 UTC ≈ 5–6 pm
+  - **Daily shift reminder job** (`staff-shift-reminder`, dispatched per
+    business at the location's `reminder_hour_local`, default 5 pm local
     Sydney, beside the other daily crons): per business, one "you work
     tomorrow" notice per staff member with a confirmed assignment on
     tomorrow's business-local date in a PUBLISHED roster (inactive staff and
@@ -706,7 +708,8 @@ hmac`, AUTH_SECRET-signed, 15 min — `src/lib/notices-verification.ts`,
     badge each, and a 30/60/90 reminder lead-time selector saved on the
     business. Day-of-expiry counts as **Expired** (badge and the expired alert
     aligned).
-  - **Daily reminder job** (`cert-reminder`, scheduled 02:00 UTC in the worker
+  - **Daily reminder job** (`cert-reminder`, dispatched per business at the
+    location's `digest_hour_local` — PERF-03; formerly a 02:00 UTC cron in the worker
     boot path beside photo-retention) emails the **owner** a single consolidated
     digest per business of certs crossing a threshold: an early notice at the
     lead time (`business.cert_reminder_lead_days`, default 30), a final notice
@@ -784,7 +787,8 @@ hmac`, AUTH_SECRET-signed, 15 min — `src/lib/notices-verification.ts`,
     correct for multiple delivery days and cutoffs spanning a week boundary; a
     cutoff of 0 reminds on the delivery day. Pure logic in
     `src/lib/order-reminder.ts` (`orderByDeliveryDate`, `selectOrderReminders`).
-  - **Daily order-reminder job** (`order-reminder`, scheduled **06:00 UTC** in the
+  - **Daily order-reminder job** (`order-reminder`, dispatched per business at
+    the location's `digest_hour_local` — PERF-03; formerly a 06:00 UTC cron in the
     worker boot path beside photo-retention and cert-reminders) emails the
     **owner** ONE consolidated digest per business of suppliers due today that have
     items flagged `needs_order`/`low` ("Order from [supplier] before [delivery
@@ -1104,11 +1108,38 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
   added later — keying a sweep on it silently skipped every other location
   (COR-01). A business that resolves to zero recipients is `logger.warn`ed, not
   silently skipped.
-- **Per-business sweep bodies are separate functions.** Each daily sweep is a
-  thin loop over `remind…ForBusiness(biz, now, deps)` /
-  `sendFormDigestForBusiness`. Test the per-business function (it can't race
-  other files' global sweeps over the shared test DB), and it is the unit a
-  future dispatcher enqueues one job per business for.
+- **Daily sweeps are DISPATCHED per business, at each location's own local
+  send hour (PERF-02 / PERF-03).** ONE hourly cron (`sweep-dispatch`, minute 0) runs `dispatchDailySweeps` (`src/lib/jobs/sweeps.ts`): it pages every
+  business (keyset on `created_at, id`), asks the pure `sweepDue`
+  (`src/lib/jobs/dispatch.ts`) which of the six sweep kinds that location
+  wants NOW — due once its LOCAL hour is at or past the target, so a
+  DST-skipped hour or a late tick still fires that day — claims a
+  `job_dispatch` row per (kind, business, local run date) with ON CONFLICT DO
+  NOTHING, and enqueues one `business-sweep` job (`{kind, businessId,
+runDate}`, singleton per tenant per day) for each claim. `runBusinessSweep`
+  loads that ONE business and runs the matching per-business function
+  (`remindCertificationsForBusiness`, `remindOrdersForBusiness`,
+  `sendFormDigestForBusiness`, `remindShiftsForBusiness`,
+  `purgePhotosForBusiness`, `expireLoansForBusiness`), each idempotent through
+  its own cursor. Failures retry per tenant; the worker runs these with
+  bounded `localConcurrency`. The send hours are per location:
+  `business.digest_hour_local` (default 7 — cert/order/form digests) and
+  `business.reminder_hour_local` (default 17 — the staff "you work tomorrow"
+  notice), set in Settings → Notifications → "When we send"; photo retention
+  (03:00 local) and loan expiry (01:00 local) are fixed quiet hours. The six
+  old fixed-UTC crons are UNSCHEDULED at worker boot (their queues stay
+  registered one release as a manual rollback path); `data-retention` remains
+  a global daily cron. Test the per-business function (it can't race other
+  files' global sweeps over the shared test DB); the global `handle…` loops
+  remain for tests and manual runs.
+- **Every queue dead-letters into `dead-letter` (OPS-02).** A job that
+  exhausts its retries is moved there by pg-boss instead of vanishing;
+  `handleDeadLetter` (`src/lib/jobs/dead-letter.ts`) logs it, reports it to
+  the error tracker and emails `OPS_ALERT_EMAIL` when set (fail closed: unset
+  = log + report). The payload is sanitised like audit args (a magic-link
+  token never leaves the process); the handler never re-runs the work.
+  `/api/ready` also answers 503 when the oldest DUE job has waited over an
+  hour (`queueBacklogMs`) — a worker that is alive but not draining.
 - **Tables that only grow have a retention policy (PERF-10).** The daily
   `data-retention` job (04:00 UTC) runs `sweepRetention` in
   `src/lib/data-retention.ts` — one CODE policy per table (reviewed in a
@@ -1492,7 +1523,8 @@ deleted_at IS NULL` makes double clock-in impossible. **`deleted_at`
   in `src/lib/geo.ts`.
 - `clock_photo` — optional clock in/out still, stored inline as `bytea`, cascaded
   with its entry. Served only to the owner via `/app/timesheets/photo/[id]`. A
-  daily pg-boss cron (03:00 UTC, registered in the worker boot path) sweeps every
+  daily per-business sweep (dispatched at 03:00 LOCAL by the hourly dispatcher —
+  PERF-02; formerly a 03:00 UTC cron) sweeps every
   business and deletes photos whose entry's `clock_in_at` is older than that
   business's `photo_retention_days`. It deletes **only** `clock_photo` rows (never
   `timesheet_entry`), is tenant-scoped per business, and is idempotent. Cutoff

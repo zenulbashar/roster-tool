@@ -29,3 +29,8 @@ export function pgErrorCode(err: unknown): string | null {
 export function isUniqueViolation(err: unknown): boolean {
   return pgErrorCode(err) === "23505";
 }
+
+/** `foreign_key_violation` — the referenced row is gone (or never existed). */
+export function isForeignKeyViolation(err: unknown): boolean {
+  return pgErrorCode(err) === "23503";
+}
