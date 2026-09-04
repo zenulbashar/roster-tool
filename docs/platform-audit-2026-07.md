@@ -809,6 +809,19 @@ bizRows)` and `await`s 2–6 queries plus N email sends per business, strictly s
 - **Estimated engineering effort:** **1 week** for the decorator plus indexes and retention; **1 day**
   for items 3–4.
 - **Priority:** **P1.**
+- **Resolution (milestone 1.8, this branch):** items 1–6 as recommended. (1) Audit writing moved
+  SERVER-SIDE into the mutation path: the decorator over `createTenantRepo`/`createOrgRepo` records
+  every write with the method name and target id; when the acting owner context is an impersonating
+  admin the event carries `impersonator_user_id` AND is mirrored into `admin_activity` as an
+  `is_write` row — which closes the drag-drop gap. (2) The client modal is consent UX only; its
+  `logImpersonatedWrite` action is removed, so nothing client-reported reaches the log. (3–4)
+  `setPlanStatus` routes through `createAdminRepo().setPlanStatus` and is flagged a write. (5)
+  `admin_activity(admin_user_id, created_at)` index (migration `0042`), 24-month retention (1.9), and
+  a sha256 hash chain (`prev_hash` → `hash`, per business/org, appended under an advisory lock) with
+  `getAuditChainStatus()` naming the first altered or removed row. (6) The grant-level restriction on
+  UPDATE/DELETE is an operations step, recorded in `docs/operations.md` (1.7). Flow-tested: an
+  impersonated write mirrors, an owner's does not; a row edited after the fact breaks the chain at
+  that row.
 - **Expected customer impact:** none visible; materially strengthens the answer to the most probing
   question enterprise buyers ask about vendor access.
 - **Expected operational impact:** the audit log becomes evidence rather than an assertion.
@@ -1481,6 +1494,9 @@ encodes headers, so neither transport is injectable. It is not a finding; the HT
 Covered under `SEC-02`; recorded separately because `CLAUDE.md` presents the write-confirm modal as
 a control while itself documenting that JS-driven actions bypass it. **Fix:** the server-side repo
 decorator in `SEC-02` supersedes it. **Priority:** P1 (with `SEC-02`).
+**Resolution (milestone 1.8, this branch):** superseded as planned — the modal remains as consent UX
+and writes nothing; the decorator records every impersonated write server-side, JS-driven or not.
+`CLAUDE.md` no longer presents the modal as a control.
 
 **SEC-07 · `scryptSync` blocks the event loop on every PIN attempt · Medium**
 `src/lib/pin.ts:32,44` use the **synchronous** scrypt at Node's default cost (~50–100 ms). In a
@@ -1756,6 +1772,20 @@ employee asks about. **Fix:** one append-only `audit_event` table (`actor`, `act
 for `SEC-02` — one mechanism, two consumers — plus a per-record history view for timesheets.
 **Effort:** 1.5 weeks (shared with `SEC-02`). **Priority:** P1. **Industry comparison:** every
 payroll-adjacent platform has immutable timesheet audit history.
+**Resolution (milestone 1.8, this branch):** exactly the recommended shape — one append-only
+`audit_event` table (migration `0042`: actor type/id/label, impersonator, request id, action, entity
+
+- id, sanitised args, before/after, outcome, per-scope `prev_hash`/`hash` chain, `seq`) written by ONE
+  mechanism, the audit decorator (`src/lib/audit/decorate.ts`) that `ownerRepo()` / `ownerContext()`
+  wrap around every tenant and org repo they hand out, serving both consumers (the owner's trail and
+  the admin console's accountability log). Every write is recorded by construction — a Proxy over every
+  non-read method per the shared `method-kinds.ts` classification — and `tests/audit-flow.test.ts`
+  calls EVERY mutator on the repo and fails if one produced no event. Before snapshots are read through
+  the repo's own scoped getters for timesheet entries, staff, settings, offers, leave, certifications,
+  items and pay rules. Owner surfaces: a History panel on each timesheet entry ("Edited the times ·
+  who · when · Clock out: … → …") and `/app/activity` (Recent changes, with the chain verdict). Retained
+  7 years (`RETENTION_DAYS.auditEvent`). Best-effort after commit (a failed append is reported, never
+  blocks the owner); the `audit_events` flag is the kill switch.
 
 **OPS-07 · The Xero push swallows both failure paths with no logging · Medium (NEW, rev 2)**
 `pushEmployeeTimesheet` (`src/lib/xero/push.ts:180` and `:226`) uses bare `catch {}` — the caught error

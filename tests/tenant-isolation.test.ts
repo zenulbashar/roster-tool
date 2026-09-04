@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db";
+import { READ_ONLY_METHOD } from "@/lib/tenant/method-kinds";
 import {
   availabilityRequests,
   availabilityResponses,
@@ -769,11 +770,15 @@ const OWN_BUSINESS_ONLY: Record<keyof TenantRepo & string, string> = {
   deleteXeroConnection: "keyed on the repo's business_id",
   createXeroConnectInvite: "inserts with the repo's business_id",
   createPayRule: "inserts with the repo's business_id",
+  appendAuditEvent:
+    "inserts with the repo's business_id (the audit decorator's sink)",
 } as Record<keyof TenantRepo & string, string>;
 
-/** Methods that only read (any of these prefixes). Everything else mutates. */
-const READ_ONLY =
-  /^(list|get|count|find|has|responses|rosterRows|assignmentsWithShiftType|itemsWithCurrentStatus|confirmedShiftsForStaffOnDate|resolveOwnedSupplierId)/;
+/**
+ * Methods that only read. The ONE shared definition — the audit decorator
+ * wraps everything else as a write, so the two stay in step by construction.
+ */
+const READ_ONLY = READ_ONLY_METHOD;
 
 describe("tenant isolation", () => {
   let tenantA: TwoLocationOrg;

@@ -11,6 +11,7 @@ import {
   time,
   boolean,
   integer,
+  bigserial,
   jsonb,
   doublePrecision,
   primaryKey,
@@ -386,8 +387,75 @@ export const adminActivities = pgTable(
     index("admin_activity_created_idx").on(t.createdAt),
     index("admin_activity_org_idx").on(t.orgId),
     index("admin_activity_business_idx").on(t.businessId),
+    // SEC-02: "what did THIS admin do, when" is a per-admin retrieval.
+    index("admin_activity_admin_created_idx").on(t.adminUserId, t.createdAt),
   ],
 );
+
+/**
+ * Tenant-facing audit trail (OPS-04 / SEC-02): one APPEND-ONLY row per
+ * repository write made through an owner context — the owner's own edits and
+ * a Zale IT admin's edits while impersonating (`impersonator_user_id` set).
+ * Recorded by the audit decorator (`src/lib/audit/decorate.ts`) over every
+ * mutator, never by hand. Carries who (actor type/id/label), what
+ * (method, entity, sanitised args, before/after snapshots for the records
+ * that matter), the request id, and a per-scope HASH CHAIN (`prev_hash` →
+ * `hash`, sha256 over the previous hash + this row's canonical content) that
+ * makes any later edit or deletion detectable (`verifyAuditChain`). Business
+ * scoped (with `org_id` for cross-reference), or org scoped with
+ * `business_id` null for org-level writes. Never UPDATEd or DELETEd by the
+ * app except by the 7-year retention policy; the operations runbook restricts
+ * UPDATE/DELETE at the grant level.
+ */
+export const auditEvents = pgTable(
+  "audit_event",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Monotonic within the database; the chain is walked in this order.
+    seq: bigserial("seq", { mode: "number" }).notNull(),
+    businessId: uuid("business_id").references(() => businesses.id, {
+      onDelete: "cascade",
+    }),
+    orgId: uuid("org_id").references(() => organisations.id, {
+      onDelete: "cascade",
+    }),
+    actorType: text("actor_type").$type<AuditActorType>().notNull(),
+    actorUserId: text("actor_user_id"),
+    actorLabel: text("actor_label").notNull(),
+    impersonatorUserId: text("impersonator_user_id"),
+    requestId: text("request_id"),
+    action: text("action").notNull(),
+    entity: text("entity"),
+    entityId: text("entity_id"),
+    args: jsonb("args"),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    outcome: text("outcome").$type<"ok" | "error">().notNull(),
+    error: text("error"),
+    prevHash: text("prev_hash"),
+    hash: text("hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("audit_event_business_seq_idx").on(t.businessId, t.seq),
+    index("audit_event_business_entity_idx").on(
+      t.businessId,
+      t.entity,
+      t.entityId,
+    ),
+    index("audit_event_org_seq_idx").on(t.orgId, t.seq),
+    // PERF-10: the retention sweep's predicate.
+    index("audit_event_created_idx").on(t.createdAt),
+    check(
+      "audit_event_scope_check",
+      sql`${t.businessId} is not null or ${t.orgId} is not null`,
+    ),
+  ],
+);
+
+type AuditActorType = "owner" | "admin" | "staff" | "system";
 
 /**
  * Feature flags (OPS-05) — rollout control, set by Zale IT in the admin

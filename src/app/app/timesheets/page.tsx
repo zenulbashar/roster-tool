@@ -13,6 +13,7 @@ import {
 import { entryDurationMs } from "@/lib/clock";
 import { breakMinutesSchema } from "@/lib/validation";
 import { logger } from "@/lib/logger";
+import { describeTimesheetEvent } from "@/lib/audit/describe";
 import {
   Avatar,
   Badge,
@@ -130,6 +131,20 @@ export default async function TimesheetsPage({
   const xeroConnection = await repo.getXeroConnection();
   const xeroActive =
     xeroConnection?.status === "active" && !xeroConnection.needsReconnect;
+
+  // Per-entry history (OPS-04): every owner/admin edit, approval, delete and
+  // restore of these entries from the audit trail, newest first.
+  const history = await repo.listAuditEventsForEntities(
+    "timesheet_entry",
+    entries.map((e) => e.id),
+  );
+  const historyByEntry = new Map<string, typeof history>();
+  for (const ev of history) {
+    if (!ev.entityId) continue;
+    const list = historyByEntry.get(ev.entityId) ?? [];
+    list.push(ev);
+    historyByEntry.set(ev.entityId, list);
+  }
 
   // Photo thumbnails, grouped by entry.
   const photos = await repo.listPhotosForEntries(entries.map((e) => e.id));
@@ -643,6 +658,46 @@ export default async function TimesheetsPage({
                             </button>
                           </form>
                         </div>
+
+                        {/* OPS-04: who changed this entry, from what, to what. */}
+                        <details className="mt-4">
+                          <summary className="cursor-pointer text-[12.5px] font-semibold text-[#6B7280]">
+                            History ({historyByEntry.get(e.id)?.length ?? 0})
+                          </summary>
+                          {(historyByEntry.get(e.id)?.length ?? 0) === 0 ? (
+                            <p className="mt-2 text-[12.5px] text-[#9CA3AF]">
+                              No changes recorded yet — edits, approvals,
+                              deletes and restores show here with who made them.
+                            </p>
+                          ) : (
+                            <ul className="mt-2 space-y-2 text-[12.5px]">
+                              {historyByEntry.get(e.id)!.map((ev) => {
+                                const d = describeTimesheetEvent(ev, tz);
+                                return (
+                                  <li
+                                    key={ev.id}
+                                    className="rounded-[8px] border border-[var(--color-border-subtle)] bg-white px-3 py-2"
+                                  >
+                                    <span className="font-semibold text-[#111827]">
+                                      {d.headline}
+                                    </span>
+                                    <span className="text-[#6B7280]">
+                                      {" "}
+                                      · {d.who} · {d.when}
+                                    </span>
+                                    {d.changes.length > 0 ? (
+                                      <ul className="mt-1 list-disc pl-5 text-[#374151]">
+                                        {d.changes.map((c) => (
+                                          <li key={c}>{c}</li>
+                                        ))}
+                                      </ul>
+                                    ) : null}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          )}
+                        </details>
                       </div>
                     </details>
                   </div>

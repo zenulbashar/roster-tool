@@ -372,6 +372,11 @@ export default async function SettingsPage({
             <p className="mt-3 text-[11.5px] text-[#9CA3AF]">
               Display only — contact support to change account details.
             </p>
+            <div className="mt-3 border-t border-[#F3F4F6] pt-3">
+              <ButtonLink href="/app/activity" variant="ghost">
+                See recent changes to your account
+              </ButtonLink>
+            </div>
           </SectionCard>
 
           {/* Clock-in ------------------------------------------------- */}

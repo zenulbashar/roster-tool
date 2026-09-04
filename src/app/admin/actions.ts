@@ -2,12 +2,9 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { db } from "@/lib/db";
-import { organisations } from "@/lib/db/schema";
 import { requireAdmin } from "@/lib/admin/context";
-import { createAdminRepo, getAdminDisplayName } from "@/lib/admin/repository";
+import { createAdminRepo } from "@/lib/admin/repository";
 import {
   resolveImpersonation,
   setImpersonationCookie,
@@ -79,46 +76,17 @@ export async function exitImpersonation(): Promise<void> {
 }
 
 /**
- * Best-effort audit of a write made while impersonating. Called by the
- * write-confirm guard just before it lets the intercepted form submit. Derives
- * everything from the impersonation cookie (never client input beyond the
- * action's own title/context text) and never redirects — a logging failure must
- * not block or divert the owner-app write it precedes.
+ * Set a client's vendor account-lifecycle label (active / trial / paused).
+ * Routed through the admin repo — the ONE cross-tenant data-access layer —
+ * and recorded as a write (SEC-02 item 4).
  */
-export async function logImpersonatedWrite(input: {
-  action: string;
-  detail?: string;
-}): Promise<void> {
-  // resolveImpersonation requires the grant to be bound to the CURRENT session's
-  // user, so only the impersonating admin can reach this. The text is
-  // client-supplied context only (the server-side audit decorator is the
-  // authoritative record) — bound its length so the log can't be stuffed.
-  const imp = await resolveImpersonation();
-  if (!imp) return;
-  const adminName = await getAdminDisplayName(imp.adminUserId);
-  await createAdminRepo().recordActivity({
-    adminUserId: imp.adminUserId,
-    adminName,
-    action: (input.action?.trim() || "Saved a change").slice(0, 200),
-    detail: input.detail?.trim().slice(0, 1000) || null,
-    isWrite: true,
-    orgId: imp.orgId,
-    businessId: imp.businessId,
-    venueName: imp.venueName,
-  });
-}
-
-/** Set a client's vendor account-lifecycle label (active / trial / paused). */
 export async function setPlanStatus(formData: FormData): Promise<void> {
   const admin = await requireAdmin();
   const orgId = orgIdSchema.parse(formData.get("orgId"));
   const status = z
     .enum(["active", "trial", "paused"])
     .parse(formData.get("status"));
-  await db
-    .update(organisations)
-    .set({ planStatus: status })
-    .where(eq(organisations.id, orgId));
+  await createAdminRepo().setPlanStatus(orgId, status);
   await createAdminRepo().recordActivity({
     adminUserId: admin.userId,
     adminName: admin.name,

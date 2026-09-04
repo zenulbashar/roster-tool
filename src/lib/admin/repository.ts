@@ -410,6 +410,17 @@ export function createAdminRepo() {
       return row?.n ?? 0;
     },
 
+    /**
+     * Set a client's vendor account-lifecycle label. The only write the
+     * console makes to a tenant-owned table, and it goes through here.
+     */
+    async setPlanStatus(orgId: string, status: PlanStatus): Promise<void> {
+      await db
+        .update(organisations)
+        .set({ planStatus: status })
+        .where(eq(organisations.id, orgId));
+    },
+
     /** Append one row to the audit log. Never throws on best-effort callers. */
     async recordActivity(input: RecordActivityInput): Promise<void> {
       await db.insert(adminActivities).values({

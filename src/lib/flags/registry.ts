@@ -42,15 +42,16 @@ export const FLAGS = {
     defaultEnabled: true,
   },
   /**
-   * Write the tenant-facing audit trail (`audit_event`) for every repository
-   * write (milestone 1.8). Registered ahead of its consumer so the rollout
-   * switch exists before the code does — the dark-launch pattern: trial it on
-   * one client, then everyone, then flip the default.
+   * Record the tenant-facing audit trail (`audit_event`) for every repository
+   * write made through an owner context (milestone 1.8). ON by default — the
+   * trail is additive and never changes behaviour — and this is its KILL
+   * SWITCH (everyone, or one client) should the extra insert per write ever
+   * need to be paused.
    */
   audit_events: {
     description:
-      "Record every tenant write in the audit trail (audit_event). Trial on one client first; the trail is additive and never changes behaviour.",
-    defaultEnabled: false,
+      "Record every owner/admin write in the tenant audit trail (audit_event). Off pauses recording; nothing else changes.",
+    defaultEnabled: true,
   },
 } as const satisfies Record<string, FlagDefinition>;
 

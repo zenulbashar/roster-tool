@@ -17,6 +17,13 @@ import {
 import { db as defaultDb, type Db } from "@/lib/db";
 import { carrySchedule } from "@/lib/assignment-schedule";
 import {
+  appendAuditEventRow,
+  listAuditEventRows,
+  listAuditEventRowsForEntities,
+  verifyAuditChain,
+} from "@/lib/audit/store";
+import type { NewAuditEvent } from "@/lib/audit/events";
+import {
   businesses,
   staffMembers,
   staffLocations,
@@ -1192,6 +1199,42 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             eq(rosterAssignments.status, "confirmed"),
           ),
         );
+    },
+
+    /* ----- Audit trail (OPS-04) ----- */
+
+    /**
+     * Append one event to THIS business's audit chain. Called by the audit
+     * decorator (`src/lib/audit/decorate.ts`) after every write it wraps —
+     * never by hand. The business scope is forced from the repo; `orgId` is
+     * carried for cross-reference only.
+     */
+    appendAuditEvent(input: NewAuditEvent & { orgId?: string | null }) {
+      return appendAuditEventRow(
+        database,
+        { businessId, orgId: input.orgId ?? null },
+        input,
+      );
+    },
+
+    /** Newest first. */
+    listAuditEvents(opts?: { limit?: number; offset?: number }) {
+      return listAuditEventRows(database, { businessId, orgId: null }, opts);
+    },
+
+    /** The history of specific records (e.g. the week's timesheet entries). */
+    listAuditEventsForEntities(entity: string, entityIds: string[]) {
+      return listAuditEventRowsForEntities(
+        database,
+        { businessId, orgId: null },
+        entity,
+        entityIds,
+      );
+    },
+
+    /** Recompute this business's hash chain and report the first break. */
+    getAuditChainStatus() {
+      return verifyAuditChain(database, { businessId, orgId: null });
     },
 
     /* ----- Business settings ----- */

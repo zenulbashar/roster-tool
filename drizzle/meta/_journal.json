@@ -295,6 +295,13 @@
       "when": 1788555297919,
       "tag": "0041_cross_location_cover",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1788556108244,
+      "tag": "0042_audit_events",
+      "breakpoints": true
     }
   ]
 }

@@ -225,10 +225,13 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
     form writes and gates them behind a "Save to live account" modal. Chrome forms
     (nav, sign-out, exit, location switcher, bell) live OUTSIDE `<main>`, so
     they're never intercepted — no per-form annotation needed; GET search/filter
-    forms pass through. **Known limit**: a few JS-driven server actions (e.g. the
-    drag-drop board) aren't gated by the modal, but the banner/frame + the logged
-    enter/exit session bracket every action. Every enter/exit/confirmed-write is
-    snapshotted into the append-only `admin_activity` log (writes flagged `is_write`).
+    forms pass through. **The modal is CONSENT UX ONLY (SEC-02/SEC-03)**: it
+    writes nothing and nothing it reports is trusted. Every impersonated write —
+    including the JS-driven actions (e.g. the drag-drop board) the modal never
+    sees — is recorded SERVER-SIDE by the audit decorator over the repository
+    (an `audit_event` with `impersonator_user_id`, mirrored into
+    `admin_activity` as an `is_write` row). Enter/exit are logged by their
+    actions; `setPlanStatus` goes through `createAdminRepo().setPlanStatus`.
   - **`organisation.plan_status`** (`active`/`trial`/`paused`) is a vendor
     account-lifecycle label the admin sets — **NOT billing/wage data**; billing
     stays out of scope (client detail states payments are handled outside Roster).
@@ -251,8 +254,41 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
   flags. Retire a flag once its consumer settles (flip the default, remove the
   reads, delete the key). Live flags: `owner_signups` (default on — the
   onboarding kill switch: off shows "sign-ups are paused", the action refuses;
-  existing owners unaffected) and `audit_events` (default off — registered
-  ahead of its milestone-1.8 consumer so the rollout switch exists first).
+  existing owners unaffected) and `audit_events` (default on — the kill switch
+  for the tenant audit trail below; off pauses recording, nothing else
+  changes).
+- **Tenant audit trail (OPS-04 / SEC-02 / SEC-03)**: every repository WRITE
+  made through an owner context — the owner's own edits, and a Zale IT admin's
+  edits while impersonating — becomes one append-only `audit_event` row,
+  **recorded by construction**: `ownerRepo()` / `ownerContext()` hand out the
+  tenant and org repos wrapped in `withAudit` (`src/lib/audit/decorate.ts`, a
+  Proxy over every non-read method per `src/lib/tenant/method-kinds.ts`, the
+  ONE read/write classification the isolation suite also uses). No per-action
+  annotation, and `tests/audit-flow.test.ts` calls every mutator on the repo
+  and fails if one produced no event. An event carries who (actor type / user
+  id / label; `impersonator_user_id` when an admin acts inside the tenant),
+  what (method, entity, sanitised args — secrets redacted by key AND position,
+  opaque strings masked, binary dropped), a BEFORE snapshot read through the
+  repo's own scoped getter for the records that matter (timesheet entries,
+  staff, settings, offers, leave, certs, items, pay rules — `METHOD_SNAPSHOTS`)
+  and the AFTER row, the request id, and the outcome (a thrown write is
+  recorded as `error` and re-thrown). Per-scope **hash chain**: `hash =
+sha256(prev_hash + canonical(row))`, appended under a per-business advisory
+  lock; `getAuditChainStatus()` recomputes it and names the first altered or
+  removed row (tamper-EVIDENT, not tamper-proof — `docs/operations.md`
+  restricts UPDATE/DELETE at the grant level). Recording is best-effort AFTER
+  the write commits (a failure is reported, never blocks the owner). An
+  impersonated write is ALSO mirrored server-side into `admin_activity`
+  (`is_write`), which supersedes the old client-reported entries — the
+  write-confirm modal is now consent UX only. Owner surfaces: a **History**
+  panel on every timesheet entry ("Edited the times · jane@… · 4 Sep, 2:10 pm
+  · Clock out: … → …", via the pure `describeTimesheetEvent`) and
+  `/app/activity` ("Recent changes", from Settings → Account, with the chain
+  verdict). Staff self-service writes (clock in/out, leave requests, offers,
+  stock checks) are attributed by their own rows and job writes are
+  idempotency cursors — neither goes through the decorator. Retained 7 years
+  (`RETENTION_DAYS.auditEvent`, a compliance floor — Fair Work time-and-wages
+  records). Kill switch: the `audit_events` flag.
 - **Shifts**: business defines reusable **shift templates** (label + start/end +
   weekday flags + an optional owner-chosen **colour** + a **staffing target**,
   `required_staff`, default 1 — hospitality shifts often need several people).
@@ -1104,6 +1140,16 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
   check silently never matches (it turned the Staff page's "already on your
   team" message into a crash). Never read `.code` off a caught query error
   directly.
+- **Owner-side writes are audited by construction (OPS-04).** Always reach
+  the tenant/org repo from an owner page or action through `ownerRepo()` /
+  `orgRepo()` / `ownerContext()` — never `createTenantRepo` directly — so the
+  write lands in the audit trail with the actor and request id. A new
+  mutating repo method needs no annotation; name it as a write (anything the
+  `READ_ONLY_METHOD` regex doesn't match) and add a `METHOD_SNAPSHOTS` entry
+  when a before/after matters. A new READ must match the regex or it will be
+  recorded as a write. Never pass a raw secret into a repo method under a key
+  the sanitiser doesn't recognise (`pin|hash|token|secret|password|…enc`) or
+  at a position `REDACTED_POSITIONS` doesn't cover.
 - **Every request carries a correlation id** (OPS-01): `src/proxy.ts` honours
   a well-formed upstream `x-request-id` or mints one, stamps it on the request
   headers and echoes it on the response; `getRequestId()` (React.cache) reads
@@ -1273,7 +1319,8 @@ staff↔location membership), `staff_loan` (M29 date-ranged lend), `user` (owner
   `leave_request`, `shift_offer`, `staff_certification`, `supplier`, `item`,
   `stock_check_entry`, `notification`, `staff_notification`, `form`, `form_field`,
   `google_drive_connection`, `staff_document`, `xero_connection`,
-  `xero_employee_map`, `xero_timesheet_push`, `xero_connect_invite`, `pay_rule`.
+  `xero_employee_map`, `xero_timesheet_push`, `xero_connect_invite`, `pay_rule`,
+  `audit_event` (OPS-04 — business- or org-scoped, append-only).
   Work-record domain tables are business-scoped; `staff_member` is org-scoped
   (reached per location via `staff_location`); `organisation`/`org_membership`/
   `staff_location` are org-scoped. Plus non-tenant infrastructure tables:
@@ -1322,6 +1369,20 @@ Notable columns / conventions:
   — one organisation's value, which wins over the global one. Read by
   `isFeatureEnabled` (keyed on the caller's own org id), written only behind
   `requireAdmin()` from `/admin/flags`. Non-tenant infra tables.
+- `audit_event` (OPS-04 / SEC-02) — the tenant audit trail, APPEND-ONLY.
+  `seq` (bigserial — the chain order), `business_id` (→ `business`, cascade;
+  null for an org-level write) + `org_id` (→ `organisation`, cascade; CHECK at
+  least one set), `actor_type` (`owner`/`admin`/`staff`/`system`),
+  `actor_user_id`, `actor_label` (snapshot), `impersonator_user_id` (an admin
+  acting inside the tenant), `request_id`, `action` (the repo method),
+  `entity` + `entity_id`, `args` / `before` / `after` (jsonb, sanitised),
+  `outcome` (`ok`/`error`) + `error`, `prev_hash` + `hash` (sha256 chain per
+  scope), `created_at`. Indexed on `(business_id, seq)`, `(business_id,
+entity, entity_id)`, `(org_id, seq)`, `created_at`. Written only by
+  `appendAuditEvent` (tenant/org repo, scope forced) via the audit decorator;
+  read by `listAuditEvents` / `listAuditEventsForEntities` /
+  `getAuditChainStatus`. Never UPDATEd/DELETEd by the app except the 7-year
+  retention policy.
 - `org_membership` (M29) — which owners can reach which org. `org_id` (cascade),
   `user_id` → `user` (cascade), `role` (`org_role`, v1 `owner` only), unique
   `(org_id, user_id)`. The source of "what can this signed-in owner reach",

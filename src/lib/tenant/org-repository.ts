@@ -12,6 +12,8 @@ import {
   rosterAssignments,
 } from "@/lib/db/schema";
 import { claimEligibility } from "@/lib/shift-offer";
+import { appendAuditEventRow, listAuditEventRows } from "@/lib/audit/store";
+import type { NewAuditEvent } from "@/lib/audit/events";
 
 /**
  * Organisation-scoped data access for the multi-location feature (M29). Mirrors
@@ -85,6 +87,18 @@ export function createOrgRepo(orgId: string, database: Db = defaultDb) {
         .from(businesses)
         .where(eq(businesses.orgId, orgId));
       return row?.count ?? 0;
+    },
+
+    /* ----- Audit trail (OPS-04): org-level writes ----- */
+
+    /** Append one event to THIS org's chain (business_id null). */
+    appendAuditEvent(input: NewAuditEvent) {
+      return appendAuditEventRow(database, { businessId: null, orgId }, input);
+    },
+
+    /** Newest first, org-level writes only (locations, people, loans). */
+    listAuditEvents(opts?: { limit?: number; offset?: number }) {
+      return listAuditEventRows(database, { businessId: null, orgId }, opts);
     },
 
     /* ----- People (the shared org-wide staff pool) ----- */

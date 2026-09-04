@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { logImpersonatedWrite } from "@/app/admin/actions";
 
 /**
  * The write-confirm interceptor (M37). While an admin is impersonating a tenant,
@@ -12,8 +11,13 @@ import { logImpersonatedWrite } from "@/app/admin/actions";
  * region. Chrome forms (nav, sign-out, the exit banner, location switcher,
  * notification bell) live OUTSIDE `<main>`, so they're never intercepted — no
  * per-form annotation needed. Only POST forms (Next server actions) are caught;
- * GET forms (search/filter) pass through. On confirm we best-effort log the
- * write to the admin audit trail, then re-submit the original form.
+ * GET forms (search/filter) pass through.
+ *
+ * This is CONSENT UX ONLY (SEC-02/SEC-03). It does not write the audit log:
+ * every impersonated write is recorded SERVER-SIDE by the audit decorator over
+ * the repository (`audit_event` + a mirrored `admin_activity` row), including
+ * the JS-driven actions this listener never sees. Nothing the client reports
+ * is trusted.
  */
 type Pending = {
   form: HTMLFormElement;
@@ -71,16 +75,11 @@ export function ImpersonationWriteGuard({ venueName }: { venueName: string }) {
     return () => main.removeEventListener("submit", onSubmit, true);
   }, [venueName]);
 
-  async function onConfirm() {
+  function onConfirm() {
     if (!pending) return;
-    const { form, submitter, title, context } = pending;
+    const { form, submitter } = pending;
     setPending(null);
     confirmed.current.add(form);
-    try {
-      await logImpersonatedWrite({ action: title, detail: context });
-    } catch {
-      // Best-effort audit — never block or divert the write.
-    }
     try {
       if (submitter && "requestSubmit" in form) {
         form.requestSubmit(submitter as HTMLButtonElement);
