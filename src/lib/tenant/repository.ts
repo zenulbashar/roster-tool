@@ -1083,6 +1083,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         certReminderLeadDays: number;
         staffShiftRemindersEnabled: boolean;
         formDigestEnabled: boolean;
+        payRuleThresholdBasis: "net" | "gross";
       }>,
     ) {
       const [row] = await database

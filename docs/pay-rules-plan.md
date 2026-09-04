@@ -160,3 +160,25 @@ numberOfUnits]` per line, so **changing a rule re-pushes via the existing
 - No award/penalty-rate vocabulary in the rules engine or its UI copy
   (forbidden-terms test over the new sources).
 - The Xero client's method set is byte-identical to M27's pinned guard test.
+
+## 8. Hour thresholds vs unpaid breaks (COR-08, audit milestone 0.12)
+
+The audit found that `daily_hours_beyond` / `weekly_hours_beyond` cumulated on
+the GROSS clock span while the emitted lines were netted of the unpaid break —
+so a 9 h shift with a 1 h break (8 paid hours) still crossed "beyond 8 in a
+day", routing ~0.89 paid hours onto the rule's pay item. Two defensible
+conventions existed and one had been chosen silently in code.
+
+- **Now owner-set and visible**: `business.pay_rule_threshold_basis` — `net`
+  (worked hours; the default for new businesses) or `gross` (clock hours). The
+  rules page carries the setting with a worked example; the pre-push preview
+  states the basis in force whenever an hours rule exists.
+- **No silent change for live tenants**: migration `0037` keeps `gross` for
+  every business that already had a rule, so an existing split is unchanged
+  until the owner switches.
+- **Evaluation**: `classifyEntries` REQUIRES `thresholdBasis`. Under `net`, paid
+  time is taken to accrue evenly across the shift (the break's position isn't
+  recorded — COR-09) and the crossing instant sits where the PAID hours reach
+  the threshold; without a break the two bases agree exactly (tested).
+- **Follow-up (COR-09, not built)**: record the break's position on
+  `timesheet_entry` so the split can be exact rather than proportional.

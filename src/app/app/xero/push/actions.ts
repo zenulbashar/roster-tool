@@ -43,6 +43,8 @@ export async function pushAllAction(): Promise<void> {
   const tz = business?.timezone ?? "Australia/Sydney";
   const maps = await repo.listXeroEmployeeMaps();
   const rules = toActivePayRules(await repo.listPayRules());
+  // COR-08: the owner's choice of what an hours threshold counts.
+  const thresholdBasis = business?.payRuleThresholdBasis ?? "net";
 
   const tally = { pushed: 0, failed: 0, skipped: 0, blocked: 0 };
   const calCache = new Map<string, XeroPayrollCalendar | null>();
@@ -117,6 +119,7 @@ export async function pushAllAction(): Promise<void> {
           payrollCalendarId: m.payrollCalendarId,
           periodStart: cal.periodStartDate,
           periodEnd: cal.periodEndDate,
+          thresholdBasis,
           entries,
           rules,
         });

@@ -4,7 +4,11 @@ import type { TenantRepo } from "@/lib/tenant/repository";
 import type { XeroClient } from "./client";
 import { XeroApiError, XeroTimesheetAlreadyActioned } from "./errors";
 import { attemptIdempotencyKey, baseIdempotencyKey } from "./idempotency";
-import { classifyEntries, type ActivePayRule } from "./pay-rules";
+import {
+  classifyEntries,
+  type ActivePayRule,
+  type PayRuleThresholdBasis,
+} from "./pay-rules";
 import type { PushEntry } from "./timesheet-lines";
 
 /**
@@ -72,6 +76,8 @@ export async function pushEmployeeTimesheet(opts: {
   periodEnd: string;
   entries: PushEntry[];
   rules?: ActivePayRule[];
+  /** COR-08: the business's hour-threshold basis; `net` when not given. */
+  thresholdBasis?: PayRuleThresholdBasis;
   now?: Date;
 }): Promise<PushOutcome> {
   const {
@@ -89,6 +95,7 @@ export async function pushEmployeeTimesheet(opts: {
     periodEnd,
     entries,
     rules = [],
+    thresholdBasis = "net",
     now = new Date(),
   } = opts;
 
@@ -102,6 +109,7 @@ export async function pushEmployeeTimesheet(opts: {
     timezone,
     periodStart,
     periodEnd,
+    thresholdBasis,
   });
   const { totalHours } = classified;
   const lines = classified.lines.map((l) => ({

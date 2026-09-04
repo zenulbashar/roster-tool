@@ -37,6 +37,13 @@ import type { PushEntry } from "./timesheet-lines";
  *   `weekly_hours_beyond` over the business-local Monday-start week. Entries
  *   BEFORE the pay period may be supplied as context: they advance the
  *   cumulative counters but never produce lines.
+ * - What those counters COUNT is the owner's `thresholdBasis` (COR-08):
+ *   `net` = worked hours (an unpaid break is left out, so a 9 h shift with a
+ *   1 h break never passes "beyond 8 in a day"); `gross` = clock hours (the
+ *   break counts, so the same shift's last hour lands on the rule's pay
+ *   item). The break's position isn't recorded, so under `net` paid time is
+ *   taken to accrue evenly across the shift and the crossing instant sits
+ *   where the PAID hours reach the threshold.
  * - Per bucket date, the canonical day total is computed exactly as the shipped
  *   push does (2dp per entry, summed). Split lines are rounded to 2dp and any
  *   ±0.01-scale remainder is absorbed into the largest line, so the split
@@ -53,6 +60,17 @@ export const PAY_RULE_CONDITION_TYPES = [
 ] as const;
 
 export type PayRuleConditionType = (typeof PAY_RULE_CONDITION_TYPES)[number];
+
+/** COR-08: what an hours threshold counts — worked hours or clock hours. */
+export const PAY_RULE_THRESHOLD_BASES = ["net", "gross"] as const;
+export type PayRuleThresholdBasis = (typeof PAY_RULE_THRESHOLD_BASES)[number];
+
+/** Owner-facing one-liner for the chosen basis (rules page + pre-push preview). */
+export function describeThresholdBasis(basis: PayRuleThresholdBasis): string {
+  return basis === "gross"
+    ? "Hour thresholds count clock hours — unpaid breaks are included."
+    : "Hour thresholds count worked hours — unpaid breaks are left out.";
+}
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -247,6 +265,8 @@ export function classifyEntries(input: {
   /** Inclusive Xero pay-period bounds (YYYY-MM-DD), FROM the Xero calendar. */
   periodStart: string;
   periodEnd: string;
+  /** The owner's setting (`business.pay_rule_threshold_basis`) — see above. */
+  thresholdBasis: PayRuleThresholdBasis;
 }): {
   lines: ClassifiedLine[];
   totalHours: number;
@@ -258,6 +278,7 @@ export function classifyEntries(input: {
     periodStart,
     periodEnd,
     ordinaryEarningsRateId,
+    thresholdBasis,
   } = input;
   const rules = [...input.rules].sort(
     (a, b) => a.priority - b.priority || a.id.localeCompare(b.id),
@@ -298,13 +319,17 @@ export function classifyEntries(input: {
     const exactHours = (outMs - inMs) / HOUR_MS;
     // An unpaid break shrinks every worked sub-block proportionally, so the
     // per-day lines (and the preview breakdown) net the break out while the
-    // split proportions between pay items are preserved. Threshold breakpoints
-    // and daily/weekly cumulation below stay on GROSS worked time (the clock
-    // span) — the break is unpaid time, not a change to when a shift crosses a
-    // daily/weekly hours threshold.
+    // split proportions between pay items are preserved.
     const breakHours = Math.max(0, entry.breakMinutes ?? 0) / 60;
     const paidFactor =
       exactHours > 0 ? Math.max(0, exactHours - breakHours) / exactHours : 0;
+    // What the daily/weekly THRESHOLD counters count for this entry (COR-08):
+    // `gross` — every clock hour; `net` — paid hours only, accruing evenly at
+    // `paidFactor` per clock hour (the break's position isn't recorded), so a
+    // threshold is crossed where the PAID hours reach it, and a shift whose
+    // paid hours never reach it is never split.
+    const countRate = thresholdBasis === "gross" ? 1 : paidFactor;
+    const countHours = exactHours * countRate;
     const weekKey = mondayOfWeek(bucketDate);
     const dayStart = dayCum.get(bucketDate) ?? 0;
     const weekStart = weekCum.get(weekKey) ?? 0;
@@ -327,15 +352,20 @@ export function classifyEntries(input: {
           if (t > inMs && t < outMs) points.add(t);
         }
       } else if (c.type === "daily_hours_beyond") {
-        if (dayStart < c.hours - EPS && dayStart + exactHours > c.hours + EPS) {
-          points.add(inMs + (c.hours - dayStart) * HOUR_MS);
+        if (
+          countRate > 0 &&
+          dayStart < c.hours - EPS &&
+          dayStart + countHours > c.hours + EPS
+        ) {
+          points.add(inMs + ((c.hours - dayStart) / countRate) * HOUR_MS);
         }
       } else if (c.type === "weekly_hours_beyond") {
         if (
+          countRate > 0 &&
           weekStart < c.hours - EPS &&
-          weekStart + exactHours > c.hours + EPS
+          weekStart + countHours > c.hours + EPS
         ) {
-          points.add(inMs + (c.hours - weekStart) * HOUR_MS);
+          points.add(inMs + ((c.hours - weekStart) / countRate) * HOUR_MS);
         }
       }
     }
@@ -351,8 +381,8 @@ export function classifyEntries(input: {
       const mid = new Date(s + (e - s) / 2);
       const weekday = isoWeekday(businessDateOf(mid, tz));
       const minuteOfDay = localMinuteOfDay(mid, tz);
-      const dayBefore = dayStart + (s - inMs) / HOUR_MS;
-      const weekBefore = weekStart + (s - inMs) / HOUR_MS;
+      const dayBefore = dayStart + ((s - inMs) / HOUR_MS) * countRate;
+      const weekBefore = weekStart + ((s - inMs) / HOUR_MS) * countRate;
       const winner =
         rules.find((r) => {
           const c = r.condition;
@@ -377,8 +407,8 @@ export function classifyEntries(input: {
       }
     }
 
-    dayCum.set(bucketDate, dayStart + exactHours);
-    weekCum.set(weekKey, weekStart + exactHours);
+    dayCum.set(bucketDate, dayStart + countHours);
+    weekCum.set(weekKey, weekStart + countHours);
     if (!inPeriod) continue; // context entry: cumulation only, no output
 
     dayCanonical.set(

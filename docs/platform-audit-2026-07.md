@@ -1163,6 +1163,17 @@ live, then prompt them once — never silently change how someone's pay is class
 **Priority:** P1 — it is small, it changes money, and it is currently invisible.
 **Customer impact:** penalty allocation matches what owners expect. **Operational impact:** removes a
 class of "why is my Xero draft different from my spreadsheet" support case.
+**Resolution (milestone 0.12, this branch):** built as a per-business setting,
+`business.pay_rule_threshold_basis` (`net` = worked hours, the default for new businesses; `gross` =
+clock hours, the prior behaviour). `classifyEntries` now REQUIRES the basis: under `net`, paid time is
+taken to accrue evenly across the shift (the break position isn't recorded — COR-09) and the
+daily/weekly crossing instant sits where the PAID hours reach the threshold, so the 9 h/1 h-break
+shift above never crosses "beyond 8" and a 10 h/1 h-break shift routes exactly 1.00 h. Migration
+`0037` keeps `gross` for every business that already had a rule, so no live tenant's split changed
+silently; the rules page carries the setting with a worked example, and the pre-push preview states
+the basis in force whenever an hours rule exists. Boundary tests at the daily and weekly threshold
+under both bases, plus the "no break ⇒ bases agree" identity (`tests/xero-pay-rules.test.ts`);
+setting default/round-trip flow-tested. COR-09 (break position) remains open.
 
 **COR-09 · `timesheet_entry` records break length but not break position, so time-of-day rules can only approximate · Low-Medium (NEW, rev 2)**
 `roster_assignment` carries both `break_minutes` **and** `break_start` (`schema.ts:786-789`), but

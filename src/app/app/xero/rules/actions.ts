@@ -8,6 +8,7 @@ import { xeroClient } from "@/lib/xero/client";
 import { ensureFreshXeroAccessToken } from "@/lib/xero/service";
 import {
   PAY_RULE_CONDITION_TYPES,
+  PAY_RULE_THRESHOLD_BASES,
   payRuleConditionConfigSchemas,
   type PayRuleConditionType,
 } from "@/lib/xero/pay-rules";
@@ -147,6 +148,24 @@ export async function movePayRuleAction(formData: FormData): Promise<void> {
   }
   revalidatePath(PATH);
   redirect(PATH);
+}
+
+const thresholdBasisSchema = z.enum(PAY_RULE_THRESHOLD_BASES);
+
+/**
+ * COR-08: the owner picks what an hours threshold counts — worked hours (unpaid
+ * breaks left out) or clock hours (breaks included). Business-wide; the
+ * classifier reads it on every push and the preview states it.
+ */
+export async function setThresholdBasisAction(
+  formData: FormData,
+): Promise<void> {
+  const repo = await ownerRepo();
+  const parsed = thresholdBasisSchema.safeParse(formData.get("basis"));
+  if (!parsed.success) fail("Pick how hour thresholds should treat breaks.");
+  await repo.updateBusinessSettings({ payRuleThresholdBasis: parsed.data });
+  revalidatePath(PATH);
+  redirect(`${PATH}?basisSaved=1`);
 }
 
 export async function deletePayRuleAction(formData: FormData): Promise<void> {

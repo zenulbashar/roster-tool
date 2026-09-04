@@ -833,7 +833,7 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
     line-for-line. An entry's **unpaid `break_minutes` is netted out** here too
     (same `hoursWorked`): the classifier shrinks every worked sub-block
     proportionally by the paid factor, so each day's split lines still reconcile
-    to the netted day total (thresholds/cumulation stay on gross clock time). Re-push on 2.0 = **delete-then-
+    to the netted day total (thresholds/cumulation count worked OR clock hours per the owner's `pay_rule_threshold_basis` — COR-08). Re-push on 2.0 = **delete-then-
     create** (no update verb), holding one INVARIANT: **`xero_timesheet_id` is
     non-null ⟺ a live Draft exists** — the id is set to NULL the instant a delete
     succeeds (before the recreate), so a failed/crashed recreate leaves a DISTINCT
@@ -871,6 +871,17 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
     hours). The jsonb `condition_config` is zod-validated per type
     (`payRuleConditionConfigSchemas`); the type lives in the enum column, not
     the json.
+  - **Hour thresholds vs unpaid breaks (COR-08)**: what
+    `daily_hours_beyond`/`weekly_hours_beyond` COUNT is the owner's
+    `business.pay_rule_threshold_basis` — `net` (worked hours, breaks left
+    out; the default for new businesses) or `gross` (clock hours, breaks
+    included; migration `0037` kept it for businesses that already had rules
+    so no split changed silently). Set on `/app/xero/rules` (with a worked
+    example), stated in the pre-push preview, read by the push and the
+    preview, and REQUIRED by `classifyEntries`. Under `net` the break's
+    position isn't known, so paid time accrues evenly and the crossing sits
+    where PAID hours reach the threshold; without a break the bases agree.
+    (Recording the break position on the entry — COR-09 — is a follow-up.)
   - **Evaluation is pure + deterministic, server-side over stored clock data**
     (`classifyEntries` in `src/lib/xero/pay-rules.ts`; never client input):
     each entry splits into atomic sub-blocks at local midnights, time-of-day

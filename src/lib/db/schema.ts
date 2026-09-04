@@ -51,6 +51,17 @@ const bytea = customType<{ data: Buffer; default: false }>({
  */
 export const planStatus = pgEnum("plan_status", ["active", "trial", "paused"]);
 
+/**
+ * COR-08 — what a pay rule's daily/weekly HOURS THRESHOLD counts: `net`
+ * (worked hours, unpaid breaks left out — the conventional reading) or `gross`
+ * (clock hours, breaks included — the behaviour before this setting existed).
+ * Owner-set per business; the classifier reads it; the preview states it.
+ */
+export const payRuleThresholdBasis = pgEnum("pay_rule_threshold_basis", [
+  "net",
+  "gross",
+]);
+
 export const organisations = pgTable("organisation", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
@@ -138,6 +149,14 @@ export const businesses = pgTable("business", {
   // advances it only after a successful send (null = never sent → the first
   // digest covers the last 24 h, not all history).
   formDigestLastAt: timestamp("form_digest_last_at", { withTimezone: true }),
+  // COR-08 — whether a pay rule's "hours beyond N in a day/week" threshold
+  // counts worked hours (`net`, unpaid breaks left out) or clock hours
+  // (`gross`). New businesses default to `net`; the migration kept `gross`
+  // for any business that already had rules so nobody's split changed
+  // silently. Set on /app/xero/rules; stated in the pre-push preview.
+  payRuleThresholdBasis: payRuleThresholdBasis("pay_rule_threshold_basis")
+    .notNull()
+    .default("net"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
