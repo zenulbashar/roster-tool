@@ -33,13 +33,16 @@ export default async function PeoplePage({
   searchParams: Promise<{ loaned?: string; loanError?: string }>;
 }) {
   const { repo, org } = await ownerContext();
-  const [people, locations, loans, loanMarkers, business] = await Promise.all([
-    org.listPeople(),
-    org.listLocations(),
-    org.listLoans(),
-    org.loansForMarkers(),
-    repo.getBusiness(),
-  ]);
+  const [people, locations, loans, loanMarkers, business, duplicates] =
+    await Promise.all([
+      org.listPeople(),
+      org.listLocations(),
+      org.listLoans(),
+      org.loansForMarkers(),
+      repo.getBusiness(),
+      org.listDuplicatePeople(),
+    ]);
+  const locationName = new Map(locations.map((l) => [l.id, l.name]));
   const multiLocation = locations.length > 1;
   const today = businessDateOf(new Date(), business?.timezone);
   const { loaned, loanError } = await searchParams;
@@ -66,12 +69,46 @@ export default async function PeoplePage({
       ) : null}
       {loanError ? (
         <div className="mb-4">
-          <Banner tone="warn">
+          <Banner tone="error">
             {loanError === "home"
               ? "That person already works at that location."
               : loanError === "dates"
                 ? "Check the dates — the end date must be on or after the start."
                 : "Couldn't create that loan. Check the details and try again."}
+          </Banner>
+        </div>
+      ) : null}
+
+      {duplicates.length > 0 ? (
+        <div className="mb-4">
+          <Banner tone="warn">
+            <p className="font-semibold">
+              {duplicates.length === 1
+                ? "One person appears twice in your team."
+                : `${duplicates.length} people appear twice in your team.`}
+            </p>
+            <p className="mt-1">
+              Each row has its own PIN, pay rate and hours, so their records
+              won&rsquo;t add up. Keep one record and{" "}
+              <strong>deactivate</strong> the other from its Staff page —
+              nothing is merged automatically, and hours already recorded stay
+              on the record they were clocked against.
+            </p>
+            <ul className="mt-2 list-disc pl-5">
+              {duplicates.map((d) => (
+                <li key={d.email}>
+                  <span className="font-medium">{d.email}</span>:{" "}
+                  {d.people
+                    .map(
+                      (p) =>
+                        `${p.name} (${locationName.get(p.homeBusinessId) ?? "unknown location"}${
+                          p.active ? "" : ", inactive"
+                        })`,
+                    )
+                    .join(" · ")}
+                </li>
+              ))}
+            </ul>
           </Banner>
         </div>
       ) : null}

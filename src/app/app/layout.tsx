@@ -7,6 +7,7 @@ import { NotificationBell } from "@/components/NotificationBell";
 import { ImpersonationBanner } from "@/components/ImpersonationBanner";
 import { ImpersonationWriteGuard } from "@/components/ImpersonationWriteGuard";
 import { relativeTime } from "@/lib/notifications";
+import { clearImpersonationCookie } from "@/lib/admin/impersonation-session";
 
 export default async function OwnerLayout({
   children,
@@ -35,6 +36,9 @@ export default async function OwnerLayout({
 
   async function doSignOut() {
     "use server";
+    // An impersonation grant must never outlive the session it is bound to on
+    // this browser (M37). Clear it BEFORE signOut, which redirects.
+    await clearImpersonationCookie();
     await signOut({ redirectTo: "/" });
   }
 

@@ -9,6 +9,7 @@ import {
 } from "@/lib/xero/errors";
 import {
   describePayRuleCondition,
+  describeThresholdBasis,
   parsePayRuleCondition,
   type PayRuleConditionType,
 } from "@/lib/xero/pay-rules";
@@ -16,6 +17,7 @@ import { logger } from "@/lib/logger";
 import {
   Badge,
   Banner,
+  Button,
   ButtonLink,
   Card,
   PageHeader,
@@ -24,8 +26,10 @@ import {
 import {
   deletePayRuleAction,
   movePayRuleAction,
+  setThresholdBasisAction,
   togglePayRuleAction,
 } from "./actions";
+import { ConfirmDeleteCard } from "@/components/ConfirmDeleteCard";
 import { PayRuleForm, type RuleFormInitial } from "./rule-form";
 
 export const dynamic = "force-dynamic";
@@ -44,6 +48,8 @@ export default async function XeroRulesPage({
     error?: string;
     edit?: string;
     new?: string;
+    confirmDelete?: string;
+    basisSaved?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -111,6 +117,8 @@ export default async function XeroRulesPage({
     rates.find((r) => r.earningsRateId === id)?.name ?? null;
 
   const rules = await repo.listPayRules();
+  // A delete awaiting confirmation (UX-04).
+  const pendingDelete = rules.find((r) => r.id === sp.confirmDelete) ?? null;
   const editing = sp.edit ? rules.find((r) => r.id === sp.edit) : undefined;
   const showForm = Boolean(sp.new) || Boolean(editing);
   const initial: RuleFormInitial | null = editing ? toInitial(editing) : null;
@@ -134,8 +142,29 @@ export default async function XeroRulesPage({
 
       {sp.saved ? <Banner tone="success">Rule saved.</Banner> : null}
       {sp.deleted ? <Banner tone="success">Rule deleted.</Banner> : null}
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
-      {loadError ? <Banner tone="warn">{loadError}</Banner> : null}
+      {sp.basisSaved ? (
+        <Banner tone="success">
+          Saved. The next push uses this — an already-pushed draft is replaced
+          when you push again.
+        </Banner>
+      ) : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
+      {loadError ? <Banner tone="error">{loadError}</Banner> : null}
+      {pendingDelete ? (
+        <ConfirmDeleteCard
+          title={`Delete the rule “${pendingDelete.name}”?`}
+          action={deletePayRuleAction}
+          fields={{ ruleId: pendingDelete.id }}
+          confirmLabel="Delete rule"
+          cancelHref="/app/xero/rules"
+        >
+          <p>
+            Hours it matched go back to each person’s ordinary pay item (or the
+            next rule down) on the next push — an already-pushed draft is
+            replaced when you push again. This can’t be undone.
+          </p>
+        </ConfirmDeleteCard>
+      ) : null}
 
       <Banner tone="info">
         Rules are yours: each one moves matching hours onto a{" "}
@@ -145,6 +174,55 @@ export default async function XeroRulesPage({
         <strong>the one higher in this list applies</strong> — use the arrows to
         reorder. Every push still lands in Xero as a draft for you to check.
       </Banner>
+
+      {/* COR-08: the one setting that changes what an hours threshold counts. */}
+      <SectionCard title="Hour thresholds and unpaid breaks">
+        <p className="text-[13px] text-[var(--color-text-secondary)]">
+          Rules like “Hours beyond 8 in a day” need to know whether a shift’s
+          unpaid break counts toward the 8. Currently:{" "}
+          <strong className="text-[var(--color-ink)]">
+            {describeThresholdBasis(business.payRuleThresholdBasis)}
+          </strong>
+        </p>
+        <form
+          action={setThresholdBasisAction}
+          className="mt-3 flex flex-col gap-2.5"
+        >
+          <label className="flex items-start gap-2.5 text-[13px] text-[var(--color-ink)]">
+            <input
+              type="radio"
+              name="basis"
+              value="net"
+              defaultChecked={business.payRuleThresholdBasis === "net"}
+              className="mt-0.5"
+            />
+            <span>
+              <strong>Worked hours</strong> — unpaid breaks are left out. A
+              9-hour shift with a 1-hour break counts as 8 hours, so it never
+              passes an 8-hour threshold. This is how hours are usually counted.
+            </span>
+          </label>
+          <label className="flex items-start gap-2.5 text-[13px] text-[var(--color-ink)]">
+            <input
+              type="radio"
+              name="basis"
+              value="gross"
+              defaultChecked={business.payRuleThresholdBasis === "gross"}
+              className="mt-0.5"
+            />
+            <span>
+              <strong>Clock hours</strong> — unpaid breaks are included. The
+              same shift counts as 9 hours, so its last hour lands on the rule’s
+              pay item.
+            </span>
+          </label>
+          <div>
+            <Button type="submit" variant="secondary">
+              Save
+            </Button>
+          </div>
+        </form>
+      </SectionCard>
 
       {showForm ? (
         <SectionCard title={editing ? "Edit rule" : "Add a rule"}>

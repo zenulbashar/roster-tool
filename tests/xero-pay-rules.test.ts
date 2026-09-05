@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   classifyEntries,
   describePayRuleCondition,
+  describeThresholdBasis,
   mondayOfWeek,
   parsePayRuleCondition,
   toActivePayRules,
   type ActivePayRule,
   type PayRuleCondition,
+  type PayRuleThresholdBasis,
 } from "@/lib/xero/pay-rules";
 import { buildTimesheetLines } from "@/lib/xero/timesheet-lines";
 
@@ -57,6 +59,7 @@ function classify(
     start: "2026-07-06",
     end: "2026-07-12",
   },
+  thresholdBasis: PayRuleThresholdBasis = "net",
 ) {
   return classifyEntries({
     entries,
@@ -65,7 +68,148 @@ function classify(
     timezone: TZ,
     periodStart: period.start,
     periodEnd: period.end,
+    thresholdBasis,
   });
+}
+
+const WEEK = { start: "2026-07-06", end: "2026-07-12" };
+
+describe("classifyEntries — hour thresholds vs unpaid breaks (COR-08)", () => {
+  // Mon 6 Jul 09:00–18:00 Sydney = 9 h on the clock, 1 h unpaid break = 8 h paid.
+  const nineWithBreak = {
+    clockInAt: at("2026-07-05T23:00:00Z"),
+    clockOutAt: at("2026-07-06T08:00:00Z"),
+    breakMinutes: 60,
+  };
+  const beyond8 = () =>
+    rule(
+      1,
+      { type: "daily_hours_beyond", hours: 8 },
+      { id: "d8", name: "Beyond 8 a day", earningsRateId: "rate-d8" },
+    );
+  const sum = (lines: { numberOfUnits: number }[]) =>
+    Math.round(lines.reduce((s, l) => s + l.numberOfUnits, 0) * 100) / 100;
+
+  it("net (worked hours): a 9 h shift with a 1 h break never passes 'beyond 8' — all 8 paid hours stay ordinary", () => {
+    const out = classify([nineWithBreak], [beyond8()], WEEK, "net");
+    expect(out.lines).toEqual([
+      expect.objectContaining({ earningsRateId: ORD, numberOfUnits: 8 }),
+    ]);
+    expect(out.breakdown[0]!.segments).toHaveLength(1);
+    expect(out.breakdown[0]!.segments[0]!.ruleId).toBeNull();
+    expect(out.totalHours).toBe(8);
+  });
+
+  it("gross (clock hours): the same shift crosses 8 on the clock, so its last clock hour lands on the rule's item (pro-rata)", () => {
+    const out = classify([nineWithBreak], [beyond8()], WEEK, "gross");
+    // Crossing at clock hour 8: 8 h × 8/9 = 7.11 ordinary, 1 h × 8/9 = 0.89.
+    expect(out.lines).toEqual([
+      expect.objectContaining({ earningsRateId: ORD, numberOfUnits: 7.11 }),
+      expect.objectContaining({
+        earningsRateId: "rate-d8",
+        numberOfUnits: 0.89,
+      }),
+    ]);
+    expect(sum(out.lines)).toBe(8);
+    expect(out.totalHours).toBe(8);
+  });
+
+  it("net: the crossing sits where the PAID hours reach the threshold", () => {
+    // 10 h on the clock, 1 h break = 9 paid. Paid hours reach 8 at clock
+    // hour 8.89 (8 ÷ 0.9) → 8.00 ordinary, 1.00 on the rule — exactly the
+    // hour worked beyond 8.
+    const out = classify(
+      [
+        {
+          clockInAt: at("2026-07-05T23:00:00Z"),
+          clockOutAt: at("2026-07-06T09:00:00Z"),
+          breakMinutes: 60,
+        },
+      ],
+      [beyond8()],
+      WEEK,
+      "net",
+    );
+    expect(out.lines).toEqual([
+      expect.objectContaining({ earningsRateId: ORD, numberOfUnits: 8 }),
+      expect.objectContaining({ earningsRateId: "rate-d8", numberOfUnits: 1 }),
+    ]);
+    expect(out.totalHours).toBe(9);
+  });
+
+  it("weekly thresholds cumulate on the same basis, context entries included", () => {
+    // Mon–Thu: four 9 h clock days with a 1 h break each (32 paid / 36 clock),
+    // then Friday the same. Rule: beyond 38 in a week.
+    const day = (d: string) => ({
+      clockInAt: at(`${d}T23:00:00Z`), // 09:00 Sydney next calendar day
+      clockOutAt: at(`${nextIso(d)}T08:00:00Z`),
+      breakMinutes: 60,
+    });
+    const entries = [
+      day("2026-07-05"),
+      day("2026-07-06"),
+      day("2026-07-07"),
+      day("2026-07-08"),
+      day("2026-07-09"), // Friday 10 Jul
+    ];
+    const w38 = rule(
+      1,
+      { type: "weekly_hours_beyond", hours: 38 },
+      { id: "w38", name: "Beyond 38 a week", earningsRateId: "rate-w38" },
+    );
+    const period = { start: "2026-07-10", end: "2026-07-10" };
+
+    // Net: 32 paid before Friday; paid hours reach 38 six paid hours in →
+    // 6.00 ordinary, 2.00 on the rule.
+    const net = classify(entries, [w38], period, "net");
+    expect(net.lines).toEqual([
+      expect.objectContaining({ earningsRateId: ORD, numberOfUnits: 6 }),
+      expect.objectContaining({ earningsRateId: "rate-w38", numberOfUnits: 2 }),
+    ]);
+    expect(net.breakdown).toHaveLength(1); // context days emit no lines
+
+    // Gross: 36 clock hours before Friday; crosses 38 two clock hours in →
+    // 2 h × 8/9 = 1.78 ordinary, 7 h × 8/9 = 6.22 on the rule.
+    const gross = classify(entries, [w38], period, "gross");
+    expect(gross.lines).toEqual([
+      expect.objectContaining({ earningsRateId: ORD, numberOfUnits: 1.78 }),
+      expect.objectContaining({
+        earningsRateId: "rate-w38",
+        numberOfUnits: 6.22,
+      }),
+    ]);
+    expect(sum(gross.lines)).toBe(8);
+  });
+
+  it("without a break the two bases agree exactly", () => {
+    const noBreak = {
+      clockInAt: at("2026-07-05T23:00:00Z"),
+      clockOutAt: at("2026-07-06T08:00:00Z"),
+    };
+    const r = beyond8();
+    const net = classify([noBreak], [r], WEEK, "net");
+    const gross = classify([noBreak], [r], WEEK, "gross");
+    expect(net.lines).toEqual(gross.lines);
+    expect(net.breakdown).toEqual(gross.breakdown);
+    expect(net.lines).toEqual([
+      expect.objectContaining({ earningsRateId: ORD, numberOfUnits: 8 }),
+      expect.objectContaining({ earningsRateId: "rate-d8", numberOfUnits: 1 }),
+    ]);
+  });
+
+  it("describes each basis in the owner's words", () => {
+    expect(describeThresholdBasis("net")).toBe(
+      "Hour thresholds count worked hours — unpaid breaks are left out.",
+    );
+    expect(describeThresholdBasis("gross")).toBe(
+      "Hour thresholds count clock hours — unpaid breaks are included.",
+    );
+  });
+});
+
+function nextIso(d: string): string {
+  const [y, m, dd] = d.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1, dd! + 1)).toISOString().slice(0, 10);
 }
 
 describe("parsePayRuleCondition / toActivePayRules", () => {

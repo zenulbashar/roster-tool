@@ -124,7 +124,7 @@ export default async function StockPage({
         }
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.saved ? <Banner tone="success">Stock status updated.</Banner> : null}
 
       {rows.length === 0 ? (

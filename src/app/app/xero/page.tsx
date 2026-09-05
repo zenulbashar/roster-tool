@@ -118,8 +118,8 @@ export default async function XeroMappingPage({
       />
 
       {sp.saved ? <Banner tone="success">Mapping saved.</Banner> : null}
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
-      {loadError ? <Banner tone="warn">{loadError}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
+      {loadError ? <Banner tone="error">{loadError}</Banner> : null}
 
       <Banner tone="info">
         Every mapped person’s hours push under their{" "}

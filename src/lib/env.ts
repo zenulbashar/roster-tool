@@ -12,6 +12,11 @@ const baseEnvSchema = z.object({
 
   DATABASE_URL: z.string().url(),
 
+  // Which process this is: sizes the connection pool and its statement
+  // timeout (src/lib/db/index.ts). `npm run worker` and the worker Dockerfile
+  // set `worker`; everything else is the web app.
+  ROSTER_ROLE: z.enum(["web", "worker"]).default("web"),
+
   // Auth.js
   AUTH_SECRET: z.string().min(1),
   AUTH_URL: z.string().url().optional(),
@@ -91,6 +96,39 @@ const baseEnvSchema = z.object({
   // `platform_admin` rows still work). Admins are Zale IT staff, unrelated to
   // tenant ownership; they reach live tenants only through impersonation.
   ADMIN_ALLOWLIST: z.string().optional(),
+
+  // Error tracking (OPS-01). A Sentry-compatible DSN
+  // (https://<key>@<host>/<project>) that unhandled errors from the web app
+  // (via src/instrumentation.ts) and the worker are forwarded to, with a
+  // scrubbed message/stack, the request id and Next's error digest. OPTIONAL
+  // and FAIL CLOSED: unset means errors are logged (pino) but forwarded
+  // nowhere — the app never needs the vendor to boot. SENTRY_ENVIRONMENT
+  // labels the events (defaults to VERCEL_ENV / RAILWAY_ENVIRONMENT_NAME /
+  // NODE_ENV). No SDK is bundled: src/lib/error-reporting.ts speaks the
+  // envelope protocol over fetch.
+  SENTRY_DSN: z.string().optional(),
+  SENTRY_ENVIRONMENT: z.string().optional(),
+
+  // Operations alerting (OPS-02). Where the worker emails when a background
+  // job has exhausted its retries and landed in the dead-letter queue (a
+  // roster publish email that will never go out, a digest that keeps
+  // failing). OPTIONAL and FAIL CLOSED: unset means the dead-letter handler
+  // logs + reports to the error tracker only. Comma-separated addresses.
+  OPS_ALERT_EMAIL: z.string().optional(),
+
+  // Object storage for clock-in photos (PERF-06): any S3-compatible bucket
+  // (AWS S3, Cloudflare R2, MinIO, Zale Storage). All five must be set for
+  // the store to exist — OPTIONAL and FAIL CLOSED: with any missing, photos
+  // keep being stored as bytes in Postgres exactly as before. Both the web
+  // app (writes + serves) and the worker (retention deletes) need them.
+  // BLOB_S3_REGION is `ap-southeast-2` for AWS, `auto` for R2.
+  // BLOB_S3_FORCE_PATH_STYLE (default true) = https://endpoint/bucket/key.
+  BLOB_S3_ENDPOINT: z.string().url().optional(),
+  BLOB_S3_REGION: z.string().optional(),
+  BLOB_S3_BUCKET: z.string().optional(),
+  BLOB_S3_ACCESS_KEY_ID: z.string().optional(),
+  BLOB_S3_SECRET_ACCESS_KEY: z.string().optional(),
+  BLOB_S3_FORCE_PATH_STYLE: z.string().optional(),
 });
 
 const envSchema = baseEnvSchema.superRefine((val, ctx) => {

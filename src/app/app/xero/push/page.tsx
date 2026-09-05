@@ -7,8 +7,10 @@ import {
   XeroPayrollAdminRequired,
   XeroReconnectRequired,
 } from "@/lib/xero/errors";
+import Link from "next/link";
 import {
   classifyEntries,
+  describeThresholdBasis,
   mondayOfWeek,
   toActivePayRules,
   type ClassifiedLine,
@@ -106,6 +108,14 @@ export default async function XeroPushPage({
   const nameOf = (id: string) =>
     staff.find((s) => s.id === id)?.name ?? "Former staff";
   const rules = toActivePayRules(await repo.listPayRules());
+  // COR-08: the owner's choice of what an hours threshold counts — stated
+  // below whenever a rule depends on it.
+  const thresholdBasis = business?.payRuleThresholdBasis ?? "net";
+  const hasHoursRule = rules.some(
+    (r) =>
+      r.condition.type === "daily_hours_beyond" ||
+      r.condition.type === "weekly_hours_beyond",
+  );
   const liveRateNames = new Map<string, string>();
 
   try {
@@ -204,6 +214,7 @@ export default async function XeroPushPage({
         timezone: tz,
         periodStart: cal.periodStartDate,
         periodEnd: cal.periodEndDate,
+        thresholdBasis,
       });
       const push = pushCache
         .get(key)!
@@ -296,8 +307,8 @@ export default async function XeroPushPage({
         }
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
-      {loadError ? <Banner tone="warn">{loadError}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
+      {loadError ? <Banner tone="error">{loadError}</Banner> : null}
       {sp.cancelled ? (
         <Banner tone="success">Draft removed from Xero.</Banner>
       ) : null}
@@ -312,6 +323,17 @@ export default async function XeroPushPage({
       ) : null}
 
       <Banner tone="info">{RATE_NOTE}</Banner>
+      {hasHoursRule ? (
+        <p className="mt-2 text-[12.5px] text-[var(--color-text-secondary)]">
+          {describeThresholdBasis(thresholdBasis)}{" "}
+          <Link
+            href="/app/xero/rules"
+            className="font-semibold text-[var(--color-brand)] hover:underline"
+          >
+            Change this on the Pay rules page.
+          </Link>
+        </p>
+      ) : null}
       {staleRuleName ? (
         <Banner tone="warn">
           The rule “{staleRuleName}” points at a pay item that no longer exists

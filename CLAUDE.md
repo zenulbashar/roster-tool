@@ -64,8 +64,9 @@ any **actual ordering, purchasing, supplier-system integration, pricing,
 invoicing or payments** (the inventory feature is tracking + reminders only — it
 never places orders), **reorder thresholds / par levels** (stock status is
 staff/owner-set, never auto-computed from a threshold — a possible future
-option), and **object storage** (inventory CSV is pasted text / parsed in
-memory, no file store),
+option), and a **file store for inventory** (the CSV is pasted text / parsed
+in memory — the only object storage in the app is the S3-compatible bucket
+clock-in photos moved to under PERF-06, never a general upload surface),
 free-text reply parsing, billing, native apps,
 continuous/background location tracking, and — for the Google Drive document
 feature (Phase 1, built) — **OneDrive, Dropbox, and per-employee
@@ -125,21 +126,41 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
     `createTenantRepo`). So placing a person at a location (a membership) makes
     them appear in that location's roster builder / availability / kiosk — this
     is how staff are **shared and lent** across locations. `addStaff` creates the
-    org-level row + a home membership atomically.
+    org-level row + a home membership atomically. Removing a person from a
+    location (`removePersonFromLocation`) is a **deactivation, never a delete**
+    (COR-07): the `staff_location` row flips `active = false` (loan tag
+    cleared) and any active loan to that location is ended in the same
+    transaction — the one soft model the loan machinery already uses; a later
+    add or loan re-activates the row. `listPeople` groups memberships in one
+    pass (O(people + memberships)).
   - **Active location**: `requireOwner()` resolves `orgId` from membership and a
     **validated** active `businessId` (a cookie honoured only if it belongs to
     the org — N2). Every existing owner page tenants through the active location,
     so the header **location switcher** re-scopes them all with no per-page
     change. `ownerRepo()` = active-location tenant repo; `orgRepo()` /
     `createOrgRepo(orgId)` = org-scoped (locations + the People pool);
-    `ownerContext()` returns both.
+    `ownerContext()` returns both. **`requireOwner()` is memoised per request
+    with `React.cache` (PERF-04)** — the layout (bell + switcher), the page and
+    any action in the same request share ONE session/impersonation/org/location
+    resolution, so call it (or the three wrappers) freely; never re-implement
+    the resolution or pass the context around to avoid a "second" lookup.
   - **Owner surfaces**: `/app/locations` (list/switch/add locations, org-scoped)
     and `/app/people` (the shared pool — everyone org-wide + per-location
     membership chips). New people are still added on a location's `/app/staff`.
-  - **Cross-location shift cover (Phase 3, built)**: `shift_offer.scope`
-    (`location`|`org`). Offering up a shift in a MULTI-location business makes it
-    `org`-scoped (the owner can also post an open shift as org-scoped on
-    `/app/shifts`); it then shows in the "Cover at another location" section of
+  - **Cross-location shift cover (Phase 3, built; opt-in since PROD-15)**:
+    `shift_offer.scope` (`location`|`org`). An offer reaches the owner's OTHER
+    locations only when **`business.allow_cross_location_cover`** is on for
+    the shift's location (Settings → "Shift cover between locations"; default
+    OFF, migration `0041` turned it on for locations already in a
+    multi-location org) AND the staff member ticked "let staff at my other
+    locations cover it" on the offer-up screen (ticked by default where
+    offered; unticking keeps it venue-only) — or the owner chose "Any of my
+    locations" when opening an empty shift on `/app/shifts`. **The tenant repo
+    is the authority**: `getCrossLocationCoverEnabled()` (setting AND another
+    location exists) gates BOTH `releaseOwnShift` and `postOpenShift`,
+    downgrading a requested `org` to `location` wherever it isn't allowed, so
+    no surface can widen an offer past the setting. An `org` offer then shows
+    in the "Cover at another location" section of
     every OTHER location's kiosk/clock "Open shifts" and is claimable there by
     any org member (PIN-gated; `createOrgRepo.claimOrgOffer`, N3: claimer + offer
     must share the org, can't claim your own). The owner approves on `/app/shifts`
@@ -182,12 +203,17 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
     (existing rows still work). `requireAdmin()` 404s a signed-in non-admin (the
     area doesn't exist for them). Pure allow-list logic in `src/lib/admin/allowlist.ts`.
   - **Impersonation ("view as venue")** — a red-headed entry-confirm modal spells
-    out FULL read/write to the client's LIVE account, then sets a **signed, 2 h,
+    out FULL read/write to the client's LIVE account, then sets a **signed, 30 min,
     httpOnly `roster_impersonation` cookie** (HMAC over adminUserId+org+location,
     `src/lib/admin/impersonation.ts`, mirroring the notices proof) bound to
-    (admin, org, entry location). `resolveImpersonation` re-validates EVERY request:
-    HMAC + freshness, the acting user is STILL a `platform_admin` (revoking admin
-    instantly ends it), and the bound location still belongs to the bound org.
+    (admin, org, entry location). **The cookie is NOT a bearer token**: it resolves
+    ONLY when presented by a session signed in as the very admin it is bound to
+    (`resolveImpersonationFor` in `src/lib/admin/impersonation-resolve.ts` — pure,
+    unit-tested; the session check runs before any DB lookup). `resolveImpersonation`
+    re-validates EVERY request: HMAC + freshness, session ⇔ bound admin, the acting
+    user is STILL a `platform_admin` (revoking admin instantly ends it), and the
+    bound location still belongs to the bound org. Every sign-out/sign-in path
+    clears the cookie, so a grant never outlives the session it was bound to.
     `requireOwner` then resolves the org from the GRANT (not a membership) — while
     the in-app location switcher still works, since the active-location cookie is
     honoured on top. Nothing is stored server-side; it can't be refreshed without
@@ -200,13 +226,73 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
     form writes and gates them behind a "Save to live account" modal. Chrome forms
     (nav, sign-out, exit, location switcher, bell) live OUTSIDE `<main>`, so
     they're never intercepted — no per-form annotation needed; GET search/filter
-    forms pass through. **Known limit**: a few JS-driven server actions (e.g. the
-    drag-drop board) aren't gated by the modal, but the banner/frame + the logged
-    enter/exit session bracket every action. Every enter/exit/confirmed-write is
-    snapshotted into the append-only `admin_activity` log (writes flagged `is_write`).
+    forms pass through. **The modal is CONSENT UX ONLY (SEC-02/SEC-03)**: it
+    writes nothing and nothing it reports is trusted. Every impersonated write —
+    including the JS-driven actions (e.g. the drag-drop board) the modal never
+    sees — is recorded SERVER-SIDE by the audit decorator over the repository
+    (an `audit_event` with `impersonator_user_id`, mirrored into
+    `admin_activity` as an `is_write` row). Enter/exit are logged by their
+    actions; `setPlanStatus` goes through `createAdminRepo().setPlanStatus`.
   - **`organisation.plan_status`** (`active`/`trial`/`paused`) is a vendor
     account-lifecycle label the admin sets — **NOT billing/wage data**; billing
     stays out of scope (client detail states payments are handled outside Roster).
+- **Feature flags (OPS-05)**: rollout control for CODE PATHS — dark-launch a
+  change on one client, roll it out to everyone, or kill it without a deploy.
+  **The registry is code** (`src/lib/flags/registry.ts`: every key with a
+  description + its code default; the accessor is typed on `FlagKey`, so a typo
+  is a build error, never a silent "off"). **The database holds only
+  deviations**: `feature_flag` (the value for everyone, present once an admin
+  sets it) and `feature_flag_override` (the value for ONE organisation, which
+  wins). Resolution = org override → global → code default (`evaluateFlag`,
+  pure, unit-tested). **`isFeatureEnabled(key, { orgId })`** is the ONE way
+  code asks; pass the acting owner's `orgId` from `requireOwner()` (never
+  request input), omit it in org-less contexts (sign-up, global sweeps). It is
+  memoised per request with `React.cache` (one query for globals, one for the
+  org's overrides). Zale IT sets flags on **`/admin/flags`** (global on/off/
+  code-default + per-client overrides; every change is an `is_write` row in
+  `admin_activity`). **Flags are never product settings** — a per-client
+  configuration belongs on `business`; and access decisions never go through
+  flags. Retire a flag once its consumer settles (flip the default, remove the
+  reads, delete the key). Live flags: `owner_signups` (default on — the
+  onboarding kill switch: off shows "sign-ups are paused", the action refuses;
+  existing owners unaffected), `audit_events` (default on — the kill switch
+  for the tenant audit trail below; off pauses recording, nothing else
+  changes) and `photo_blob_only` (default off — with `BLOB_S3_*` configured,
+  ON writes new clock-in photos to the object store ONLY instead of store +
+  database; the PERF-06 rollout switch, retired once the contract migration
+  has run).
+- **Tenant audit trail (OPS-04 / SEC-02 / SEC-03)**: every repository WRITE
+  made through an owner context — the owner's own edits, and a Zale IT admin's
+  edits while impersonating — becomes one append-only `audit_event` row,
+  **recorded by construction**: `ownerRepo()` / `ownerContext()` hand out the
+  tenant and org repos wrapped in `withAudit` (`src/lib/audit/decorate.ts`, a
+  Proxy over every non-read method per `src/lib/tenant/method-kinds.ts`, the
+  ONE read/write classification the isolation suite also uses). No per-action
+  annotation, and `tests/audit-flow.test.ts` calls every mutator on the repo
+  and fails if one produced no event. An event carries who (actor type / user
+  id / label; `impersonator_user_id` when an admin acts inside the tenant),
+  what (method, entity, sanitised args — secrets redacted by key AND position,
+  opaque strings masked, binary dropped), a BEFORE snapshot read through the
+  repo's own scoped getter for the records that matter (timesheet entries,
+  staff, settings, offers, leave, certs, items, pay rules — `METHOD_SNAPSHOTS`)
+  and the AFTER row, the request id, and the outcome (a thrown write is
+  recorded as `error` and re-thrown). Per-scope **hash chain**: `hash =
+sha256(prev_hash + canonical(row))`, appended under a per-business advisory
+  lock; `getAuditChainStatus()` recomputes it and names the first altered or
+  removed row (tamper-EVIDENT, not tamper-proof — `docs/operations.md`
+  restricts UPDATE/DELETE at the grant level). Recording is best-effort AFTER
+  the write commits (a failure is reported, never blocks the owner). An
+  impersonated write is ALSO mirrored server-side into `admin_activity`
+  (`is_write`), which supersedes the old client-reported entries — the
+  write-confirm modal is now consent UX only. Owner surfaces: a **History**
+  panel on every timesheet entry ("Edited the times · jane@… · 4 Sep, 2:10 pm
+  · Clock out: … → …", via the pure `describeTimesheetEvent`) and
+  `/app/activity` ("Recent changes", from Settings → Account, with the chain
+  verdict). Staff self-service writes (clock in/out, leave requests, offers,
+  stock checks) are attributed by their own rows and job writes are
+  idempotency cursors — neither goes through the decorator. Retained 7 years
+  (`RETENTION_DAYS.auditEvent`, a compliance floor — Fair Work time-and-wages
+  records). Kill switch: the `audit_events` flag.
 - **Shifts**: business defines reusable **shift templates** (label + start/end +
   weekday flags + an optional owner-chosen **colour** + a **staffing target**,
   `required_staff`, default 1 — hospitality shifts often need several people).
@@ -277,8 +363,10 @@ time.ts`) — "6 pm – 2 am (next day)" — never a hand-rolled `start – end`
   only). Pure maths in `src/lib/assignment-schedule.ts`; transactional
   `moveAssignment`/`setAssignmentSchedule` on the tenant repo; zod-validated
   board actions in the build page re-derive every id server-side. The
-  tap-a-name editor below the board is unchanged (the fully
-  keyboard-accessible path). Plan + invariants:
+  board itself is keyboard-operable (a per-chip move handle + arrow-key grid
+  walk with spoken announcements — see UI / accessibility below); the
+  tap-a-name editor below the board remains as the form-based path for the
+  same moves. Plan + invariants:
   `docs/drag-drop-roster-plan.md`. NOT built (flag first): overnight
   per-person times, carrying overrides across weeks in drafts, multiple/custom
   breaks, drag on staff surfaces.
@@ -340,14 +428,42 @@ time.ts`) — "6 pm – 2 am (next day)" — never a hand-rolled `start – end`
   tenants. Per-action auth is the staff member's PIN. The owner rotates the link
   (regenerates the hash) to instantly revoke old links.
 - **Clock-in photos** (`require_clock_in_photo`, off by default): when on, the
-  kiosk captures a webcam still at clock in/out, stored as `bytea` in
-  `clock_photo`. Privacy: a consent line shows on the kiosk; **no facial
-  recognition**; photos live in our Postgres DB and are served only to the owner;
-  deleting a timesheet entry deletes its photos. Photos are also **auto-purged
-  per business** by a daily retention job (`photo_retention_days`, default 7;
-  owners pick 7/30/90 in Settings) — only the photos are deleted, the timesheet
-  entry/hours are always kept. Camera-denied/unavailable falls back to PIN-only;
-  a missing photo never blocks clocking.
+  kiosk captures a webcam still at clock in/out, recorded in `clock_photo`.
+  Privacy: a consent line shows on the kiosk; **no facial recognition**;
+  photos are served only to the owner (`/app/timesheets/photo/[id]`, always
+  through the owner session — never a public or signed URL); deleting a
+  timesheet entry deletes its photos. Photos are also **auto-purged per
+  business** by a daily retention job (`photo_retention_days`, default 7;
+  owners pick 7/30/90 in Settings) — only the photos are deleted, the
+  timesheet entry/hours are always kept. Camera-denied/unavailable falls back
+  to PIN-only; a missing photo never blocks clocking.
+  - **Where the bytes live (PERF-06, expand/contract in progress).** The row
+    is the FACT (entry, in/out, mime, size, sha256 `checksum`); the bytes
+    belong in an **S3-compatible object store** under `storage_key`
+    (`clock-photos/<business>/<entry>/<photo>.<ext>`), exactly how
+    `staff_document` treats Drive. `BlobStore` (`src/lib/blob/store.ts`) is
+    the seam — `S3BlobStore` (`src/lib/blob/s3.ts`, raw `fetch` + a SigV4
+    signer pinned to AWS's published vectors, no SDK) in production and
+    `InMemoryBlobStore` in tests; configured by `BLOB_S3_*`, **FAIL CLOSED**:
+    unconfigured = `blobStore()` is null and photos stay in `image_data`
+    exactly as before. The write mode is `resolvePhotoWriteMode` (pure):
+    `database` (no store), `dual` (store configured — bytes to BOTH, so a
+    rollback keeps working), `store` (the `photo_blob_only` flag — store
+    only). All photo I/O goes through `src/lib/clock-photo-storage.ts`
+    (`saveClockPhoto` / `readClockPhoto` / `purgeExpiredClockPhotos` /
+    `deleteClockPhotoObjects`), never the repo directly, and holds the
+    invariants: a store outage on write keeps the bytes in the database and
+    reports (clocking NEVER fails for a photo); a read prefers the store and
+    falls back to the database copy; retention deletes the OBJECTS FIRST and
+    keeps any row whose object could not be deleted for the next sweep; the
+    owner's entry delete and staff delete collect the keys before the rows go
+    and remove the objects best-effort afterwards. History moves with the
+    resumable `npm run photos:backfill` (`src/lib/blob/backfill.ts`: keyset
+    paginated, scoped per business optionally, idempotent; `--clear-bytes`
+    drops the database copy only after a HEAD verifies the object's size);
+    the CONTRACT step (dropping `image_data`) is a manual migration per
+    `docs/operations.md` §6.13. A bucket lifecycle rule expiring objects
+    older than the longest retention plus margin is the orphan backstop.
 - **Personal-phone GPS clock-in** (`/clock/<token>`): a SEPARATE flow from the
   shared kiosk, for staff clocking in on their own phones. Reached via a
   distinct capability token (`personal_clock_token_hash`) — NOT the kiosk token
@@ -455,7 +571,8 @@ NULL AND is_read = false` is the upsert's ON CONFLICT arbiter, so a flood is
     public, attributed and anonymous responses (an anonymous internal response
     can never imply who submitted). The deferred EMAIL phase is built as the
     **daily form-response digest (M35)**: a `form-response-digest` pg-boss cron
-    (21:00 UTC ≈ 7–8 am Sydney) emails each owner ONE consolidated summary of
+    (dispatched per business at the location's `digest_hour_local`, default
+    7 am local — PERF-03) emails each owner ONE consolidated summary of
     responses since the last digest — the SAME privacy rule (counts + titles +
     links, never content/identity), sent only on days something arrived.
     Idempotent via the `business.form_digest_last_at` cursor (window is
@@ -495,10 +612,15 @@ hmac`, AUTH_SECRET-signed, 15 min — `src/lib/notices-verification.ts`,
     re-checks both cookies and that the proof is bound to the SAME staff
     member the token resolved to. Nothing stored server-side; it expires and
     the PIN is re-entered.
-  - **Strict per-staff scoping**: all reads/writes go through repo methods
-    that filter by `business_id` AND `staff_member_id` (foreign ids no-op);
-    the staff member is always derived from the token hash, never client
-    input. No path from /me into /app or another person's data.
+  - **Strict per-staff scoping — and notices FOLLOW THE PERSON (M29)**: all
+    reads/writes go through repo methods that filter by `staff_member_id` AND
+    the `noticeVisibleTo` predicate — a notice at this location OR at any
+    location in the person's own org (a notice raised at a lent-to venue, or
+    the daily reminder for a shift there, must reach the person's home `/me`;
+    another person's, and any other org's, never match). The staff member is
+    always derived from the token hash, never client input. No path from /me
+    into /app or another person's data. Written notices still carry the
+    creating location's `business_id`.
   - **Four notice types** (`staff_notification_type`): `leave_decided` (owner
     approves/denies a request — beside the decision-email enqueue),
     `shift_swap_approved` (offer approval — the claimer, and the releaser if
@@ -508,7 +630,8 @@ hmac`, AUTH_SECRET-signed, 15 min — `src/lib/notices-verification.ts`,
     owner server actions via **best-effort `notifyStaff`**
     (`src/lib/staff-notifications.ts`) — a notice failure never breaks the
     decision/publish.
-  - **Daily shift reminder job** (`staff-shift-reminder`, 07:00 UTC ≈ 5–6 pm
+  - **Daily shift reminder job** (`staff-shift-reminder`, dispatched per
+    business at the location's `reminder_hour_local`, default 5 pm local
     Sydney, beside the other daily crons): per business, one "you work
     tomorrow" notice per staff member with a confirmed assignment on
     tomorrow's business-local date in a PUBLISHED roster (inactive staff and
@@ -617,7 +740,8 @@ hmac`, AUTH_SECRET-signed, 15 min — `src/lib/notices-verification.ts`,
     badge each, and a 30/60/90 reminder lead-time selector saved on the
     business. Day-of-expiry counts as **Expired** (badge and the expired alert
     aligned).
-  - **Daily reminder job** (`cert-reminder`, scheduled 02:00 UTC in the worker
+  - **Daily reminder job** (`cert-reminder`, dispatched per business at the
+    location's `digest_hour_local` — PERF-03; formerly a 02:00 UTC cron in the worker
     boot path beside photo-retention) emails the **owner** a single consolidated
     digest per business of certs crossing a threshold: an early notice at the
     lead time (`business.cert_reminder_lead_days`, default 30), a final notice
@@ -695,7 +819,8 @@ hmac`, AUTH_SECRET-signed, 15 min — `src/lib/notices-verification.ts`,
     correct for multiple delivery days and cutoffs spanning a week boundary; a
     cutoff of 0 reminds on the delivery day. Pure logic in
     `src/lib/order-reminder.ts` (`orderByDeliveryDate`, `selectOrderReminders`).
-  - **Daily order-reminder job** (`order-reminder`, scheduled **06:00 UTC** in the
+  - **Daily order-reminder job** (`order-reminder`, dispatched per business at
+    the location's `digest_hour_local` — PERF-03; formerly a 06:00 UTC cron in the
     worker boot path beside photo-retention and cert-reminders) emails the
     **owner** ONE consolidated digest per business of suppliers due today that have
     items flagged `needs_order`/`low` ("Order from [supplier] before [delivery
@@ -821,7 +946,7 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
     line-for-line. An entry's **unpaid `break_minutes` is netted out** here too
     (same `hoursWorked`): the classifier shrinks every worked sub-block
     proportionally by the paid factor, so each day's split lines still reconcile
-    to the netted day total (thresholds/cumulation stay on gross clock time). Re-push on 2.0 = **delete-then-
+    to the netted day total (thresholds/cumulation count worked OR clock hours per the owner's `pay_rule_threshold_basis` — COR-08). Re-push on 2.0 = **delete-then-
     create** (no update verb), holding one INVARIANT: **`xero_timesheet_id` is
     non-null ⟺ a live Draft exists** — the id is set to NULL the instant a delete
     succeeds (before the recreate), so a failed/crashed recreate leaves a DISTINCT
@@ -859,6 +984,17 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
     hours). The jsonb `condition_config` is zod-validated per type
     (`payRuleConditionConfigSchemas`); the type lives in the enum column, not
     the json.
+  - **Hour thresholds vs unpaid breaks (COR-08)**: what
+    `daily_hours_beyond`/`weekly_hours_beyond` COUNT is the owner's
+    `business.pay_rule_threshold_basis` — `net` (worked hours, breaks left
+    out; the default for new businesses) or `gross` (clock hours, breaks
+    included; migration `0037` kept it for businesses that already had rules
+    so no split changed silently). Set on `/app/xero/rules` (with a worked
+    example), stated in the pre-push preview, read by the push and the
+    preview, and REQUIRED by `classifyEntries`. Under `net` the break's
+    position isn't known, so paid time accrues evenly and the crossing sits
+    where PAID hours reach the threshold; without a break the bases agree.
+    (Recording the break position on the entry — COR-09 — is a follow-up.)
   - **Evaluation is pure + deterministic, server-side over stored clock data**
     (`classifyEntries` in `src/lib/xero/pay-rules.ts`; never client input):
     each entry splits into atomic sub-blocks at local midnights, time-of-day
@@ -897,6 +1033,33 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
   `business_id` from body/query/params.
 - All domain reads/writes go through the tenant-scoped data-access layer in
   `src/lib/tenant/`. Don't query domain tables directly from routes.
+- **Isolation is enforced by CI, not review (TEST-03).**
+  `tests/tenant-isolation.test.ts` calls EVERY mutating `createTenantRepo`
+  method with another tenant's ids and snapshots that tenant's rows before and
+  after (byte-identical, or the method is named); a completeness check compares
+  its table against the repo's own method list, so a new mutator must be added
+  there — with a foreign-id call, or an explicit own-business-only reason —
+  before the suite passes. The rules it encodes: a writer keyed on a foreign
+  row no-ops and returns null/false/[]; an upsert whose conflict target lacks
+  `business_id` (`assign`, `saveResponses`, `publish`) verifies the parent row
+  is this business's FIRST; a creator handed a staff/period/form id verifies
+  it is this location's member / this business's row and REFUSES
+  (`createRequest`, `createShifts`, `createSuggestedAssignments`, `clockIn`
+  throws, `createStaffNotification`, `addStaffDocument`,
+  `upsertXeroEmployeeMap`, `saveXeroPushDraft`/`markXeroPushNoDraft`,
+  `upsertFormResponseNotification`; `addItem`/`bulkInsertItems` coerce a
+  foreign supplier to null); and the `/me` notice reads/writes require the
+  person to be a member of the ACTING location on top of `noticeVisibleTo`.
+  The same file pins the org invariants N1/N2/N3 below.
+- **Every `business_id`-scoped table carries an index whose leading column is
+  `business_id`** (composite with the hot filter column where there is one —
+  `(business_id, date)` on `shift`, `(business_id, clock_in_at)` on
+  `timesheet_entry`), and any table read person-first also indexes
+  `staff_member_id`. The tenancy predicate is the most universal filter in the
+  codebase; a table without such an index degrades linearly with the tenant's
+  whole history (PERF-01). Add the index with the table, in the same migration.
+  Index migrations are written `IF NOT EXISTS` so an operator can pre-build a
+  large one with `CREATE INDEX CONCURRENTLY` outside the transactional runner.
 - **Admin exception (M37)** — the Zale IT admin console is the ONLY place that
   reads across tenants, and it is quarantined: every cross-tenant read lives in
   `src/lib/admin/repository.ts` (`createAdminRepo`), reachable only behind
@@ -939,21 +1102,178 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
 ### Security
 
 - Validate ALL external input with zod.
-- Staff magic-link tokens are single-use-ish, scoped, and time-limited. Store
-  only a **hash** of the token; compare hashes. Never log tokens or PII.
+- Staff magic-link tokens are scoped and time-limited (availability links stay
+  live for 21 days and are deliberately RE-OPENABLE so staff can revise their
+  answers — the email says so; never claim a link "works once" unless the code
+  gates on `responded_at`). Store only a **hash** of the token; compare hashes.
+  Never log tokens or PII.
 - Secrets live in env only, accessed via the validated `src/lib/env.ts`.
+
+### Destructive actions
+
+- **Every delete is two-step (UX-04).** The server action bounces to
+  `?confirmDelete=<id>` (or a sibling param such as `confirmDoc`) on the first
+  submit and acts only on `confirmed=1`; the page renders the shared
+  `ConfirmDeleteCard` (`src/components/ConfirmDeleteCard.tsx`) from REAL data
+  (the name, a count, the consequences — "its stock-check history goes with
+  it", "this also deletes the Drive file") so the owner sees exactly what goes.
+  No native `confirm()`, no client JS. `tests/destructive-confirm.test.ts`
+  fails the build for a `delete*` server action that never reads `confirmed`.
+- **Payroll-adjacent records are soft-deleted, never removed** — see
+  `timesheet_entry.deleted_at` under Data model.
 
 ### Background jobs
 
 - All email sending (availability requests, reminders, published rosters) goes
   through pg-boss jobs.
 - Jobs MUST be idempotent and safe to retry.
+- **The worker owns the queue; web only sends (PERF-07).** `getBoss()` shapes
+  the instance by `ROSTER_ROLE`: the worker migrates the pg-boss schema,
+  creates every queue at boot, supervises/maintains, runs the cron scheduler
+  and keeps archived jobs two weeks; the web app is a send-only producer (no
+  supervision, no scheduler) that ensures a queue lazily on the first send to
+  it in a process. Never call `createQueue` for all queues from a request path.
+- **Owner recipients resolve through the org, never the legacy pointer.** A
+  per-business sweep finds who to email with `ownerEmailsForBusiness` (business
+  → `org_id` → `org_membership` role `owner` → user). `users.business_id` is set
+  ONCE at onboarding for the owner's FIRST location and never for locations
+  added later — keying a sweep on it silently skipped every other location
+  (COR-01). A business that resolves to zero recipients is `logger.warn`ed, not
+  silently skipped.
+- **Daily sweeps are DISPATCHED per business, at each location's own local
+  send hour (PERF-02 / PERF-03).** ONE hourly cron (`sweep-dispatch`, minute 0) runs `dispatchDailySweeps` (`src/lib/jobs/sweeps.ts`): it pages every
+  business (keyset on `created_at, id`), asks the pure `sweepDue`
+  (`src/lib/jobs/dispatch.ts`) which of the six sweep kinds that location
+  wants NOW — due once its LOCAL hour is at or past the target, so a
+  DST-skipped hour or a late tick still fires that day — claims a
+  `job_dispatch` row per (kind, business, local run date) with ON CONFLICT DO
+  NOTHING, and enqueues one `business-sweep` job (`{kind, businessId,
+runDate}`, singleton per tenant per day) for each claim. `runBusinessSweep`
+  loads that ONE business and runs the matching per-business function
+  (`remindCertificationsForBusiness`, `remindOrdersForBusiness`,
+  `sendFormDigestForBusiness`, `remindShiftsForBusiness`,
+  `purgePhotosForBusiness`, `expireLoansForBusiness`), each idempotent through
+  its own cursor. Failures retry per tenant; the worker runs these with
+  bounded `localConcurrency`. The send hours are per location:
+  `business.digest_hour_local` (default 7 — cert/order/form digests) and
+  `business.reminder_hour_local` (default 17 — the staff "you work tomorrow"
+  notice), set in Settings → Notifications → "When we send"; photo retention
+  (03:00 local) and loan expiry (01:00 local) are fixed quiet hours. The six
+  old fixed-UTC crons are UNSCHEDULED at worker boot (their queues stay
+  registered one release as a manual rollback path); `data-retention` remains
+  a global daily cron. Test the per-business function (it can't race other
+  files' global sweeps over the shared test DB); the global `handle…` loops
+  remain for tests and manual runs.
+- **Every queue dead-letters into `dead-letter` (OPS-02).** A job that
+  exhausts its retries is COPIED there by pg-boss instead of vanishing;
+  `handleDeadLetter` (`src/lib/jobs/dead-letter.ts`) logs it, reports it to
+  the error tracker and emails `OPS_ALERT_EMAIL` when set (fail closed: unset
+  = log + report). The payload is sanitised like audit args (a magic-link
+  token never leaves the process); the handler never re-runs the work. The
+  ORIGINAL job stays in its own queue in state `failed` — that is what the
+  operator CLI lists and re-runs: `npm run jobs:admin -- failed | retry
+--queue <q> --id <id> | redispatch --business <id> [--force] | stats`
+  (`scripts/jobs-admin.ts`; the pure parsing/summary half is
+  `src/lib/jobs/admin.ts`, unit-tested). `retry` is pg-boss's in-place retry
+  (same id, same singleton key, +1 attempt); `redispatch` re-runs the hourly
+  dispatcher for ONE business via its `scope` option, clearing that day's
+  `job_dispatch` claims with `--force`. `/api/ready` also answers 503 when
+  the oldest DUE job has waited over an hour (`queueBacklogMs`) — a worker
+  that is alive but not draining. The web producer creates the dead-letter
+  queue before any queue that references it, so a fresh database the worker
+  has never booted against still accepts a first send.
+- **Singleton keys only dedupe under queue policy `short`.** On pg-boss's
+  default `standard` policy a `singletonKey` is inert (nothing collapses —
+  a double-submitted publish used to email twice). `queueOptions()` creates
+  every keyed queue with `policy: "short"` (one `created` job per key; a
+  duplicate `send` returns null and is dropped) and leaves the keyless
+  `dead-letter` queue `standard` (under `short` all keyless jobs would share
+  one slot). A policy is fixed at creation and `updateQueue` rejects it, so
+  `ensureQueuePolicy` recreates a pre-existing queue with the wrong policy at
+  worker boot ONLY while it is empty, else warns and retries next boot. A
+  queue that sends keyless jobs must therefore never be given `short`.
+- **Tables that only grow have a retention policy (PERF-10).** The daily
+  `data-retention` job (04:00 UTC) runs `sweepRetention` in
+  `src/lib/data-retention.ts` — one CODE policy per table (reviewed in a
+  diff, never an env var): owner notifications + staff notices 180 days read /
+  365 unread, `admin_activity` 730 days (confirm the compliance floor before
+  shortening), `form_rate_limit` by `expires_at`, worker heartbeats 7 days,
+  expired Auth.js sessions/verification tokens + consumed SSO ids after a
+  day. Bounded batches, idempotent, counts logged. Clock-in photos keep their
+  own per-business `photo-retention` job. A NEW table that can grow without a
+  natural delete path gets a policy here in the same PR (and an index on the
+  sweep's predicate).
+- **Test fixtures build tenants the way the app does (TEST-02).** An owner
+  reaches a business through `org_membership` — use `tests/helpers/org.ts`
+  (`makeOrgWithTwoLocations`, `attachOwner`) — never by writing the legacy
+  `users.business_id` pointer, which production sets only at onboarding for
+  the first location. A fixture that creates digest-eligible data (an owner
+  plus a form response) should switch `form_digest_enabled` off unless the
+  digest is the subject, because every file's sweep runs over the shared DB.
 
 ### Observability
 
-- Use the `logger` from `src/lib/logger.ts`. Structured logs only.
+- Use the `logger` from `src/lib/logger.ts`. Structured logs only. Inside a
+  request (a page, layout, route handler or server action) prefer
+  **`requestLogger()`** from `src/lib/request-context.ts` — a pino child bound
+  to the request's correlation id — so one request's lines can be joined.
+- **Classify database errors through `src/lib/db/errors.ts`**
+  (`pgErrorCode` / `isUniqueViolation`): drizzle wraps the driver error in a
+  `DrizzleQueryError` with the SQLSTATE on `cause`, so a bare `err.code`
+  check silently never matches (it turned the Staff page's "already on your
+  team" message into a crash). Never read `.code` off a caught query error
+  directly.
+- **Owner-side writes are audited by construction (OPS-04).** Always reach
+  the tenant/org repo from an owner page or action through `ownerRepo()` /
+  `orgRepo()` / `ownerContext()` — never `createTenantRepo` directly — so the
+  write lands in the audit trail with the actor and request id. A new
+  mutating repo method needs no annotation; name it as a write (anything the
+  `READ_ONLY_METHOD` regex doesn't match) and add a `METHOD_SNAPSHOTS` entry
+  when a before/after matters. A new READ must match the regex or it will be
+  recorded as a write. Never pass a raw secret into a repo method under a key
+  the sanitiser doesn't recognise (`pin|hash|token|secret|password|…enc`) or
+  at a position `REDACTED_POSITIONS` doesn't cover.
+- **Every request carries a correlation id** (OPS-01): `src/proxy.ts` honours
+  a well-formed upstream `x-request-id` or mints one, stamps it on the request
+  headers and echoes it on the response; `getRequestId()` (React.cache) reads
+  it server-side (null outside a request — never breaks worker code). The id
+  is validated strictly (`src/lib/request-id.ts`, pure) because it lands in
+  logs.
+- **Unhandled errors are reported through ONE seam** (`reportError` in
+  `src/lib/error-reporting.ts`): a structured `logger.error` line carrying
+  the request id and Next's error `digest`, plus best-effort forwarding to a
+  Sentry-compatible tracker over raw `fetch` (no SDK) when `SENTRY_DSN` is set
+  — FAIL CLOSED without it. Callers: `src/instrumentation.ts`
+  (`onRequestError` — every server render/action/route/proxy failure), the
+  worker's per-job `guarded` wrapper in `boss.ts` (report, then RE-THROW so
+  pg-boss still retries), `boss.on("error")`, and the worker's startup /
+  unhandled-rejection paths. Everything that leaves the process passes
+  `scrubPii`/`scrubPath` (emails, bearer/keyed secrets, 32+ char opaque
+  tokens, capability-link path segments) — never pass bodies, cookies or
+  headers into a report. Forwarding is capped per rolling minute; logging
+  never is.
+- **Every route group has branded boundaries** (PERF-09): `error.tsx` under
+  `src/app`, `src/app/app` and `src/app/admin` render `ErrorState` (a
+  `role="alert"` card with the **reference code = the error `digest`** the
+  server logged, "Try again" = the segment `reset`, and a way home);
+  `global-error.tsx` is self-contained (inline styles — the root layout, and
+  so globals.css, may not have rendered); `not-found.tsx` ×3 render
+  `NotFoundState` (the root one gives no hint that `/admin` exists);
+  `loading.tsx` in the owner and admin areas renders `PageSkeleton`
+  (`rosterShimmer`, reduced-motion safe). `tests/error-boundaries.test.ts`
+  fails the build if a boundary file goes missing or leaks the error text.
 - No swallowed errors. Let jobs fail (so pg-boss retries) rather than catching
-  and ignoring.
+  and ignoring. Where a failure is deliberately turned into a status (the Xero
+  push's `failed` outcomes), `logger.error` the provider error first — a
+  generic reason with no payload is undiagnosable (OPS-07).
+- **Health + readiness are first-class** (OPS-01): `GET /api/health` is
+  liveness (process up, no dependencies); `GET /api/ready` checks the database
+  AND that a worker heartbeat (`worker_heartbeat`, written every minute by
+  `scripts/worker.ts`) is under 5 minutes old, answering 503 otherwise. Point
+  the uptime monitor at `/api/ready` — every email flows through the worker,
+  and a dead worker used to be undetectable. The worker container's
+  `HEALTHCHECK` reads a local heartbeat file (`scripts/worker-healthcheck.mjs`)
+  so the check can't itself depend on the database.
 
 ### UI / accessibility
 
@@ -975,6 +1295,24 @@ NULL AND revoked_at IS NULL AND expires_at > now RETURNING`** in the callback
   `--color-brand` (blue) stays reserved for links, focus rings and info
   banners; the semantic status colours are unchanged. Shared primitives
   (`Button`/`Card`/`PageHeader`/`Banner`/`Badge`) are in `src/components/ui.tsx`.
+- **Result messages are live regions (WCAG 4.1.3).** `Banner` renders
+  `role="alert"` for `tone="error"` and `role="status"` for `info`/`success`/
+  `warn`. Use **`error` for a failed action's message** (`sp.error`, a form's
+  `state.message`, a location/PIN failure) and `warn` only for a standing
+  caution ("3 shifts are understaffed", "Xero needs reconnecting") — a test
+  (`tests/live-regions.test.ts`) fails the build if a result banner is
+  rendered with `warn`. The kiosk / phone clock-in success panels and
+  `KioskSuccess` carry `role="status"` for the same reason.
+- **The roster board is keyboard-operable (WCAG 2.1.1).** Every chip has a
+  "move" handle button (dnd-kit's activator): Space/Enter picks it up, the
+  arrow keys walk the (person, day) grid LOGICALLY via
+  `src/lib/board-keyboard.ts` (`nextBoardTarget` — no wrap; the Open row sits
+  below the last person for an assignment, never for an open block), Space/
+  Enter drops, Escape cancels; the keyboard's chosen cell is what the
+  collision detector returns, so the spoken announcement (pick-up, hover with
+  availability/leave, drop, cancel — `announce*` in the same module) matches
+  what the drop does. Pointer drags still start anywhere on the chip. Keep the
+  announcements in the pure module (unit-tested), never inline in the board.
   Four keyframes (`rosterFade`/`rosterPulse`/`rosterToast`/`rosterShimmer`) are
   used sparingly — dropdowns, the bell badge, toasts, skeletons — and all
   non-essential motion is disabled under `prefers-reduced-motion`.
@@ -1020,7 +1358,21 @@ npm run typecheck && npm run lint && npm test
 ## CI
 
 `.github/workflows/ci.yml` runs on every push/PR: `npm ci`, migrate (against a
-Postgres service), typecheck, lint, format check, test. Keep it green.
+Postgres service), typecheck, lint, format check, then the suite WITH V8
+coverage of `src/lib` (`npm run test:coverage`) and the **coverage ratchet**
+(`npm run coverage:ratchet` — `scripts/coverage-ratchet.mjs` compares the
+totals with the committed `coverage-baseline.json`: coverage may rise freely,
+never fall by more than a quarter point; lock a gain in with
+`npm run coverage:ratchet -- --update`). The lcov report is uploaded as a
+build artifact. `.github/dependabot.yml` opens one grouped npm PR a week plus
+Actions bumps. CI also runs `npm audit --audit-level=high --omit=dev` (a
+high/critical advisory in a PRODUCTION dependency is red; dev tooling only
+reports) and uploads a CycloneDX SBOM. `SECURITY.md` holds the reporting
+channel, the remediation SLA and the accepted-risk register — `next-auth` v5
+is still a beta by necessity (no stable exists) and `overrides.nodemailer`
+forces nodemailer 10 into every copy because Auth.js's declared peer range is
+the vulnerable one; record any new exception there WITH a mitigation and a
+review trigger. Keep it green.
 
 ## Deployment
 
@@ -1030,6 +1382,24 @@ Neon Postgres + Resend. Per-platform env templates: `.env.vercel.example` and
 "Production deployment". Key gotchas: the worker needs `APP_URL` and
 `AUTH_SECRET` set (env validation is global); Vercel uses Neon's pooled
 connection, the worker uses the direct connection (pg-boss needs session mode).
+
+**Operations runbook: `docs/operations.md` (OPS-03).** The published
+recovery targets (RPO 5 min / RTO 4 h on Neon point-in-time restore), the
+SLOs, the quarterly timed restore drill + evidence template, and the runbooks
+(database restore, bad migration, worker/Resend outage, OAuth mass-
+revocation, secret rotation — `AUTH_SECRET` does NOT sign owner sessions but
+does sign magic links / notices proofs / impersonation grants;
+`TOKEN_ENCRYPTION_KEY` rotation is a hard cutover until SEC-13's key ring
+exists — suspected compromise, audit-trail grant hardening, one tenant's
+mistake). Keep it current: a runbook edit lands in the same PR as the
+behaviour it describes. **Migrations reach production through two gates**
+(`.github/workflows/ci.yml`): `migrate-staging` rehearses every pending
+migration on the Neon `staging` branch (FAIL CLOSED without
+`STAGING_DATABASE_URL`), then `migrate-prod` waits for a required reviewer
+of the GitHub `production` Environment. Additive migrations only; the
+expand/contract procedure for destructive ones is §5.3 of the runbook. Vercel
+deploys ahead of the approved migration — apply by hand first when the new
+code needs the schema immediately.
 
 ## Working method
 
@@ -1050,14 +1420,20 @@ staff↔location membership), `staff_loan` (M29 date-ranged lend), `user` (owner
   `leave_request`, `shift_offer`, `staff_certification`, `supplier`, `item`,
   `stock_check_entry`, `notification`, `staff_notification`, `form`, `form_field`,
   `google_drive_connection`, `staff_document`, `xero_connection`,
-  `xero_employee_map`, `xero_timesheet_push`, `xero_connect_invite`, `pay_rule`.
+  `xero_employee_map`, `xero_timesheet_push`, `xero_connect_invite`, `pay_rule`,
+  `audit_event` (OPS-04 — business- or org-scoped, append-only).
   Work-record domain tables are business-scoped; `staff_member` is org-scoped
   (reached per location via `staff_location`); `organisation`/`org_membership`/
   `staff_location` are org-scoped. Plus non-tenant infrastructure tables:
   `sso_consumed_tokens` (the inbound prompt2eat SSO replay guard — no `business_id`,
-  like the Auth.js `session`/`verificationToken` tables), and the M37 vendor
+  like the Auth.js `session`/`verificationToken` tables), the M37 vendor
   admin tables `platform_admin` + `admin_activity` (the Zale IT console — no
-  `business_id`; the console is the single explicit cross-tenant exception).
+  `business_id`; the console is the single explicit cross-tenant exception),
+  `worker_heartbeat` (one row per background-worker instance, overwritten
+  every minute; `/api/ready` reports 503 when the newest is >5 min old — the
+  alert for a dead or wedged worker, OPS-01), and the OPS-05 flag tables
+  `feature_flag` + `feature_flag_override` (vendor-set rollout switches; the
+  registry is code).
 
 Notable columns / conventions:
 
@@ -1085,6 +1461,29 @@ Notable columns / conventions:
   legible after either is deleted). Indexed on `created_at` + `org_id`. Written by
   the admin actions (enter/exit) + the best-effort `logImpersonatedWrite`.
   Non-tenant infra table.
+- `feature_flag` / `feature_flag_override` (OPS-05) — the stored DEVIATIONS from
+  the code flag registry (`src/lib/flags/registry.ts`). `feature_flag`: `key`
+  (PK, a registry key), `enabled`, `updated_by` (admin display-name snapshot),
+  `updated_at` — present only once Zale IT has set the flag for everyone.
+  `feature_flag_override`: `flag_key` + `org_id` (→ `organisation`, cascade;
+  unique together, indexed on `org_id`), `enabled`, `updated_by`, `updated_at`
+  — one organisation's value, which wins over the global one. Read by
+  `isFeatureEnabled` (keyed on the caller's own org id), written only behind
+  `requireAdmin()` from `/admin/flags`. Non-tenant infra tables.
+- `audit_event` (OPS-04 / SEC-02) — the tenant audit trail, APPEND-ONLY.
+  `seq` (bigserial — the chain order), `business_id` (→ `business`, cascade;
+  null for an org-level write) + `org_id` (→ `organisation`, cascade; CHECK at
+  least one set), `actor_type` (`owner`/`admin`/`staff`/`system`),
+  `actor_user_id`, `actor_label` (snapshot), `impersonator_user_id` (an admin
+  acting inside the tenant), `request_id`, `action` (the repo method),
+  `entity` + `entity_id`, `args` / `before` / `after` (jsonb, sanitised),
+  `outcome` (`ok`/`error`) + `error`, `prev_hash` + `hash` (sha256 chain per
+  scope), `created_at`. Indexed on `(business_id, seq)`, `(business_id,
+entity, entity_id)`, `(org_id, seq)`, `created_at`. Written only by
+  `appendAuditEvent` (tenant/org repo, scope forced) via the audit decorator;
+  read by `listAuditEvents` / `listAuditEventsForEntities` /
+  `getAuditChainStatus`. Never UPDATEd/DELETEd by the app except the 7-year
+  retention policy.
 - `org_membership` (M29) — which owners can reach which org. `org_id` (cascade),
   `user_id` → `user` (cascade), `role` (`org_role`, v1 `owner` only), unique
   `(org_id, user_id)`. The source of "what can this signed-in owner reach",
@@ -1094,7 +1493,18 @@ Notable columns / conventions:
 - `staff_member.org_id` (M29, nullable during rollout, backfilled) — the person's
   organisation; the staff row is now org-level. `business_id` is retained as the
   person's **home** location (an implicit membership). Pay rate + PIN + lockout
-  live on this one org-level row (**one PIN, one rate, org-wide**).
+  live on this one org-level row (**one PIN, one rate, org-wide**). **A person
+  is unique per org by email (COR-03)**: `addStaff` refuses a case-variant
+  duplicate with `StaffExistsInOrgError` (carrying the existing id/name/home +
+  whether they're already a member here — the Staff page turns it into "add
+  them to this location"), and the partial unique index
+  `staff_member_org_email_lower_unique` on `(org_id, lower(email)) WHERE org_id
+IS NOT NULL` backs it at the database. Migration `0040` creates the index
+  ONLY when no duplicates exist; `npm run staff:ensure-unique` reports any
+  (org, email, names) and creates it once clean. Duplicates are DETECTED for
+  the owner (`listDuplicatePeople` → a warning on `/app/people`) and COUNTED
+  for the admin console — never merged automatically (merging hours is the
+  owner's decision).
 - `staff_location` (M29) — org staff↔location membership. `org_id` (cascade),
   `business_id` → `business` (cascade), `staff_member_id` → `staff_member`
   (cascade), `active`, `loan_id` (nullable → `staff_loan`, set null; marks a
@@ -1124,7 +1534,20 @@ staff_member_id)`. A person appears at a location when their home is there OR
   rostering or clock-in (a flag, matching the app's flag-not-block philosophy).
 - `staff_member.pin_hash` — salted scrypt hash of the kiosk PIN (`scrypt$salt$hash`).
   `failed_pin_attempts` / `pin_locked_until` back the per-staff brute-force guard
-  (5 wrong PINs → 60s cooldown). Helpers (hash, verify, lockout) are pure in
+  — an ESCALATING ladder on a CUMULATIVE counter (every 5th wrong PIN locks for
+  1 min → 5 → 15 → 60; only a correct PIN resets it, SEC-06). PINs are 4–6
+  digits; NEW PINs must pass `isValidNewPin` (no repeats/runs/top-guessed —
+  `newPinSchema`), existing 4-digit PINs keep working. `verifyPin` is ASYNC
+  (SEC-07 — never block the event loop on scrypt). **Every PIN surface goes
+  through the ONE shared `authenticateStaffPin` core** (`src/lib/pin-auth.ts`):
+  per-DEVICE attempt ceiling keyed on the capability token's hash (20/min,
+  200/h — caps the attacker so nobody can lock a whole venue out), then the
+  per-staff lockout, then verify; one generic error for wrong/missing/PIN-less.
+  Never re-implement the PIN check inline. The form variant reads EXACTLY
+  `staffId` + `pin`, so every PIN form must post both (`PinActionForm` carries
+  the selected staff member as a hidden `staffId` — it didn't, and every
+  offer-up/claim/cancel silently failed as "PIN didn't match" until COR-12;
+  `tests/pin-action-form.test.ts` pins it). Helpers (hash, verify, lockout) are pure in
   `src/lib/pin.ts`; the PIN itself is never stored or logged.
 - `business.kiosk_token_hash` — SHA-256 hash of the kiosk capability token (only
   the hash is stored; raw token lives in the link/cookie). `require_clock_in_photo`
@@ -1136,13 +1559,26 @@ staff_member_id)`. A person appears at a location when their home is there OR
   personal-phone clock-in (never the kiosk). `personal_clock_token_hash` is the
   SHA-256 hash of the SEPARATE personal-phone clock-in capability token (distinct
   from `kiosk_token_hash`); rotating it revokes old personal links.
+  `allow_cross_location_cover` (NOT NULL default false, PROD-15) — whether
+  shifts at this location may be covered by staff from the owner's other
+  locations (an `org`-scoped offer); the repo's `getCrossLocationCoverEnabled`
+  is the single gate for both staff releases and owner-posted open shifts.
 - `staff_member.pay_rate_cents` (nullable) + `rate_type` (`flat`/`award`, NOT
   NULL default `flat`) + `rate_label` — a per-employee hourly rate the owner
   typed, stored in cents, with an optional label. A stored number + label only;
   the app never calculates wages. Surfaced on the Staff page and the CSV export.
 - `timesheet_entry` — one clock in/out. `clock_out_at` null = currently in; a
-  **partial unique index** on `staff_member_id WHERE clock_out_at IS NULL` makes
-  double clock-in impossible. `shift_id` links a rostered shift when one matches
+  **partial unique index** on `staff_member_id WHERE clock_out_at IS NULL AND
+deleted_at IS NULL` makes double clock-in impossible. **`deleted_at`
+  (nullable, UX-04) is a SOFT delete**: an entry is the wage evidence for a
+  shift worked, so the owner's Delete (two-step confirmed) sets it instead of
+  removing the row — every tenant read (`getEntry`, `listEntriesBetween`, the
+  CSV export, the labour report, the Xero push, clock state, the staff-delete
+  count) filters `deleted_at IS NULL`, the entry's clock photos are removed at
+  that moment (the privacy promise), and the owner gets an **Undo**
+  (`restoreEntry`, refused by the unique index if the person has clocked in
+  again since). **Never hard-delete an entry from the app.** Retention still
+  purges a deleted entry's photos, never the row. `shift_id` links a rostered shift when one matches
   (published + confirmed) on the clock-in's business-local date, else null.
   `approved` is the owner's payroll sign-off (and the filter for the CSV hours
   export). `clock_in_lat`/`clock_in_lng`/`within_geofence` are set only by
@@ -1155,14 +1591,24 @@ staff_member_id)`. A person appears at a location when their home is there OR
   refines NET worked time only; still not a payroll calculation. Clock logic is
   pure in `src/lib/clock.ts` (`entryDurationMs` takes the break); geofence maths
   in `src/lib/geo.ts`.
-- `clock_photo` — optional clock in/out still, stored inline as `bytea`, cascaded
-  with its entry. Served only to the owner via `/app/timesheets/photo/[id]`. A
-  daily pg-boss cron (03:00 UTC, registered in the worker boot path) sweeps every
-  business and deletes photos whose entry's `clock_in_at` is older than that
-  business's `photo_retention_days`. It deletes **only** `clock_photo` rows (never
-  `timesheet_entry`), is tenant-scoped per business, and is idempotent. Cutoff
-  logic is pure in `src/lib/retention.ts`; deletion is `deleteExpiredPhotos` on
-  the tenant repo.
+- `clock_photo` — optional clock in/out still, cascaded with its entry.
+  `image_data` (`bytea`, **nullable since migration 0044**) holds the bytes
+  while a photo lives in the database; `storage_key` (nullable) +
+  `content_length` + `checksum` (sha256 hex) point at the object-store copy
+  (PERF-06). CHECK `clock_photo_bytes_or_key_check`: at least one of the two.
+  Partial index `clock_photo_unstored_idx (created_at, id) WHERE storage_key
+IS NULL` drives the backfill. Served only to the owner via
+  `/app/timesheets/photo/[id]` (store first, database fallback). A daily
+  per-business sweep (dispatched at 03:00 LOCAL by the hourly dispatcher —
+  PERF-02) deletes photos whose entry's `clock_in_at` is older than that
+  business's `photo_retention_days`: `purgeExpiredClockPhotos` removes the
+  stored objects FIRST, then the rows (`listExpiredPhotos` +
+  `deletePhotosByIds`; a row whose object delete failed waits for the next
+  sweep). It deletes **only** `clock_photo` rows (never `timesheet_entry`),
+  is tenant-scoped per business, and is idempotent. Cutoff logic is pure in
+  `src/lib/retention.ts`. `markPhotoStored` / `clearPhotoBytes` are the
+  backfill's scoped writes; `listPhotoStorageKeysForEntry/ForStaff` let the
+  owner's deletes take the objects with them.
 - `availability_response` — `request_id` is **nullable**. A response with no
   request is an owner **manual pre-fill** (`source = 'manual'`); it carries
   `staff_member_id` directly (staff replies derive theirs via the request).

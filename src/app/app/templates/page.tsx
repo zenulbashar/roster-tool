@@ -1,6 +1,5 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import Link from "next/link";
 import { ownerRepo } from "@/lib/auth/context";
 import { templateSchema } from "@/lib/validation";
 import { formatTimeRange } from "@/lib/time";
@@ -15,6 +14,7 @@ import {
   PageHeader,
   TextInput,
 } from "@/components/ui";
+import { ConfirmDeleteCard } from "@/components/ConfirmDeleteCard";
 
 const PATH = "/app/templates";
 
@@ -370,37 +370,25 @@ export default async function TemplatesPage({
         }
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.added ? <Banner tone="success">Shift type added.</Banner> : null}
       {sp.saved ? <Banner tone="success">Shift type updated.</Banner> : null}
       {sp.deleted ? <Banner tone="success">Shift type deleted.</Banner> : null}
 
       {pendingDelete ? (
-        <Card className="mt-4 border-[var(--color-danger)]">
-          <h2 className="font-archivo text-[17px] font-bold text-[var(--color-text)]">
-            Delete “{pendingDelete.label}”?
-          </h2>
-          <p className="mt-1 text-[13.5px] text-[var(--color-text-secondary)]">
+        <ConfirmDeleteCard
+          title={`Delete “${pendingDelete.label}”?`}
+          action={deleteTemplate}
+          fields={{ id: pendingDelete.id }}
+          confirmLabel="Delete shift type"
+          cancelHref={PATH}
+        >
+          <p>
             Past and published rosters keep their shifts — they just stop being
             linked to this type. You won’t be able to add “{pendingDelete.label}
             ” to new rosters. This can’t be undone.
           </p>
-          <div className="mt-3 flex items-center gap-3">
-            <form action={deleteTemplate}>
-              <input type="hidden" name="id" value={pendingDelete.id} />
-              <input type="hidden" name="confirmed" value="1" />
-              <Button type="submit" variant="danger">
-                Delete shift type
-              </Button>
-            </form>
-            <Link
-              href={PATH}
-              className="text-[13px] font-semibold text-[var(--color-text-secondary)] hover:underline"
-            >
-              Cancel
-            </Link>
-          </div>
-        </Card>
+        </ConfirmDeleteCard>
       ) : null}
 
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

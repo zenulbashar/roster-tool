@@ -40,6 +40,8 @@ function cleanItem(data: ReturnType<typeof itemSchema.parse>) {
   };
 }
 
+import { ConfirmDeleteCard } from "@/components/ConfirmDeleteCard";
+
 const COLS = "1.6fr 1fr 1fr 1.4fr 0.9fr 0.8fr";
 
 export default async function ItemsPage({
@@ -52,6 +54,7 @@ export default async function ItemsPage({
     deleted?: string;
     activated?: string;
     deactivated?: string;
+    confirmDelete?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -60,6 +63,8 @@ export default async function ItemsPage({
     repo.listItems(),
     repo.listSuppliers(),
   ]);
+  // A delete awaiting confirmation (UX-04).
+  const pendingDelete = items.find((it) => it.id === sp.confirmDelete) ?? null;
 
   async function addItem(formData: FormData) {
     "use server";
@@ -104,6 +109,11 @@ export default async function ItemsPage({
     "use server";
     const repo = await ownerRepo();
     const id = String(formData.get("id"));
+    // Two-step (UX-04): confirm first — the item's stock-check history goes
+    // with it (deactivating keeps it).
+    if (formData.get("confirmed") !== "1") {
+      redirect(`${PATH}?confirmDelete=${encodeURIComponent(id)}`);
+    }
     await repo.deleteItem(id);
     revalidatePath(PATH);
     redirect(`${PATH}?deleted=1`);
@@ -146,10 +156,25 @@ export default async function ItemsPage({
         }
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.added ? <Banner tone="success">Item added.</Banner> : null}
       {sp.updated ? <Banner tone="success">Item updated.</Banner> : null}
       {sp.deleted ? <Banner tone="success">Item removed.</Banner> : null}
+      {pendingDelete ? (
+        <ConfirmDeleteCard
+          title={`Remove “${pendingDelete.name}”?`}
+          action={deleteItem}
+          fields={{ id: pendingDelete.id }}
+          confirmLabel="Remove item"
+          cancelHref={PATH}
+        >
+          <p>
+            Its stock-check history is removed with it. To keep the history but
+            take it off stock checks, <strong>deactivate</strong> it instead.
+            This can’t be undone.
+          </p>
+        </ConfirmDeleteCard>
+      ) : null}
       {sp.activated ? <Banner tone="success">Item reactivated.</Banner> : null}
       {sp.deactivated ? (
         <Banner tone="success">Item deactivated.</Banner>

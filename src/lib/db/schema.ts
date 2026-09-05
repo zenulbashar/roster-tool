@@ -11,6 +11,7 @@ import {
   time,
   boolean,
   integer,
+  bigserial,
   jsonb,
   doublePrecision,
   primaryKey,
@@ -50,6 +51,17 @@ const bytea = customType<{ data: Buffer; default: false }>({
  * and never changes any tenant-facing behaviour.
  */
 export const planStatus = pgEnum("plan_status", ["active", "trial", "paused"]);
+
+/**
+ * COR-08 — what a pay rule's daily/weekly HOURS THRESHOLD counts: `net`
+ * (worked hours, unpaid breaks left out — the conventional reading) or `gross`
+ * (clock hours, breaks included — the behaviour before this setting existed).
+ * Owner-set per business; the classifier reads it; the preview states it.
+ */
+export const payRuleThresholdBasis = pgEnum("pay_rule_threshold_basis", [
+  "net",
+  "gross",
+]);
 
 export const organisations = pgTable("organisation", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -134,10 +146,38 @@ export const businesses = pgTable("business", {
   // day when forms received new responses; counts + titles only, never
   // answer content or respondent identity). Settings toggle, on by default.
   formDigestEnabled: boolean("form_digest_enabled").notNull().default(true),
+  // PROD-15 — whether shifts at THIS location may be covered by staff from
+  // the owner's OTHER locations (an `org`-scoped offer). Off by default: a
+  // second location no longer implies staff mobility (different brands,
+  // awards, franchisees, distance). Migration 0041 turned it ON for every
+  // location that already sat in a multi-location org, so nobody's existing
+  // behaviour changed. When on, the staff member offering up a shift still
+  // chooses per release ("my venue only" stays possible), and the owner
+  // approves every handover as before.
+  allowCrossLocationCover: boolean("allow_cross_location_cover")
+    .notNull()
+    .default(false),
+  // PERF-03 — WHEN this location's daily sends happen, in ITS OWN local
+  // time. `digest_hour_local` (default 7): the owner digests — certification
+  // reminders, order reminders, the form-response digest. `reminder_hour_local`
+  // (default 17): the staff "you work tomorrow" notice. The hourly dispatcher
+  // enqueues each sweep once the local clock reaches the hour (see
+  // src/lib/jobs/dispatch.ts). The defaults reproduce the old fixed-UTC crons
+  // for a Sydney venue; a Perth or London venue now gets its own morning.
+  digestHourLocal: integer("digest_hour_local").notNull().default(7),
+  reminderHourLocal: integer("reminder_hour_local").notNull().default(17),
   // Idempotency cursor: the sweep counts responses submitted AFTER this and
   // advances it only after a successful send (null = never sent → the first
   // digest covers the last 24 h, not all history).
   formDigestLastAt: timestamp("form_digest_last_at", { withTimezone: true }),
+  // COR-08 — whether a pay rule's "hours beyond N in a day/week" threshold
+  // counts worked hours (`net`, unpaid breaks left out) or clock hours
+  // (`gross`). New businesses default to `net`; the migration kept `gross`
+  // for any business that already had rules so nobody's split changed
+  // silently. Set on /app/xero/rules; stated in the pre-push preview.
+  payRuleThresholdBasis: payRuleThresholdBasis("pay_rule_threshold_basis")
+    .notNull()
+    .default("net"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -273,6 +313,52 @@ export const ssoConsumedTokens = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
+/* Operations (non-tenant infrastructure)                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Liveness record for the background worker (OPS-01). Every email in the
+ * product flows through pg-boss, so a worker that dies quietly stops all of
+ * it — and nothing used to notice. Each worker instance upserts its row every
+ * minute; `/api/ready` reports the newest `seen_at` and goes 503 when it is
+ * stale, which is the single alert that catches a wedged or dead worker. One
+ * row per instance id, no tenant data, no history (the row is overwritten).
+ */
+export const workerHeartbeats = pgTable("worker_heartbeat", {
+  id: text("id").primaryKey(),
+  seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Exactly-once record for the hourly daily-sweep dispatcher (PERF-02 /
+ * PERF-03): one row per (sweep kind, business, business-local run date),
+ * inserted ON CONFLICT DO NOTHING just before the per-business job is
+ * enqueued. A dispatcher tick that runs twice in an hour, a DST hour that
+ * repeats, or a late tick after a skipped hour therefore never enqueues the
+ * same tenant's sweep twice in one local day. Not tenant data (an operations
+ * ledger keyed on the business id; cascades with the business); swept after
+ * 90 days by the retention job.
+ */
+export const jobDispatches = pgTable(
+  "job_dispatch",
+  {
+    kind: text("kind").notNull(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    runDate: date("run_date").notNull(),
+    enqueuedAt: timestamp("enqueued_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.kind, t.businessId, t.runDate] }),
+    // PERF-10: the retention sweep's predicate.
+    index("job_dispatch_enqueued_idx").on(t.enqueuedAt),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
 /* Zale IT platform admin (vendor back-office — M37)                          */
 /* NON-TENANT: these two tables belong to the vendor, not any one business.   */
 /* They are reachable ONLY behind requireAdmin(); the cross-tenant admin repo  */
@@ -338,6 +424,119 @@ export const adminActivities = pgTable(
   (t) => [
     index("admin_activity_created_idx").on(t.createdAt),
     index("admin_activity_org_idx").on(t.orgId),
+    index("admin_activity_business_idx").on(t.businessId),
+    // SEC-02: "what did THIS admin do, when" is a per-admin retrieval.
+    index("admin_activity_admin_created_idx").on(t.adminUserId, t.createdAt),
+  ],
+);
+
+/**
+ * Tenant-facing audit trail (OPS-04 / SEC-02): one APPEND-ONLY row per
+ * repository write made through an owner context — the owner's own edits and
+ * a Zale IT admin's edits while impersonating (`impersonator_user_id` set).
+ * Recorded by the audit decorator (`src/lib/audit/decorate.ts`) over every
+ * mutator, never by hand. Carries who (actor type/id/label), what
+ * (method, entity, sanitised args, before/after snapshots for the records
+ * that matter), the request id, and a per-scope HASH CHAIN (`prev_hash` →
+ * `hash`, sha256 over the previous hash + this row's canonical content) that
+ * makes any later edit or deletion detectable (`verifyAuditChain`). Business
+ * scoped (with `org_id` for cross-reference), or org scoped with
+ * `business_id` null for org-level writes. Never UPDATEd or DELETEd by the
+ * app except by the 7-year retention policy; the operations runbook restricts
+ * UPDATE/DELETE at the grant level.
+ */
+export const auditEvents = pgTable(
+  "audit_event",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Monotonic within the database; the chain is walked in this order.
+    seq: bigserial("seq", { mode: "number" }).notNull(),
+    businessId: uuid("business_id").references(() => businesses.id, {
+      onDelete: "cascade",
+    }),
+    orgId: uuid("org_id").references(() => organisations.id, {
+      onDelete: "cascade",
+    }),
+    actorType: text("actor_type").$type<AuditActorType>().notNull(),
+    actorUserId: text("actor_user_id"),
+    actorLabel: text("actor_label").notNull(),
+    impersonatorUserId: text("impersonator_user_id"),
+    requestId: text("request_id"),
+    action: text("action").notNull(),
+    entity: text("entity"),
+    entityId: text("entity_id"),
+    args: jsonb("args"),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    outcome: text("outcome").$type<"ok" | "error">().notNull(),
+    error: text("error"),
+    prevHash: text("prev_hash"),
+    hash: text("hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("audit_event_business_seq_idx").on(t.businessId, t.seq),
+    index("audit_event_business_entity_idx").on(
+      t.businessId,
+      t.entity,
+      t.entityId,
+    ),
+    index("audit_event_org_seq_idx").on(t.orgId, t.seq),
+    // PERF-10: the retention sweep's predicate.
+    index("audit_event_created_idx").on(t.createdAt),
+    check(
+      "audit_event_scope_check",
+      sql`${t.businessId} is not null or ${t.orgId} is not null`,
+    ),
+  ],
+);
+
+type AuditActorType = "owner" | "admin" | "staff" | "system";
+
+/**
+ * Feature flags (OPS-05) — rollout control, set by Zale IT in the admin
+ * console. The REGISTRY of flags and their code defaults lives in
+ * `src/lib/flags/registry.ts`; these tables hold only deviations from it:
+ *
+ *  - `feature_flag`: the flag's value for EVERYONE, present only once an admin
+ *    has set it (no row = the code default). `key` must be a registry key.
+ *  - `feature_flag_override`: the flag's value for ONE organisation, which wins
+ *    over the global value — the dark-launch / per-client kill-switch lever.
+ *
+ * Non-tenant infrastructure tables (no `business_id`): reads from tenant code
+ * are keyed on the caller's own org id (`isFeatureEnabled`), writes happen only
+ * behind `requireAdmin()`. `updated_by` snapshots the admin's display name so a
+ * row stays legible after the admin is gone. Flags are never product settings
+ * — a per-client configuration belongs on `business`.
+ */
+export const featureFlags = pgTable("feature_flag", {
+  key: text("key").primaryKey(),
+  enabled: boolean("enabled").notNull(),
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const featureFlagOverrides = pgTable(
+  "feature_flag_override",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    flagKey: text("flag_key").notNull(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organisations.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull(),
+    updatedBy: text("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("feature_flag_override_key_org_unique").on(t.flagKey, t.orgId),
+    index("feature_flag_override_org_idx").on(t.orgId),
   ],
 );
 
@@ -511,6 +710,14 @@ export const staffMembers = pgTable(
   (t) => [
     unique("staff_member_business_email_unique").on(t.businessId, t.email),
     index("staff_member_org_idx").on(t.orgId),
+    // COR-03: a person is ONE org-level row. The same email (any case) twice in
+    // one organisation is the "two PINs, two rates, split hours" defect, so the
+    // database refuses it. Migration 0040 creates this index ONLY when no
+    // duplicates exist (an operator resolves any first — never auto-merged);
+    // `npm run staff:ensure-unique` reports and creates it later.
+    uniqueIndex("staff_member_org_email_lower_unique")
+      .on(t.orgId, sql`lower(${t.email})`)
+      .where(sql`${t.orgId} is not null`),
   ],
 );
 
@@ -598,7 +805,11 @@ export const staffLoans = pgTable(
     index("staff_loan_org_idx").on(t.orgId),
     index("staff_loan_staff_idx").on(t.staffMemberId),
     index("staff_loan_to_business_idx").on(t.toBusinessId),
-    index("staff_loan_active_idx").on(t.active),
+    // Partial: the expiry job and the "on loan" markers only ever look at
+    // ACTIVE loans, keyed by person + target location.
+    index("staff_loan_active_partial_idx")
+      .on(t.toBusinessId, t.staffMemberId)
+      .where(sql`${t.active} = true`),
   ],
 );
 
@@ -607,62 +818,70 @@ export const staffLoans = pgTable(
  * Mon–Fri". `weekdays` holds ISO weekday numbers (1=Mon … 7=Sun) the template
  * applies to. Times are stored as wall-clock "HH:MM:SS" strings.
  */
-export const shiftTemplates = pgTable("shift_template", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  businessId: uuid("business_id")
-    .notNull()
-    .references(() => businesses.id, { onDelete: "cascade" }),
-  label: text("label").notNull(),
-  startTime: time("start_time").notNull(),
-  endTime: time("end_time").notNull(),
-  weekdays: integer("weekdays").array().notNull(),
-  active: boolean("active").notNull().default(true),
-  // Owner-chosen accent colour (a bar hex from the fixed SHIFT_PALETTE). Null =
-  // no explicit choice, so the display falls back to the keyword-derived scheme
-  // (shiftColorScheme). Purely presentational; never enforced.
-  color: text("color"),
-  // Optional per-weekday time overrides, keyed by ISO weekday ("1".."7") →
-  // { start, end } ("HH:MM"). A day with no entry uses the default start/end
-  // above. Null/empty = every day uses the default (the original behaviour).
-  // Applied only at expansion (expandTemplatesToShifts); concrete shifts still
-  // snapshot their own resolved times, so nothing downstream changes.
-  dayTimeOverrides:
-    jsonb("day_time_overrides").$type<
-      Record<string, { start: string; end: string }>
+export const shiftTemplates = pgTable(
+  "shift_template",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    startTime: time("start_time").notNull(),
+    endTime: time("end_time").notNull(),
+    weekdays: integer("weekdays").array().notNull(),
+    active: boolean("active").notNull().default(true),
+    // Owner-chosen accent colour (a bar hex from the fixed SHIFT_PALETTE). Null =
+    // no explicit choice, so the display falls back to the keyword-derived scheme
+    // (shiftColorScheme). Purely presentational; never enforced.
+    color: text("color"),
+    // Optional per-weekday time overrides, keyed by ISO weekday ("1".."7") →
+    // { start, end } ("HH:MM"). A day with no entry uses the default start/end
+    // above. Null/empty = every day uses the default (the original behaviour).
+    // Applied only at expansion (expandTemplatesToShifts); concrete shifts still
+    // snapshot their own resolved times, so nothing downstream changes.
+    dayTimeOverrides:
+      jsonb("day_time_overrides").$type<
+        Record<string, { start: string; end: string }>
+      >(),
+    // How many people each instance of this shift needs (hospitality: several
+    // staff share one Friday-night close). A TARGET the builder flags against —
+    // never a hard block. Snapshotted onto each concrete shift at expansion.
+    requiredStaff: integer("required_staff").notNull().default(1),
+    // Optional per-weekday staffing overrides, keyed by ISO weekday ("1".."7")
+    // → required staff for that day ("Friday needs 4"). A day with no entry
+    // uses requiredStaff above. Null/empty = every day uses the default.
+    // Applied only at expansion (like dayTimeOverrides); concrete shifts still
+    // snapshot their own resolved number.
+    dayStaffOverrides: jsonb("day_staff_overrides").$type<
+      Record<string, number>
     >(),
-  // How many people each instance of this shift needs (hospitality: several
-  // staff share one Friday-night close). A TARGET the builder flags against —
-  // never a hard block. Snapshotted onto each concrete shift at expansion.
-  requiredStaff: integer("required_staff").notNull().default(1),
-  // Optional per-weekday staffing overrides, keyed by ISO weekday ("1".."7")
-  // → required staff for that day ("Friday needs 4"). A day with no entry
-  // uses requiredStaff above. Null/empty = every day uses the default.
-  // Applied only at expansion (like dayTimeOverrides); concrete shifts still
-  // snapshot their own resolved number.
-  dayStaffOverrides: jsonb("day_staff_overrides").$type<
-    Record<string, number>
-  >(),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("shift_template_business_idx").on(t.businessId)],
+);
 
-export const rosterPeriods = pgTable("roster_period", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  businessId: uuid("business_id")
-    .notNull()
-    .references(() => businesses.id, { onDelete: "cascade" }),
-  label: text("label").notNull(),
-  startDate: date("start_date").notNull(),
-  endDate: date("end_date").notNull(),
-  availabilityDeadline: timestamp("availability_deadline", {
-    withTimezone: true,
-  }),
-  status: rosterStatus("status").notNull().default("draft"),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const rosterPeriods = pgTable(
+  "roster_period",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    availabilityDeadline: timestamp("availability_deadline", {
+      withTimezone: true,
+    }),
+    status: rosterStatus("status").notNull().default("draft"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("roster_period_business_idx").on(t.businessId)],
+);
 
 export const shifts = pgTable(
   "shift",
@@ -689,7 +908,12 @@ export const shifts = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (t) => [index("shift_period_idx").on(t.rosterPeriodId)],
+  (t) => [
+    index("shift_period_idx").on(t.rosterPeriodId),
+    // PERF-01: clock-in shift matching, overlap detection and every
+    // date-ranged read filter on (business_id, date).
+    index("shift_business_date_idx").on(t.businessId, t.date),
+  ],
 );
 
 export const availabilityRequests = pgTable(
@@ -757,6 +981,11 @@ export const availabilityResponses = pgTable(
     uniqueIndex("availability_response_manual_staff_shift_unique")
       .on(t.staffMemberId, t.shiftId)
       .where(sql`${t.requestId} is null`),
+    // PERF-01: the builder's listResponses filters business_id and joins shift.
+    index("availability_response_business_shift_idx").on(
+      t.businessId,
+      t.shiftId,
+    ),
   ],
 );
 
@@ -796,23 +1025,32 @@ export const rosterAssignments = pgTable(
       t.shiftId,
       t.staffMemberId,
     ),
+    // PERF-01: one row per person per shift makes this the largest table in
+    // the model; every tenant-scoped read and every "this person's shifts"
+    // read needs its own index (the pair unique only serves shift-first).
+    index("roster_assignment_business_idx").on(t.businessId),
+    index("roster_assignment_staff_idx").on(t.staffMemberId),
   ],
 );
 
-export const publishedRosters = pgTable("published_roster", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  businessId: uuid("business_id")
-    .notNull()
-    .references(() => businesses.id, { onDelete: "cascade" }),
-  rosterPeriodId: uuid("roster_period_id")
-    .notNull()
-    .unique()
-    .references(() => rosterPeriods.id, { onDelete: "cascade" }),
-  publicSlug: text("public_slug").notNull().unique(),
-  publishedAt: timestamp("published_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const publishedRosters = pgTable(
+  "published_roster",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    rosterPeriodId: uuid("roster_period_id")
+      .notNull()
+      .unique()
+      .references(() => rosterPeriods.id, { onDelete: "cascade" }),
+    publicSlug: text("public_slug").notNull().unique(),
+    publishedAt: timestamp("published_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("published_roster_business_idx").on(t.businessId)],
+);
 
 /**
  * A clock-in/out record for a staff member. `clockOutAt` null means the person
@@ -846,6 +1084,10 @@ export const timesheetEntries = pgTable(
     // the UI offers None / 30 / 60. Never a payroll calc — just net worked time.
     breakMinutes: integer("break_minutes").notNull().default(0),
     approved: boolean("approved").notNull().default(false),
+    // UX-04: SOFT delete. An entry is the wage evidence for a shift worked, so
+    // the owner's "Delete" sets this instead of removing the row. Every tenant
+    // read filters `deleted_at IS NULL`; the entry can be restored (Undo).
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -858,11 +1100,16 @@ export const timesheetEntries = pgTable(
       t.businessId,
       t.staffMemberId,
     ),
-    // A staff member can have at most one open (not-yet-clocked-out) entry,
-    // making double clock-in impossible at the database level.
+    // PERF-01: the timesheets view, the CSV export, the labour report and the
+    // Xero push all filter business_id + a clock_in_at RANGE.
+    index("timesheet_entry_business_clockin_idx").on(t.businessId, t.clockInAt),
+    // A staff member can have at most one LIVE open (not-yet-clocked-out)
+    // entry, making double clock-in impossible at the database level. A
+    // soft-deleted open entry no longer counts, so deleting a stale "still
+    // clocked in" row frees the person to clock in again.
     uniqueIndex("timesheet_entry_one_open_per_staff")
       .on(t.staffMemberId)
-      .where(sql`${t.clockOutAt} is null`),
+      .where(sql`${t.clockOutAt} is null and ${t.deletedAt} is null`),
   ],
 );
 
@@ -870,21 +1117,50 @@ export const timesheetEntries = pgTable(
  * Optional photo captured at clock in/out, stored inline as `bytea`. Cascades
  * away with its timesheet entry. Served only to the owner via a scoped route.
  */
-export const clockPhotos = pgTable("clock_photo", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  businessId: uuid("business_id")
-    .notNull()
-    .references(() => businesses.id, { onDelete: "cascade" }),
-  timesheetEntryId: uuid("timesheet_entry_id")
-    .notNull()
-    .references(() => timesheetEntries.id, { onDelete: "cascade" }),
-  kind: clockPhotoKind("kind").notNull(),
-  mimeType: text("mime_type").notNull(),
-  imageData: bytea("image_data").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const clockPhotos = pgTable(
+  "clock_photo",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    businessId: uuid("business_id")
+      .notNull()
+      .references(() => businesses.id, { onDelete: "cascade" }),
+    timesheetEntryId: uuid("timesheet_entry_id")
+      .notNull()
+      .references(() => timesheetEntries.id, { onDelete: "cascade" }),
+    kind: clockPhotoKind("kind").notNull(),
+    mimeType: text("mime_type").notNull(),
+    /**
+     * The bytes, while a photo still lives in the database (PERF-06 expand
+     * phase). NULL once the photo is only in the object store. Dropping this
+     * column is the CONTRACT step, run by hand (docs/operations.md §5.3).
+     */
+    imageData: bytea("image_data"),
+    /** Object-store key (`clock-photos/<business>/<entry>/<id>.<ext>`); null = database only. */
+    storageKey: text("storage_key"),
+    contentLength: integer("content_length"),
+    /** sha256 hex of the bytes, set when stored; lets the backfill verify before clearing. */
+    checksum: text("checksum"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    // PERF-01: the retention sweep and per-entry lookups must never scan a
+    // table of image bytes.
+    index("clock_photo_entry_idx").on(t.timesheetEntryId),
+    index("clock_photo_business_idx").on(t.businessId),
+    // The resumable backfill walks unstored photos in creation order; the
+    // partial index shrinks as it progresses and costs nothing afterwards.
+    index("clock_photo_unstored_idx")
+      .on(t.createdAt, t.id)
+      .where(sql`${t.storageKey} is null`),
+    // A photo lives somewhere: in the database, in the store, or both.
+    check(
+      "clock_photo_bytes_or_key_check",
+      sql`${t.imageData} is not null or ${t.storageKey} is not null`,
+    ),
+  ],
+);
 
 /**
  * A staff member's request for time off, and the owner's decision on it.
@@ -1217,6 +1493,9 @@ export const notifications = pgTable(
   (t) => [
     index("notification_business_read_idx").on(t.businessId, t.isRead),
     index("notification_business_created_idx").on(t.businessId, t.createdAt),
+    // PERF-10: the platform retention sweep deletes by (is_read, created_at)
+    // across every tenant; without this it is a full scan nightly.
+    index("notification_read_created_idx").on(t.isRead, t.createdAt),
     // At most one ACTIVE (unread) coalesced row per (business, group). The
     // predicate MUST match the upsert's ON CONFLICT arbiter so Postgres uses
     // this partial unique index. Non-coalesced rows (group_key NULL) are
@@ -1268,6 +1547,8 @@ export const staffNotifications = pgTable(
       t.businessId,
       t.createdAt,
     ),
+    // PERF-10: the platform retention sweep's predicate.
+    index("staff_notification_read_created_idx").on(t.isRead, t.createdAt),
     uniqueIndex("staff_notification_dedupe_key_idx").on(t.dedupeKey),
   ],
 );
@@ -1519,11 +1800,18 @@ export const formResponseAnswers = pgTable(
  * window is its own row; `expires_at` lets old rows be ignored/swept. See
  * `src/lib/rate-limit.ts` for the limits.
  */
-export const formRateLimits = pgTable("form_rate_limit", {
-  bucketKey: text("bucket_key").primaryKey(),
-  count: integer("count").notNull().default(0),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-});
+export const formRateLimits = pgTable(
+  "form_rate_limit",
+  {
+    bucketKey: text("bucket_key").primaryKey(),
+    count: integer("count").notNull().default(0),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    // PERF-10: rows are swept by expiry; without this the sweep is a scan.
+    index("form_rate_limit_expires_idx").on(t.expiresAt),
+  ],
+);
 
 /* -------------------------------------------------------------------------- */
 /* Google Drive document storage (Phase 1)                                    */

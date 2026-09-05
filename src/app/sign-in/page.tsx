@@ -2,6 +2,7 @@ import Link from "next/link";
 import { signIn, EMAIL_PROVIDER_ID } from "@/lib/auth";
 import { redirectIfAuthenticated } from "@/lib/auth/context";
 import { signInErrorMessage } from "@/lib/auth/sign-in-error";
+import { clearImpersonationCookie } from "@/lib/admin/impersonation-session";
 import { Banner } from "@/components/ui";
 
 export default async function SignInPage({
@@ -22,6 +23,9 @@ export default async function SignInPage({
     // an owner who is now signed in (router cache / bfcache / stale tab). Never
     // send a magic link to an authenticated owner — redirect them instead.
     await redirectIfAuthenticated();
+    // A fresh sign-in must never inherit a lingering impersonation grant from
+    // a previous session on this browser (M37).
+    await clearImpersonationCookie();
     const email = String(formData.get("email") ?? "")
       .trim()
       .toLowerCase();
@@ -69,7 +73,7 @@ export default async function SignInPage({
 
           {errorMessage ? (
             <div className="mt-4">
-              <Banner tone="warn">{errorMessage}</Banner>
+              <Banner tone="error">{errorMessage}</Banner>
             </div>
           ) : null}
 

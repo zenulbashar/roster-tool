@@ -25,14 +25,16 @@ export default async function ShiftsPage({
   const business = await repo.getBusiness();
   const today = businessDateOf(new Date(), business?.timezone);
 
-  const [claims, openOffers, unassigned, locationCount] = await Promise.all([
-    repo.listPendingClaims(),
-    repo.listOpenOffers(),
-    repo.listUnassignedPublishedShifts(today),
-    repo.getOrgLocationCount(),
-  ]);
-  // In a multi-location business the owner can open a shift to the whole org.
-  const multiLocation = locationCount > 1;
+  const [claims, openOffers, unassigned, crossLocationCover] =
+    await Promise.all([
+      repo.listPendingClaims(),
+      repo.listOpenOffers(),
+      repo.listUnassignedPublishedShifts(today),
+      repo.getCrossLocationCoverEnabled(),
+    ]);
+  // PROD-15: the owner can open a shift to their other locations only where
+  // they've allowed cross-location cover for this location (Settings).
+  const multiLocation = crossLocationCover;
 
   // Compute non-blocking conflict flags for each pending claim: does the
   // claimer have approved leave on the day, or another shift that overlaps?
@@ -114,7 +116,8 @@ export default async function ShiftsPage({
     "use server";
     const repo = await ownerRepo();
     const shiftId = String(formData.get("shiftId"));
-    // "org" = claimable by staff at any of the owner's locations (M29).
+    // "org" = claimable by staff at any of the owner's locations (M29). The
+    // repo honours it only where cross-location cover is allowed (PROD-15).
     const scope = formData.get("scope") === "org" ? "org" : "location";
     const res = await repo.postOpenShift(shiftId, scope);
     if (!res.ok) {
@@ -140,7 +143,7 @@ export default async function ShiftsPage({
         subtitle="Shift swaps and open shifts. Staff offer up a shift or claim an open one; you approve the handover. The original person stays on until you approve a replacement."
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.approved ? (
         <Banner tone="success">
           Claim approved — the shift was handed over.

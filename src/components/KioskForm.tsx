@@ -25,7 +25,11 @@ export const kioskCls = {
   link: "text-[14px] font-semibold text-[#5FA875] hover:underline",
 } as const;
 
-/** Dark success panel: green tick, message, Done link back. */
+/**
+ * Dark success panel: green tick, message, Done link back. A polite live
+ * region, so a screen-reader user hears the outcome (the whole interaction on
+ * these surfaces is submit-then-read-the-result).
+ */
 export function KioskSuccess({
   message,
   backHref,
@@ -34,7 +38,10 @@ export function KioskSuccess({
   backHref: string;
 }) {
   return (
-    <div className="mt-2 w-full rounded-[22px] border border-[#166534] bg-[#14532D] p-9 text-center">
+    <div
+      role="status"
+      className="mt-2 w-full rounded-[22px] border border-[#166534] bg-[#14532D] p-9 text-center"
+    >
       <div className="mx-auto mb-[18px] flex h-[64px] w-[64px] items-center justify-center rounded-full bg-[#5FA875]">
         <span className="material-symbols-rounded fill text-[38px] text-[#111827]">
           check

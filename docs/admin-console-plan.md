@@ -30,7 +30,7 @@ has one or more **locations** (`business` rows) and an org-wide staff pool.
    method). An admin has no org and reaches a tenant only through impersonation.
 3. **Impersonation is signed, short-lived, and re-validated every request.** The
    grant rides in an httpOnly, AUTH_SECRET-signed cookie
-   (`src/lib/admin/impersonation.ts`, 2 h TTL) bound to (admin, org, entry
+   (`src/lib/admin/impersonation.ts`, 30 min TTL) bound to (admin, org, entry
    location). `resolveImpersonation` re-checks the HMAC + freshness, that the
    acting user is STILL a `platform_admin` (revoking admin instantly ends it),
    and that the bound location still belongs to the bound org. Nothing is stored

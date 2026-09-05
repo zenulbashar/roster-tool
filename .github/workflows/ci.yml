@@ -44,6 +44,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # SEC-04: any high/critical advisory in a PRODUCTION dependency fails the
+      # build. Dev-only tooling is reported by `npm audit` but doesn't block.
+      # Accepted risks (with mitigations + review triggers) live in SECURITY.md.
+      - name: Audit production dependencies
+        run: npm audit --audit-level=high --omit=dev
+
+      # A CycloneDX SBOM of the production dependency tree, per run, for
+      # security questionnaires and incident triage.
+      - name: Generate SBOM
+        run: npm sbom --sbom-format cyclonedx --omit dev > sbom.cdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
+          retention-days: 30
+
       - name: Run database migrations
         run: npm run db:migrate
 
@@ -56,14 +74,84 @@ jobs:
       - name: Format check
         run: npm run format:check
 
-      - name: Test
-        run: npm test
+      # The suite with V8 coverage of src/lib (TEST-01). The ratchet compares
+      # the totals with the checked-in coverage-baseline.json: coverage may
+      # rise freely (bump the baseline to lock it in) and must never fall.
+      - name: Test (with coverage)
+        run: npm run test:coverage
+
+      - name: Coverage ratchet
+        run: npm run coverage:ratchet
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage/lcov.info
+            coverage/coverage-summary.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   # ---------------------------------------------------------------------------
-  # Auto-apply pending DB migrations to PRODUCTION after a merge to main.
+  # Rehearse pending DB migrations on STAGING before anyone is asked to approve
+  # them for production (OPS-03). Staging is a Neon BRANCH of production, so
+  # the rehearsal runs against the real schema and data shape.
   #
-  # Prerequisite GitHub Actions secrets (Settings -> Secrets and variables ->
-  # Actions). A failing job is self-documenting via this block:
+  # Prerequisite: the `staging` GitHub Environment carries the secret
+  #   - STAGING_DATABASE_URL : the DIRECT (non-pooled) connection string of the
+  #                            Neon branch named `staging`.
+  # FAIL CLOSED: without it this job stops with the message below and
+  # `migrate-prod` does not run — apply by hand (README → Production
+  # deployment → step 1) or set the secret. Setup + the deploy-order caveat:
+  # docs/operations.md → "Staging and the migration gate".
+  # ---------------------------------------------------------------------------
+  migrate-staging:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: staging
+    concurrency:
+      group: migrate-staging
+      cancel-in-progress: false
+
+    steps:
+      - name: Require the staging database secret
+        env:
+          STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          if [ -z "$STAGING_DATABASE_URL" ]; then
+            echo "::error::STAGING_DATABASE_URL is not set. Create a Neon branch named 'staging' from production and add its DIRECT connection string as a secret on the 'staging' GitHub Environment (docs/operations.md, section 5). Production migrations are blocked until then; apply them by hand if needed (README, Production deployment, step 1)."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Same script, same idempotency as production: applied migrations are
+      # skipped, and a failure applies nothing (one transaction).
+      - name: Apply migrations to staging
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+
+  # ---------------------------------------------------------------------------
+  # Apply pending DB migrations to PRODUCTION after a merge to main — once the
+  # staging rehearsal passed AND a reviewer approved the `production`
+  # Environment deployment (GitHub → Settings → Environments → production →
+  # Required reviewers; the approval is recorded on the run).
+  #
+  # Prerequisite GitHub Actions secrets (on the `production` Environment, or
+  # repository-wide). A failing job is self-documenting via this block:
   #   - PROD_DATABASE_URL : the DIRECT (non-pooled) Neon connection string.
   #                         pg-boss/migrations need session mode, so this must
   #                         NOT be the pooled URL the web app uses.
@@ -73,25 +161,31 @@ jobs:
   #
   # SCOPE / SAFETY: this job is for ADDITIVE / expand migrations ONLY (new
   # tables, columns, indexes). DESTRUCTIVE migrations (drop / rename / retype a
-  # column or table) must be run MANUALLY using the expand/contract pattern and
-  # are NEVER applied through this job. There is deliberately no destructive
-  # path here.
+  # column or table) must be run MANUALLY using the expand/contract pattern
+  # (docs/operations.md, section 5.3) and are NEVER applied through this job.
+  # There is deliberately no destructive path here.
   #
   # Vercel is NOT gated or triggered from this job: it auto-deploys on push to
   # main independently. For additive migrations the concurrent order (migrate vs
-  # deploy) is safe — new code tolerates the old schema and old code ignores the
-  # new schema either way.
+  # deploy) is safe only while the new code tolerates the old schema — when a
+  # hot page needs the new column the moment it deploys, apply the migration
+  # by hand BEFORE merging, or have the approver ready (operations.md, 5.2).
   # ---------------------------------------------------------------------------
   migrate-prod:
     runs-on: ubuntu-latest
 
-    # Only after `build` is green: a red main never migrates.
-    needs: build
+    # Only after `build` is green AND the staging rehearsal passed: a red main
+    # never migrates, and neither does a migration that failed on staging.
+    needs: [build, migrate-staging]
 
     # Only on a real push to main (i.e. after a PR merges) — never on PRs or
     # preview branches. The `pull_request` event and pushes to other branches
     # both fall through this guard.
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    # The approval gate (OPS-03): GitHub holds this job until a required
+    # reviewer of the `production` Environment approves it.
+    environment: production
 
     # Serialise migration runs. Overlapping merges QUEUE instead of running two
     # migrators at once (which can deadlock / race drizzle's migrations table).

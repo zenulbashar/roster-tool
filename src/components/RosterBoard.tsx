@@ -10,9 +10,11 @@
  * All maths come from the pure src/lib/assignment-schedule.ts; all writes go
  * through server actions passed in as props (each one re-validates and
  * tenant-scopes on the server — this component is presentation + gesture
- * only). The tap-a-name editor below the board remains the fully
- * keyboard-accessible path; here, chips are buttons that open the schedule
- * editor, and dragging is a pointer shortcut for the same moves.
+ * only). Chips carry a button that opens the schedule editor and a "move"
+ * handle that picks the chip up for the KEYBOARD (Space/Enter, arrows, drop;
+ * see src/lib/board-keyboard.ts — a logical walk over the grid, with every
+ * step and drop spoken through dnd-kit's live region). The tap-a-name editor
+ * below the board remains as a second, form-based path for the same moves.
  */
 
 import {
@@ -23,11 +25,13 @@ import {
   useTransition,
   useEffect,
   useCallback,
+  type KeyboardEventHandler,
 } from "react";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
   DragOverlay,
+  KeyboardSensor,
   PointerSensor,
   pointerWithin,
   rectIntersection,
@@ -35,11 +39,28 @@ import {
   useDroppable,
   useSensor,
   useSensors,
+  type Announcements,
   type CollisionDetection,
   type DragEndEvent,
   type DragStartEvent,
+  type KeyboardCoordinateGetter,
 } from "@dnd-kit/core";
 import { avatarColor } from "@/lib/avatar";
+import {
+  BOARD_SCREEN_READER_INSTRUCTIONS,
+  announceCancel,
+  announceEnd,
+  announceOver,
+  announceStart,
+  directionForKey,
+  droppableId,
+  homeTarget,
+  nextBoardTarget,
+  parseDraggableId,
+  parseDroppableId,
+  speakDate,
+  type BoardSpeech,
+} from "@/lib/board-keyboard";
 import { formatTimeOnly, formatTimeRange, formatDateOnly } from "@/lib/time";
 import {
   ASSIGNMENT_BREAK_OPTIONS,
@@ -270,6 +291,11 @@ export function RosterBoard(props: Props) {
     shiftId: string;
     staffId: string | null;
   } | null>(null);
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  // Keyboard drags: the cell the arrow keys have walked to (null until the
+  // first arrow press), and where to put focus once the drop has painted.
+  const keyboardTargetRef = useRef<string | null>(null);
+  const pendingFocusRef = useRef<string | null>(null);
 
   const showToast = useCallback((tone: "ok" | "error", msg: string) => {
     setToast({ tone, msg });
@@ -386,19 +412,114 @@ export function RosterBoard(props: Props) {
 
   /* ----------------------------- drag logic ------------------------------ */
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  // The grid the keyboard walks: people in render order, then the Open row.
+  const gridRef = useRef({ staffIds: [] as string[], days: [] as string[] });
+  gridRef.current = {
+    staffIds: props.staff.map((m) => m.id),
+    days: props.days,
+  };
+
+  /**
+   * Keyboard moves are a LOGICAL walk over the grid (src/lib/board-keyboard):
+   * each arrow press picks the neighbouring cell by (person, day) — never a
+   * geometric guess — remembers it, and returns that cell's rect so the drag
+   * overlay visibly lands on it. Stable identity: reads live data via refs.
+   */
+  const keyboardCoordinates: KeyboardCoordinateGetter = useCallback(
+    (event, { active, context }) => {
+      const direction = directionForKey(event.code);
+      if (!direction) return;
+      event.preventDefault();
+      const source = parseDraggableId(String(active));
+      if (!source) return;
+      const current = keyboardTargetRef.current
+        ? parseDroppableId(keyboardTargetRef.current)
+        : homeTarget(source, (id) => shiftById.get(id)?.date);
+      if (!current || current.kind === "oblock") return;
+      const next = nextBoardTarget(current, direction, {
+        ...gridRef.current,
+        allowOpenRow: source.kind === "assignment",
+      });
+      if (!next) return;
+      const id = droppableId(next);
+      const rect = context.droppableRects.get(id);
+      if (!rect) return;
+      keyboardTargetRef.current = id;
+      return { x: rect.left, y: rect.top };
+    },
+    [shiftById],
   );
 
-  // Prefer the innermost target: a specific open block beats its day cell.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: keyboardCoordinates }),
+  );
+
+  // Pointer: prefer the innermost target (a specific open block beats its day
+  // cell). Keyboard (no pointer coordinates): the target is exactly the cell
+  // the arrow keys walked to, so what is announced is what a drop does.
   const collision: CollisionDetection = useCallback((args) => {
+    if (args.pointerCoordinates === null && keyboardTargetRef.current) {
+      const id = keyboardTargetRef.current;
+      const container = args.droppableContainers.find((c) => c.id === id);
+      if (container) {
+        return [{ id, data: { droppableContainer: container, value: 0 } }];
+      }
+    }
     const within = pointerWithin(args);
     const pool = within.length > 0 ? within : rectIntersection(args);
     const block = pool.find((c) => String(c.id).startsWith("oblock:"));
     return block ? [block] : pool;
   }, []);
 
+  /* --------------------------- announcements ----------------------------- */
+
+  const speech = useMemo<BoardSpeech>(
+    () => ({
+      shift: (id) => shiftById.get(id),
+      staffName: (id) => staffById.get(id)?.name,
+      availability: (shiftId, staffId) =>
+        props.availability[`${shiftId}:${staffId}`] ?? "unknown",
+      onLeave: (staffId, date) => Boolean(props.leave[`${staffId}:${date}`]),
+      matchingShiftOn: (shiftId, date) => {
+        const source = shiftById.get(shiftId);
+        if (!source) return null;
+        return findMatchingShiftOnDate(props.shifts, source, date);
+      },
+    }),
+    [shiftById, staffById, props.availability, props.leave, props.shifts],
+  );
+
+  const announcements = useMemo<Announcements>(
+    () => ({
+      onDragStart: ({ active }) => announceStart(String(active.id), speech),
+      onDragOver: ({ active, over }) =>
+        announceOver(String(active.id), over ? String(over.id) : null, speech),
+      onDragEnd: ({ active, over }) =>
+        announceEnd(String(active.id), over ? String(over.id) : null, speech),
+      onDragCancel: ({ active }) => announceCancel(String(active.id), speech),
+    }),
+    [speech],
+  );
+
+  // After a keyboard drop the moved chip re-renders under a NEW draggable id,
+  // so dnd-kit's own focus restore can't find it. Put focus on the chip where
+  // it landed (or the board itself) once the optimistic paint is in.
+  useEffect(() => {
+    const selector = pendingFocusRef.current;
+    if (!selector) return;
+    pendingFocusRef.current = null;
+    const root = boardRef.current;
+    if (!root) return;
+    const el =
+      root.querySelector<HTMLElement>(selector) ??
+      root.querySelector<HTMLElement>("[data-board-grid]");
+    el?.focus();
+  }, [optimistic]);
+
   function onDragStart(ev: DragStartEvent) {
+    keyboardTargetRef.current = null;
+    pendingFocusRef.current = null;
     const id = String(ev.active.id);
     if (id.startsWith("a:")) {
       const [, shiftId = "", staffId = ""] = id.split(":");
@@ -412,10 +533,17 @@ export function RosterBoard(props: Props) {
   function onDragEnd(ev: DragEndEvent) {
     const drag = dragging;
     setDragging(null);
+    keyboardTargetRef.current = null;
     if (!drag || !ev.over) return;
     const overId = String(ev.over.id);
     const sourceShift = shiftById.get(drag.shiftId);
     if (!sourceShift) return;
+    const viaKeyboard =
+      typeof KeyboardEvent !== "undefined" &&
+      ev.activatorEvent instanceof KeyboardEvent;
+    const focusAfter = (selector: string) => {
+      if (viaKeyboard) pendingFocusRef.current = selector;
+    };
 
     if (drag.kind === "assignment") {
       const staffId = drag.staffId!;
@@ -428,6 +556,11 @@ export function RosterBoard(props: Props) {
           toDate === sourceShift.date
             ? sourceShift
             : findMatchingShiftOnDate(props.shifts, sourceShift, toDate);
+        if (clientTarget) {
+          focusAfter(
+            `[data-chip="${clientTarget.id}:${toStaffId}"] [data-drag-handle]`,
+          );
+        }
         run(
           clientTarget
             ? {
@@ -453,6 +586,7 @@ export function RosterBoard(props: Props) {
       } else if (overId.startsWith("oblock:")) {
         const toShiftId = overId.slice("oblock:".length);
         if (toShiftId === drag.shiftId) return;
+        focusAfter(`[data-chip="${toShiftId}:${staffId}"] [data-drag-handle]`);
         run(
           {
             type: "move",
@@ -469,6 +603,7 @@ export function RosterBoard(props: Props) {
           "Moved to the open shift",
         );
       } else if (overId.startsWith("open:")) {
+        focusAfter(`[data-open-block="${drag.shiftId}"]`);
         run(
           { type: "unassign", shiftId: drag.shiftId, staffId },
           () =>
@@ -485,6 +620,11 @@ export function RosterBoard(props: Props) {
     // Dragging an open block onto a person's cell assigns them.
     if (drag.kind === "open" && overId.startsWith("cell:")) {
       const [, toStaffId = "", toDate = ""] = overId.split(":");
+      if (toDate === sourceShift.date) {
+        focusAfter(
+          `[data-chip="${drag.shiftId}:${toStaffId}"] [data-drag-handle]`,
+        );
+      }
       run(
         toDate === sourceShift.date
           ? { type: "assign", shiftId: drag.shiftId, staffId: toStaffId }
@@ -565,14 +705,28 @@ export function RosterBoard(props: Props) {
       <DndContext
         sensors={sensors}
         collisionDetection={collision}
+        accessibility={{
+          announcements,
+          screenReaderInstructions: {
+            draggable: BOARD_SCREEN_READER_INSTRUCTIONS,
+          },
+        }}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
-        onDragCancel={() => setDragging(null)}
+        onDragCancel={() => {
+          keyboardTargetRef.current = null;
+          setDragging(null);
+        }}
       >
-        <div className="overflow-hidden rounded-[16px] border border-[var(--color-border)] bg-white shadow-[0_1px_3px_rgba(17,24,39,0.05)]">
+        <div
+          ref={boardRef}
+          className="overflow-hidden rounded-[16px] border border-[var(--color-border)] bg-white shadow-[0_1px_3px_rgba(17,24,39,0.05)]"
+        >
           <div className="max-h-[560px] overflow-auto">
             <div
-              className="grid min-w-[1060px]"
+              data-board-grid
+              tabIndex={-1}
+              className="grid min-w-[1060px] outline-none"
               style={{ gridTemplateColumns: gridCols }}
             >
               {/* Header row */}
@@ -1034,12 +1188,17 @@ function AssignmentChip({
   onClear: (pair: PairInput) => void;
 }) {
   const suggested = assignment.status === "suggested";
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: `a:${shift.id}:${member.id}`,
-    disabled: suggested,
-  });
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } =
+    useDraggable({
+      id: `a:${shift.id}:${member.id}`,
+      disabled: suggested,
+    });
   const schedule = resolveSchedule(shift, assignment);
   const pair: PairInput = { shiftId: shift.id, staffMemberId: member.id };
+  // Pointer drags start anywhere on the chip; the KEYBOARD picks it up from
+  // the move handle only (dnd-kit's activator check), so Enter on the inner
+  // "change times" button still opens the editor.
+  const { onKeyDown: keyboardListener, ...pointerListeners } = listeners ?? {};
 
   if (suggested) {
     return (
@@ -1092,8 +1251,7 @@ function AssignmentChip({
   return (
     <div
       ref={setNodeRef}
-      {...listeners}
-      {...attributes}
+      {...pointerListeners}
       data-chip={`${shift.id}:${member.id}`}
       className={`group relative mb-1 min-h-[62px] cursor-grab rounded-[8px] px-[9px] py-2 transition-transform hover:-translate-y-px hover:shadow-[0_5px_14px_rgba(17,24,39,0.11)] ${
         isDragging ? "opacity-40" : ""
@@ -1108,6 +1266,21 @@ function AssignmentChip({
         className="absolute right-2 top-2 h-[9px] w-[9px] rounded-full"
         style={{ backgroundColor: AVAIL_DOT[availability] }}
       />
+      <button
+        type="button"
+        ref={setActivatorNodeRef}
+        onKeyDown={
+          keyboardListener as
+            | KeyboardEventHandler<HTMLButtonElement>
+            | undefined
+        }
+        {...attributes}
+        data-drag-handle
+        aria-label={`Move ${member.name}'s ${shift.label} shift, ${speakDate(shift.date)}`}
+        className="absolute bottom-1.5 right-1 z-[1] flex h-[22px] w-[22px] items-center justify-center rounded-[6px] text-[#6B7280] opacity-0 transition-opacity hover:bg-white/70 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-brand)] group-hover:opacity-100"
+      >
+        <Icon name="drag_indicator" className="text-[18px]" />
+      </button>
       <button
         type="button"
         onClick={() => onOpenEditor(pair)}
@@ -1273,9 +1446,10 @@ function OpenBlock({
   filled: number;
   suggestedNames: string[];
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: `o:${shift.id}`,
-  });
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } =
+    useDraggable({
+      id: `o:${shift.id}`,
+    });
   const { setNodeRef: setDropRef, isOver } = useDroppable({
     id: `oblock:${shift.id}`,
   });
@@ -1285,9 +1459,11 @@ function OpenBlock({
       ref={(el) => {
         setNodeRef(el);
         setDropRef(el);
+        setActivatorNodeRef(el);
       }}
       {...listeners}
       {...attributes}
+      aria-label={`Move the open ${shift.label} shift, ${speakDate(shift.date)}, onto a person`}
       data-open-block={shift.id}
       className={`mb-1 flex min-h-[62px] cursor-grab flex-col gap-0.5 rounded-[8px] border-[1.5px] border-dashed px-[9px] py-2 ${
         filled > 0 ? "border-[var(--color-warning)]" : "border-[#CBD5E1]"

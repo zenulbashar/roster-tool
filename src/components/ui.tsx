@@ -376,11 +376,21 @@ export function KpiTile({
 // Banner
 // ---------------------------------------------------------------------------
 
+export type BannerTone = "info" | "success" | "warn" | "error";
+
+/**
+ * Result / notice banner. Every tone is a LIVE REGION so a screen reader hears
+ * the outcome of the action that produced it (WCAG 4.1.3): `error` is an
+ * assertive `role="alert"` — the thing a user must hear now ("That PIN didn't
+ * match", "Couldn't save"); the other tones are a polite `role="status"`.
+ * Use `error` for a failed action's message and `warn` for a standing caution
+ * ("3 shifts are understaffed", "Xero needs reconnecting").
+ */
 export function Banner({
   tone = "info",
   children,
 }: {
-  tone?: "info" | "success" | "warn";
+  tone?: BannerTone;
   children: ReactNode;
 }) {
   // Info stays blue (links/info banners are deliberately not green).
@@ -389,10 +399,12 @@ export function Banner({
     success:
       "bg-[var(--color-success-bg)] text-[var(--color-ok)] border-[var(--color-success-border)]",
     warn: "bg-[var(--color-warning-bg)] text-[var(--color-warn)] border-amber-200",
+    error:
+      "bg-[var(--color-danger-bg)] text-[var(--color-danger)] border-[#FECACA]",
   } as const;
   return (
     <div
-      role="status"
+      role={tone === "error" ? "alert" : "status"}
       className={`flex items-center gap-2.5 rounded-[11px] border px-[15px] py-[11px] text-[12.5px] font-medium ${tones[tone]}`}
     >
       {children}

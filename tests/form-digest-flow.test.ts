@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { businesses, formResponses, users } from "@/lib/db/schema";
+import { businesses, formResponses } from "@/lib/db/schema";
 import { createTenantRepo, type TenantRepo } from "@/lib/tenant/repository";
 import { handleFormResponseDigests } from "@/lib/jobs/handlers";
 import type { FormFieldInput } from "@/lib/validation";
+import { attachOwner } from "./helpers/org";
 
 /**
  * The daily form-response email digest (M35) against the real DB: one
@@ -93,10 +94,9 @@ describe("form response digest flow", () => {
     repoA = createTenantRepo(bizA);
     repoB = createTenantRepo(bizB);
 
-    await db.insert(users).values([
-      { email: `owner-a-${crypto.randomUUID()}@digest.test`, businessId: bizA },
-      { email: `owner-b-${crypto.randomUUID()}@digest.test`, businessId: bizB },
-    ]);
+    // Owners via org membership, as in production (TEST-02).
+    await attachOwner(bizA, `owner-a-${crypto.randomUUID()}@digest.test`);
+    await attachOwner(bizB, `owner-b-${crypto.randomUUID()}@digest.test`);
 
     feedbackId = await makeForm(repoA, "Customer feedback");
     surveyId = await makeForm(repoA, "Staff survey");
@@ -150,7 +150,14 @@ describe("form response digest flow", () => {
     expect(bEmails).toHaveLength(1);
     expect(bEmails[0]!.text).toContain("B-only form — 1 new response");
     expect(bEmails[0]!.text).not.toContain("Customer feedback");
-    expect(sent).toHaveLength(2);
+    // The sweep covers EVERY business in the shared test DB (other files'
+    // tenants included), so count only ours: exactly one each, none for the
+    // ownerless café.
+    expect(
+      sent.filter(
+        (e) => e.to.startsWith("owner-a-") || e.to.startsWith("owner-b-"),
+      ),
+    ).toHaveLength(2);
   });
 
   it("advances the cursor: an immediate re-run sends nothing", async () => {

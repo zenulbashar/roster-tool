@@ -6,13 +6,8 @@ import { createOrgRepo } from "@/lib/tenant/org-repository";
 import { resolvePersonalClockBusiness } from "@/lib/tenant/personal-clock-access";
 import { resolveOrgIdForBusiness } from "@/lib/tenant/org-access";
 import { PERSONAL_CLOCK_COOKIE } from "@/lib/kiosk-cookie";
-import {
-  verifyPin,
-  isLockedOut,
-  registerFailedAttempt,
-  clearedLockout,
-  PIN_LOCKOUT_MS,
-} from "@/lib/pin";
+import { authenticateStaffPinFromForm } from "@/lib/pin-auth";
+import { hashToken } from "@/lib/tokens";
 import { pinSchema, coordinatesSchema } from "@/lib/validation";
 import { isWithinRadius } from "@/lib/geo";
 import { businessDateOf, formatTimeOnly } from "@/lib/time";
@@ -80,7 +75,7 @@ export async function personalClockAction(
   const staffId = formData.get("staffId");
   const pinParsed = pinSchema.safeParse(formData.get("pin"));
   if (typeof staffId !== "string" || !staffId || !pinParsed.success) {
-    return { status: "error", message: "Enter your 4-digit PIN." };
+    return { status: "error", message: "Enter your PIN." };
   }
 
   // Coordinates must be present and valid. We guard for empty strings because
@@ -101,49 +96,15 @@ export async function personalClockAction(
   }
 
   const repo = createTenantRepo(business.businessId);
-  const staff = await repo.getStaff(staffId);
-  // Same generic message whether the person is missing, inactive or PIN-less.
-  if (!staff || !staff.active || !staff.pinHash) {
-    return { status: "error", message: "That PIN didn't match. Try again." };
-  }
-
   const now = new Date();
-  const lock = isLockedOut(
-    {
-      failedPinAttempts: staff.failedPinAttempts,
-      pinLockedUntil: staff.pinLockedUntil,
-    },
+  // The shared, rate-limited PIN core: device limit (this clock link) →
+  // per-staff escalating lockout → async verify. Generic errors throughout.
+  const auth = await authenticateStaffPinFromForm(repo, formData, {
+    deviceKey: hashToken(token),
     now,
-  );
-  if (lock.locked) {
-    const secs = Math.ceil(lock.retryAfterMs / 1000);
-    return {
-      status: "error",
-      message: `Too many wrong PINs. Please wait ${secs}s and try again.`,
-    };
-  }
-
-  if (!verifyPin(pinParsed.data, staff.pinHash)) {
-    const next = registerFailedAttempt(
-      {
-        failedPinAttempts: staff.failedPinAttempts,
-        pinLockedUntil: staff.pinLockedUntil,
-      },
-      now,
-    );
-    await repo.updateStaffLockout(staff.id, next);
-    if (next.pinLockedUntil) {
-      const secs = Math.ceil(PIN_LOCKOUT_MS / 1000);
-      return {
-        status: "error",
-        message: `Too many wrong PINs. Please wait ${secs}s and try again.`,
-      };
-    }
-    return { status: "error", message: "That PIN didn't match. Try again." };
-  }
-
-  // Correct PIN: wipe the brute-force counter.
-  await repo.updateStaffLockout(staff.id, clearedLockout());
+  });
+  if (!auth.ok) return { status: "error", message: auth.message };
+  const staff = auth.staff;
 
   // Geofence. Without a shop location we can't verify, so we block rather than
   // silently allow.
@@ -217,15 +178,27 @@ export async function personalClockLeaveAction(
       message: "This clock-in link is no longer active. Ask your manager.",
     };
   }
-  return submitStaffLeave(createTenantRepo(business.businessId), formData);
+  return submitStaffLeave(
+    createTenantRepo(business.businessId),
+    formData,
+    new Date(),
+    { deviceKey: hashToken(token) },
+  );
 }
 
-/** Resolve the personal-clock business from the cookie, or null. */
+/**
+ * Resolve the personal-clock business from the cookie, or null. Also yields
+ * the per-device PIN rate-limit key (the token's hash — never a staff id).
+ */
 async function personalClockRepo() {
   const cookieStore = await cookies();
   const token = cookieStore.get(PERSONAL_CLOCK_COOKIE)?.value ?? "";
   const business = await resolvePersonalClockBusiness(token);
-  return business ? createTenantRepo(business.businessId) : null;
+  if (!business) return null;
+  return {
+    repo: createTenantRepo(business.businessId),
+    deviceKey: hashToken(token),
+  };
 }
 
 const LINK_GONE = "This clock-in link is no longer active. Ask your manager.";
@@ -235,9 +208,11 @@ export async function personalClockReleaseAction(
   _prev: ShiftActionResult,
   formData: FormData,
 ): Promise<ShiftActionResult> {
-  const repo = await personalClockRepo();
-  if (!repo) return { status: "error", message: LINK_GONE };
-  return releaseShiftForStaff(repo, formData);
+  const k = await personalClockRepo();
+  if (!k) return { status: "error", message: LINK_GONE };
+  return releaseShiftForStaff(k.repo, formData, new Date(), {
+    deviceKey: k.deviceKey,
+  });
 }
 
 /** Claim an open shift from a staff member's own phone. */
@@ -245,9 +220,11 @@ export async function personalClockClaimAction(
   _prev: ShiftActionResult,
   formData: FormData,
 ): Promise<ShiftActionResult> {
-  const repo = await personalClockRepo();
-  if (!repo) return { status: "error", message: LINK_GONE };
-  return claimShiftForStaff(repo, formData);
+  const k = await personalClockRepo();
+  if (!k) return { status: "error", message: LINK_GONE };
+  return claimShiftForStaff(k.repo, formData, new Date(), {
+    deviceKey: k.deviceKey,
+  });
 }
 
 /** Cancel your own still-open offer from a staff member's own phone. */
@@ -255,9 +232,11 @@ export async function personalClockCancelOfferAction(
   _prev: ShiftActionResult,
   formData: FormData,
 ): Promise<ShiftActionResult> {
-  const repo = await personalClockRepo();
-  if (!repo) return { status: "error", message: LINK_GONE };
-  return withdrawOwnOffer(repo, formData);
+  const k = await personalClockRepo();
+  if (!k) return { status: "error", message: LINK_GONE };
+  return withdrawOwnOffer(k.repo, formData, new Date(), {
+    deviceKey: k.deviceKey,
+  });
 }
 
 /** Claim an org-scoped open shift from ANOTHER location (M29 Phase 3). */
@@ -275,6 +254,8 @@ export async function personalClockClaimOrgAction(
     createTenantRepo(business.businessId),
     createOrgRepo(orgId),
     formData,
+    new Date(),
+    { deviceKey: hashToken(token) },
   );
 }
 
@@ -283,7 +264,9 @@ export async function personalClockStockCheckAction(
   _prev: StockCheckResult,
   formData: FormData,
 ): Promise<StockCheckResult> {
-  const repo = await personalClockRepo();
-  if (!repo) return { status: "error", message: LINK_GONE };
-  return submitStockCheck(repo, formData);
+  const k = await personalClockRepo();
+  if (!k) return { status: "error", message: LINK_GONE };
+  return submitStockCheck(k.repo, formData, new Date(), {
+    deviceKey: k.deviceKey,
+  });
 }

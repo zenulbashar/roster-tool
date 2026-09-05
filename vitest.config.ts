@@ -22,6 +22,19 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["tests/**/*.test.ts", "src/**/*.test.ts"],
+    // TEST-01: coverage of the LOGIC layer (`src/lib`), where the suite runs
+    // real code against Postgres. Pages, components and server actions render
+    // in a browser and are out of scope here (the ratchet would otherwise be
+    // dominated by UI files no unit test can reach). Gate: a checked-in
+    // ratchet baseline (scripts/coverage-ratchet.mjs) — rise freely, never
+    // fall.
+    coverage: {
+      provider: "v8",
+      reporter: ["text-summary", "json-summary", "lcov"],
+      reportsDirectory: "coverage",
+      include: ["src/lib/**/*.ts"],
+      exclude: ["src/lib/**/*.test.ts", "src/lib/db/schema.ts"],
+    },
   },
   resolve: {
     alias: {

@@ -6,6 +6,7 @@ import { createTenantRepo } from "@/lib/tenant/repository";
 import { env } from "@/lib/env";
 import { generateToken } from "@/lib/tokens";
 import { PHOTO_RETENTION_DAYS, parsePhotoRetentionDays } from "@/lib/retention";
+import { LOCAL_HOURS, isLocalHour } from "@/lib/jobs/dispatch";
 import {
   coordinatesSchema,
   parseGeofenceRadius,
@@ -36,12 +37,13 @@ import {
   TextInput,
 } from "@/components/ui";
 import { ClearFlashCookie } from "@/components/ClearFlashCookie";
+import { flashCookieOptions, type FlashCookieName } from "@/lib/flash-cookie";
 import { UseMyLocationButton } from "@/components/UseMyLocationButton";
 
 const PATH = "/app/settings";
-const LINK_COOKIE = "kiosk_link_once";
-const CLOCK_LINK_COOKIE = "personal_clock_link_once";
-const XERO_INVITE_COOKIE = "xero_invite_once";
+const LINK_COOKIE = "kiosk_link_once" satisfies FlashCookieName;
+const CLOCK_LINK_COOKIE = "personal_clock_link_once" satisfies FlashCookieName;
+const XERO_INVITE_COOKIE = "xero_invite_once" satisfies FlashCookieName;
 
 export default async function SettingsPage({
   searchParams,
@@ -49,6 +51,7 @@ export default async function SettingsPage({
   searchParams: Promise<{
     error?: string;
     locationSaved?: string;
+    sendTimesSaved?: string;
     driveConnected?: string;
     driveDisconnected?: string;
     driveError?: string;
@@ -81,6 +84,8 @@ export default async function SettingsPage({
     : null;
   const hasClockLink = Boolean(business.personalClockTokenHash);
   const locationSet = business.latitude !== null && business.longitude !== null;
+  // PROD-15: the cross-location cover toggle only bites with 2+ locations.
+  const crossCoverPossible = (await repo.getOrgLocationCount()) > 1;
 
   // Google Drive document storage. The connect/callback live in API routes; the
   // owner manages the connection here.
@@ -126,17 +131,11 @@ export default async function SettingsPage({
     const repo = await ownerRepo();
     const { token, tokenHash } = generateToken();
     await repo.updateBusinessSettings({ kioskTokenHash: tokenHash });
-    // Stash the raw token in a short-lived flash cookie so the next render can
-    // show the full link once. Not httpOnly: a small client component clears it
-    // after display. Scoped to this page only.
+    // Stash the raw token in a short-lived, httpOnly flash cookie so the next
+    // render can show the full link once; a server action clears it after
+    // display (SEC-18 — the token must never be readable by page scripts).
     const cookieStore = await cookies();
-    cookieStore.set(LINK_COOKIE, token, {
-      path: PATH,
-      maxAge: 300,
-      httpOnly: false,
-      sameSite: "lax",
-      secure: env.NODE_ENV === "production",
-    });
+    cookieStore.set(LINK_COOKIE, token, flashCookieOptions(LINK_COOKIE));
     revalidatePath(PATH);
     redirect(PATH);
   }
@@ -195,19 +194,44 @@ export default async function SettingsPage({
     revalidatePath(PATH);
   }
 
+  /**
+   * PERF-03: when this location's daily sends happen, in its own local time.
+   * Validated to whole hours 0–23; the hourly dispatcher reads the columns.
+   */
+  async function setSendHours(formData: FormData) {
+    "use server";
+    const digestHourLocal = Number(formData.get("digestHourLocal"));
+    const reminderHourLocal = Number(formData.get("reminderHourLocal"));
+    if (!isLocalHour(digestHourLocal) || !isLocalHour(reminderHourLocal)) {
+      redirect(`${PATH}?error=${encodeURIComponent("Pick an hour for each")}`);
+    }
+    const repo = await ownerRepo();
+    await repo.updateBusinessSettings({ digestHourLocal, reminderHourLocal });
+    revalidatePath(PATH);
+    redirect(`${PATH}?sendTimesSaved=1`);
+  }
+
+  /** PROD-15: may staff from the owner's other locations cover shifts here? */
+  async function setCrossLocationCover(formData: FormData) {
+    "use server";
+    const allowCrossLocationCover = formData.get("enabled") === "true";
+    const repo = await ownerRepo();
+    await repo.updateBusinessSettings({ allowCrossLocationCover });
+    revalidatePath(PATH);
+    revalidatePath("/app/shifts");
+  }
+
   async function generateClockLink() {
     "use server";
     const repo = await ownerRepo();
     const { token, tokenHash } = generateToken();
     await repo.updateBusinessSettings({ personalClockTokenHash: tokenHash });
     const cookieStore = await cookies();
-    cookieStore.set(CLOCK_LINK_COOKIE, token, {
-      path: PATH,
-      maxAge: 300,
-      httpOnly: false,
-      sameSite: "lax",
-      secure: env.NODE_ENV === "production",
-    });
+    cookieStore.set(
+      CLOCK_LINK_COOKIE,
+      token,
+      flashCookieOptions(CLOCK_LINK_COOKIE),
+    );
     revalidatePath(PATH);
     redirect(PATH);
   }
@@ -277,13 +301,11 @@ export default async function SettingsPage({
     });
     // Show the raw link exactly once (only its hash is stored).
     const store = await cookies();
-    store.set(XERO_INVITE_COOKIE, token, {
-      path: PATH,
-      maxAge: 300,
-      httpOnly: false,
-      sameSite: "lax",
-      secure: env.NODE_ENV === "production",
-    });
+    store.set(
+      XERO_INVITE_COOKIE,
+      token,
+      flashCookieOptions(XERO_INVITE_COOKIE),
+    );
     revalidatePath(PATH);
     redirect(`${PATH}?xeroInvited=1`);
   }
@@ -308,7 +330,13 @@ export default async function SettingsPage({
         subtitle="Clock-in links, what you get notified about, and where documents are stored."
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
+      {sp.sendTimesSaved ? (
+        <Banner tone="success">
+          Send times saved — digests and reminders now go out at those hours in
+          this location&rsquo;s time zone.
+        </Banner>
+      ) : null}
       {sp.locationSaved ? (
         <Banner tone="success">Shop location saved.</Banner>
       ) : null}
@@ -320,7 +348,7 @@ export default async function SettingsPage({
           Google Drive disconnected. Files already in your Drive are untouched.
         </Banner>
       ) : null}
-      {sp.driveError ? <Banner tone="warn">{sp.driveError}</Banner> : null}
+      {sp.driveError ? <Banner tone="error">{sp.driveError}</Banner> : null}
       {sp.xeroConnected ? (
         <Banner tone="success">
           Xero connected. Confirm your organisation below to finish.
@@ -339,7 +367,7 @@ export default async function SettingsPage({
           Bookkeeper invite created — copy the link below and send it to them.
         </Banner>
       ) : null}
-      {sp.xeroError ? <Banner tone="warn">{sp.xeroError}</Banner> : null}
+      {sp.xeroError ? <Banner tone="error">{sp.xeroError}</Banner> : null}
 
       <div className="grid grid-cols-1 items-start gap-[18px] lg:grid-cols-2">
         {/* LEFT COLUMN */}
@@ -369,6 +397,11 @@ export default async function SettingsPage({
             <p className="mt-3 text-[11.5px] text-[#9CA3AF]">
               Display only — contact support to change account details.
             </p>
+            <div className="mt-3 border-t border-[#F3F4F6] pt-3">
+              <ButtonLink href="/app/activity" variant="ghost">
+                See recent changes to your account
+              </ButtonLink>
+            </div>
           </SectionCard>
 
           {/* Clock-in ------------------------------------------------- */}
@@ -576,8 +609,92 @@ export default async function SettingsPage({
 
         {/* RIGHT COLUMN */}
         <div className="flex flex-col gap-[18px]">
+          {/* Shift cover between locations (PROD-15) ----------------- */}
+          <SectionCard title="Shift cover between locations">
+            <p className="text-[13px] leading-relaxed text-[var(--color-text-secondary)]">
+              When this is on, a shift at this location that someone offers up
+              (or that you open up) can be claimed by staff from your other
+              locations. You still approve every handover, and the person
+              offering it up can keep it to this venue. When it&rsquo;s off,
+              shifts here are only ever covered by this location&rsquo;s own
+              team.
+            </p>
+            {!crossCoverPossible ? (
+              <p className="mt-2 text-[12px] text-[var(--color-text-muted)]">
+                You have one location, so this has no effect until you add
+                another.
+              </p>
+            ) : null}
+            <form action={setCrossLocationCover} className="mt-2">
+              <input
+                type="hidden"
+                name="enabled"
+                value={String(!business.allowCrossLocationCover)}
+              />
+              <button
+                type="submit"
+                role="switch"
+                aria-checked={business.allowCrossLocationCover}
+                className="flex w-full items-center justify-between gap-3 py-[10px] text-left"
+              >
+                <span className="block text-[13.5px] font-medium text-[#111827]">
+                  Let staff from my other locations cover shifts here
+                </span>
+                <Switch on={business.allowCrossLocationCover} />
+              </button>
+            </form>
+          </SectionCard>
+
           {/* Notifications ------------------------------------------- */}
           <SectionCard title="Notifications" bodyClassName="px-[18px] py-[6px]">
+            {/* PERF-03: per-location send times (business-local). */}
+            <form
+              action={setSendHours}
+              className="border-b border-[#F3F4F6] py-[12px]"
+            >
+              <p className="mb-2 text-[13.5px] font-medium text-[#111827]">
+                When we send
+                <span className="ml-1 text-[12px] font-normal text-[#9CA3AF]">
+                  ({business.timezone})
+                </span>
+              </p>
+              <div className="flex flex-wrap items-end gap-3">
+                <Field label="Morning digests">
+                  <select
+                    name="digestHourLocal"
+                    defaultValue={String(business.digestHourLocal)}
+                    className="block rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-[12px] py-[9px] text-[13.5px] text-[var(--color-ink)] outline-none focus:border-[var(--color-button)]"
+                  >
+                    {LOCAL_HOURS.map((h) => (
+                      <option key={h} value={h}>
+                        {hourLabel(h)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Tomorrow's-shift reminders">
+                  <select
+                    name="reminderHourLocal"
+                    defaultValue={String(business.reminderHourLocal)}
+                    className="block rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-surface)] px-[12px] py-[9px] text-[13.5px] text-[var(--color-ink)] outline-none focus:border-[var(--color-button)]"
+                  >
+                    {LOCAL_HOURS.map((h) => (
+                      <option key={h} value={h}>
+                        {hourLabel(h)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Button type="submit" variant="secondary">
+                  Save
+                </Button>
+              </div>
+              <p className="mt-2 text-[12px] text-[#9CA3AF]">
+                Certification, order and form-response digests use the first;
+                the staff &ldquo;you work tomorrow&rdquo; notice uses the
+                second.
+              </p>
+            </form>
             {NOTIFICATION_TYPES.map((type, i) => {
               const meta = NOTIFICATION_PREFS[type];
               const on = business[meta.column];
@@ -955,4 +1072,11 @@ export default async function SettingsPage({
       </div>
     </>
   );
+}
+
+/** "7:00 am" / "5:00 pm" for the send-time selects. */
+function hourLabel(h: number): string {
+  const suffix = h < 12 ? "am" : "pm";
+  const twelve = h % 12 === 0 ? 12 : h % 12;
+  return `${twelve}:00 ${suffix}`;
 }

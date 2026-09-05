@@ -16,6 +16,8 @@ import { hashToken } from "@/lib/tokens";
 
 export type KioskBusiness = {
   businessId: string;
+  /** The location's organisation — for feature-flag scope only (OPS-05). */
+  orgId: string | null;
   name: string;
   timezone: string;
   requireClockInPhoto: boolean;
@@ -31,6 +33,7 @@ export async function resolveKioskBusiness(
   const rows = await database
     .select({
       businessId: businesses.id,
+      orgId: businesses.orgId,
       name: businesses.name,
       timezone: businesses.timezone,
       requireClockInPhoto: businesses.requireClockInPhoto,

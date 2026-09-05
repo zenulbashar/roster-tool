@@ -23,6 +23,8 @@ import {
 } from "@/components/ui";
 import type { BadgeTone } from "@/components/ui";
 
+import { ConfirmDeleteCard } from "@/components/ConfirmDeleteCard";
+
 const PATH = "/app/certifications";
 
 const CERT_TYPES = Object.entries(CERT_TYPE_LABEL) as Array<[string, string]>;
@@ -70,6 +72,7 @@ export default async function CertificationsPage({
     deleted?: string;
     lead?: string;
     filter?: string;
+    confirmDelete?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -82,6 +85,8 @@ export default async function CertificationsPage({
     repo.listCertifications(),
     repo.listStaff({ activeOnly: true }),
   ]);
+  // A removal awaiting confirmation (UX-04).
+  const pendingDelete = certs.find((c) => c.id === sp.confirmDelete) ?? null;
 
   async function addCert(formData: FormData) {
     "use server";
@@ -136,6 +141,10 @@ export default async function CertificationsPage({
     "use server";
     const repo = await ownerRepo();
     const id = String(formData.get("id"));
+    // Two-step (UX-04): confirm first.
+    if (formData.get("confirmed") !== "1") {
+      redirect(`${PATH}?confirmDelete=${encodeURIComponent(id)}`);
+    }
     await repo.deleteCertification(id);
     revalidatePath(PATH);
     redirect(`${PATH}?deleted=1`);
@@ -191,10 +200,31 @@ export default async function CertificationsPage({
         }
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.added ? <Banner tone="success">Certification added.</Banner> : null}
       {sp.updated ? (
         <Banner tone="success">Certification updated.</Banner>
+      ) : null}
+      {pendingDelete ? (
+        <ConfirmDeleteCard
+          title={`Remove ${pendingDelete.staffName}’s ${certDisplayLabel(
+            pendingDelete.certType,
+            pendingDelete.certLabel,
+          )}?`}
+          action={deleteCert}
+          fields={{ id: pendingDelete.id }}
+          confirmLabel="Remove certification"
+          cancelHref={PATH}
+        >
+          <p>
+            Expires {formatDateOnly(pendingDelete.expiryDate)}
+            {pendingDelete.referenceNumber
+              ? ` · Ref ${pendingDelete.referenceNumber}`
+              : ""}
+            . Its expiry reminders stop. Nothing else changes — certifications
+            never block rostering or clock-in. This can’t be undone.
+          </p>
+        </ConfirmDeleteCard>
       ) : null}
       {sp.deleted ? (
         <Banner tone="success">Certification removed.</Banner>

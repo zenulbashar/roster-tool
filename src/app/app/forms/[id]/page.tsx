@@ -196,8 +196,8 @@ export default async function FormEditorPage({
           Staff access off — your team can no longer fill this form.
         </Banner>
       ) : null}
-      {sp.anonError ? <Banner tone="warn">{sp.anonError}</Banner> : null}
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.anonError ? <Banner tone="error">{sp.anonError}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
 
       <Card className="mt-4">
         <div className="flex flex-wrap items-center justify-between gap-3">

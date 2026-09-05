@@ -137,7 +137,7 @@ describe("google drive connection + documents", () => {
 
   it("upload records a staff_document with the returned Drive ids", async () => {
     const client = new FakeDriveClient();
-    const doc = await uploadDocumentToDrive({
+    const doc = (await uploadDocumentToDrive({
       repo: repoA,
       client,
       staffMemberId: staffA,
@@ -145,7 +145,7 @@ describe("google drive connection + documents", () => {
       docType: "Contract",
       mimeType: "application/pdf",
       body: Buffer.from("pretend-pdf-bytes"),
-    });
+    }))!;
     expect(client.calls.uploadFile).toBe(1);
     expect(doc.driveFileId).toBe("file-1");
     expect(doc.driveWebLink).toContain("file-1");
@@ -244,7 +244,7 @@ describe("google drive connection + documents", () => {
     // Clear the reconnect flag so the Drive delete is attempted.
     const client = new FakeDriveClient();
     await completeConnection({ repo: repoA, client, code: "reconnect" });
-    const fresh = await uploadDocumentToDrive({
+    const fresh = (await uploadDocumentToDrive({
       repo: repoA,
       client,
       staffMemberId: staffA,
@@ -252,7 +252,7 @@ describe("google drive connection + documents", () => {
       docType: null,
       mimeType: "application/pdf",
       body: Buffer.from("z"),
-    });
+    }))!;
     const result = await deleteDocument({
       repo: repoA,
       client,

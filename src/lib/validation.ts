@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { SHIFT_COLOR_VALUES } from "@/lib/shift-colors";
+import { isValidNewPin } from "@/lib/pin";
 
 /** Shared input validation. Every server action validates with these. */
 
@@ -193,10 +194,23 @@ export const periodSchema = z
     path: ["endDate"],
   });
 
-/** A four-digit kiosk PIN. */
+/** A PIN as ENTERED on a staff surface: 4–6 digits (existing PINs are 4). */
 export const pinSchema = z
   .string()
-  .regex(/^\d{4}$/, "Enter a 4-digit PIN (numbers only)");
+  .regex(/^\d{4,6}$/, "Enter your PIN (4–6 digits, numbers only)");
+
+/**
+ * A NEW PIN the owner sets: 4–6 digits and not trivially guessable (no
+ * repeated digits, no runs like 1234, none of the most-used PINs). Existing
+ * PINs are never re-checked against this (SEC-06).
+ */
+export const newPinSchema = z
+  .string()
+  .regex(/^\d{4,6}$/, "Enter a PIN of 4–6 digits (numbers only)")
+  .refine(isValidNewPin, {
+    message:
+      "That PIN is too easy to guess — avoid repeats and runs like 1234 or 1111.",
+  });
 
 /* ----- Location / geofence ----- */
 

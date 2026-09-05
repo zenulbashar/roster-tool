@@ -31,3 +31,9 @@ npm-debug.log*
 
 # typescript incremental build info
 *.tsbuildinfo
+
+# vitest coverage output (the ratchet baseline coverage-baseline.json IS committed)
+coverage/
+
+# CI-generated software bill of materials
+sbom.cdx.json

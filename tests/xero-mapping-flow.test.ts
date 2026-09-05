@@ -45,24 +45,24 @@ describe("xero staff↔employee mapping", () => {
   });
 
   it("upserts (create then replace), gets, and lists mappings", async () => {
-    const created = await repoA.upsertXeroEmployeeMap({
+    const created = (await repoA.upsertXeroEmployeeMap({
       staffMemberId: staffA1,
       xeroEmployeeId: "emp-1",
       xeroEmployeeName: "Ava Employee",
       earningsRateId: "rate-1",
       payrollCalendarId: "cal-1",
-    });
+    }))!;
     expect(created.xeroEmployeeId).toBe("emp-1");
     expect(created.earningsRateId).toBe("rate-1");
 
     // Re-upsert the SAME staff member replaces in place (one per staff).
-    const replaced = await repoA.upsertXeroEmployeeMap({
+    const replaced = (await repoA.upsertXeroEmployeeMap({
       staffMemberId: staffA1,
       xeroEmployeeId: "emp-1b",
       xeroEmployeeName: "Ava Renamed",
       earningsRateId: "rate-2",
       payrollCalendarId: "cal-2",
-    });
+    }))!;
     expect(replaced.id).toBe(created.id); // same row
     expect(replaced.xeroEmployeeId).toBe("emp-1b");
     expect(replaced.earningsRateId).toBe("rate-2");
@@ -116,13 +116,13 @@ describe("xero staff↔employee mapping", () => {
     });
     expect(resolved.earningsRateId).toBe("ord");
 
-    const map = await repoA.upsertXeroEmployeeMap({
+    const map = (await repoA.upsertXeroEmployeeMap({
       staffMemberId: staffA1,
       xeroEmployeeId: "emp-1",
       xeroEmployeeName: "Ava Employee",
       earningsRateId: resolved.earningsRateId,
       payrollCalendarId: "cal-weekly",
-    });
+    }))!;
     expect(map.earningsRateId).toBe("ord");
     expect(map.payrollCalendarId).toBe("cal-weekly");
   });

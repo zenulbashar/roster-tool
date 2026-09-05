@@ -12,6 +12,7 @@ import {
   users,
   staffLoans,
   staffLocations,
+  orgMemberships,
 } from "@/lib/db/schema";
 import {
   sendEmail,
@@ -27,6 +28,9 @@ import {
 } from "@/lib/email";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { publishedRosters } from "@/lib/db/schema";
+import { blobStore } from "@/lib/blob/s3";
+import type { BlobStore } from "@/lib/blob/store";
+import { purgeExpiredClockPhotos } from "@/lib/clock-photo-storage";
 import { env } from "@/lib/env";
 import {
   formatDateTime,
@@ -45,6 +49,7 @@ import {
 } from "@/lib/order-reminder";
 import { buildShiftReminders } from "@/lib/staff-shift-reminder";
 import { digestWindowStart, orderDigestItems } from "@/lib/form-digest";
+import { sweepRetention, totalDeleted } from "@/lib/data-retention";
 import { logger } from "@/lib/logger";
 import { notifyOwner } from "@/lib/notifications";
 import type {
@@ -64,6 +69,37 @@ const defaultDeps: HandlerDeps = { send: sendEmail };
 
 export function magicLink(token: string): string {
   return `${env.APP_URL}/a/${token}`;
+}
+
+/**
+ * Email addresses of the OWNERS to notify for a location.
+ *
+ * Resolves through the M29 ownership edge — business → org →
+ * `org_membership` (role `owner`) → user — NOT the legacy `users.business_id`
+ * pointer alone. That pointer is written once, at onboarding, for the owner's
+ * FIRST location and never for locations added later, so a sweep keyed on it
+ * silently skipped every other location's reminders (COR-01). The legacy
+ * pointer is still unioned in for any business without an org (pre-backfill
+ * data / minimal fixtures); results are de-duplicated.
+ */
+export async function ownerEmailsForBusiness(
+  businessId: string,
+): Promise<string[]> {
+  const [viaOrg, viaLegacy] = await Promise.all([
+    db
+      .select({ email: users.email })
+      .from(businesses)
+      .innerJoin(orgMemberships, eq(orgMemberships.orgId, businesses.orgId))
+      .innerJoin(users, eq(users.id, orgMemberships.userId))
+      .where(
+        and(eq(businesses.id, businessId), eq(orgMemberships.role, "owner")),
+      ),
+    db
+      .select({ email: users.email })
+      .from(users)
+      .where(eq(users.businessId, businessId)),
+  ]);
+  return [...new Set([...viaOrg, ...viaLegacy].map((u) => u.email))];
 }
 
 /**
@@ -460,67 +496,12 @@ export async function handleCertificationReminders(
 
   let totalSent = 0;
   let businessesEmailed = 0;
-
   for (const biz of bizRows) {
-    const ownerEmails = (
-      await db
-        .select({ email: users.email })
-        .from(users)
-        .where(eq(users.businessId, biz.id))
-    ).map((u) => u.email);
-    if (ownerEmails.length === 0) continue;
-
-    const today = businessDateOf(now, biz.timezone);
-    const repo = createTenantRepo(biz.id);
-    const certs = await repo.listCertifications({ activeOnly: true });
-
-    const due = certs.flatMap((c) => {
-      const stage = dueReminderStage(
-        c.expiryDate,
-        today,
-        biz.leadDays,
-        c.lastReminderStage,
-      );
-      return stage ? [{ cert: c, stage }] : [];
-    });
-    if (due.length === 0) continue;
-
-    const items = due.map(({ cert }) => ({
-      staffName: cert.staffName,
-      certName: certDisplayLabel(cert.certType, cert.certLabel),
-      phrase: expiryPhrase(daysUntil(cert.expiryDate, today)),
-      expiryText: formatDateOnly(cert.expiryDate),
-    }));
-
-    const email = certificationReminderEmail({
-      businessName: biz.name,
-      items,
-    });
-    for (const to of ownerEmails) {
-      await deps.send({ ...email, to });
+    const sent = await remindCertificationsForBusiness(biz, now, deps);
+    if (sent > 0) {
+      totalSent += sent;
+      businessesEmailed += 1;
     }
-
-    // Advance cursors only after a successful send.
-    for (const { cert, stage } of due) {
-      await repo.updateCertReminderStage(cert.id, stage);
-    }
-
-    // Best-effort in-app notification mirroring the digest (email unchanged).
-    await notifyOwner(repo, {
-      type: "cert_expiring",
-      title:
-        due.length === 1
-          ? `${items[0]!.staffName}'s ${items[0]!.certName} ${items[0]!.phrase}`
-          : `${due.length} certifications need attention`,
-      body:
-        due.length === 1
-          ? `Expires ${items[0]!.expiryText}`
-          : "Some are expiring soon or have expired.",
-      linkPath: "/app/certifications",
-    });
-
-    totalSent += due.length;
-    businessesEmailed += 1;
   }
 
   logger.info(
@@ -528,6 +509,81 @@ export async function handleCertificationReminders(
     "Certification reminder sweep complete",
   );
   return totalSent;
+}
+
+/**
+ * The per-business body of the certification sweep: one location's digest,
+ * tenant-scoped through its own repo. Split out so it can be exercised for a
+ * single location (tests) and, later, dispatched as one job per business
+ * rather than one global serial loop. Returns the number of reminder lines
+ * sent (0 = nothing due, or no reachable owner).
+ */
+export async function remindCertificationsForBusiness(
+  biz: { id: string; name: string; timezone: string; leadDays: number },
+  now: Date = new Date(),
+  deps: HandlerDeps = defaultDeps,
+): Promise<number> {
+  const ownerEmails = await ownerEmailsForBusiness(biz.id);
+  if (ownerEmails.length === 0) {
+    // A tenant with no reachable owner is an operational anomaly, not a quiet
+    // day — say so, or a silent skip is indistinguishable from "nothing due".
+    logger.warn(
+      { businessId: biz.id },
+      "No owner recipient for business; skipping reminder",
+    );
+    return 0;
+  }
+
+  const today = businessDateOf(now, biz.timezone);
+  const repo = createTenantRepo(biz.id);
+  const certs = await repo.listCertifications({ activeOnly: true });
+
+  const due = certs.flatMap((c) => {
+    const stage = dueReminderStage(
+      c.expiryDate,
+      today,
+      biz.leadDays,
+      c.lastReminderStage,
+    );
+    return stage ? [{ cert: c, stage }] : [];
+  });
+  if (due.length === 0) return 0;
+
+  const items = due.map(({ cert }) => ({
+    staffName: cert.staffName,
+    certName: certDisplayLabel(cert.certType, cert.certLabel),
+    phrase: expiryPhrase(daysUntil(cert.expiryDate, today)),
+    expiryText: formatDateOnly(cert.expiryDate),
+  }));
+
+  const email = certificationReminderEmail({
+    businessName: biz.name,
+    items,
+  });
+  for (const to of ownerEmails) {
+    await deps.send({ ...email, to });
+  }
+
+  // Advance cursors only after a successful send.
+  for (const { cert, stage } of due) {
+    await repo.updateCertReminderStage(cert.id, stage);
+  }
+
+  // Best-effort in-app notification mirroring the digest (email unchanged).
+  await notifyOwner(repo, {
+    type: "cert_expiring",
+    title:
+      due.length === 1
+        ? `${items[0]!.staffName}'s ${items[0]!.certName} ${items[0]!.phrase}`
+        : `${due.length} certifications need attention`,
+    body:
+      due.length === 1
+        ? `Expires ${items[0]!.expiryText}`
+        : "Some are expiring soon or have expired.",
+    linkPath: "/app/certifications",
+  });
+
+  return due.length;
 }
 
 /**
@@ -557,55 +613,12 @@ export async function handleOrderReminders(
 
   let totalSuppliers = 0;
   let businessesEmailed = 0;
-
   for (const biz of bizRows) {
-    const ownerEmails = (
-      await db
-        .select({ email: users.email })
-        .from(users)
-        .where(eq(users.businessId, biz.id))
-    ).map((u) => u.email);
-    if (ownerEmails.length === 0) continue;
-
-    const today = businessDateOf(now, biz.timezone);
-    const repo = createTenantRepo(biz.id);
-    const [suppliers, statuses] = await Promise.all([
-      repo.listSuppliersForReminder(),
-      repo.itemsWithCurrentStatus(),
-    ]);
-
-    const items: ItemStatusForReminder[] = statuses
-      .filter((s) => s.status !== null)
-      .map((s) => ({
-        itemId: s.itemId,
-        name: s.name,
-        supplierId: s.supplierId,
-        status: s.status!,
-        quantity: s.quantity,
-      }));
-
-    const due = selectOrderReminders(suppliers, items, today);
-    if (due.length === 0) continue;
-
-    const email = orderReminderEmail({
-      businessName: biz.name,
-      suppliers: due.map((d) => ({
-        supplierName: d.supplierName,
-        deliveryText: formatDateOnly(d.deliveryDate),
-        needsOrder: d.needsOrder,
-        low: d.low,
-      })),
-    });
-    for (const to of ownerEmails) {
-      await deps.send({ ...email, to });
+    const sent = await remindOrdersForBusiness(biz, now, deps);
+    if (sent > 0) {
+      totalSuppliers += sent;
+      businessesEmailed += 1;
     }
-
-    // Advance cursors only after a successful send.
-    for (const d of due) {
-      await repo.markSupplierOrderReminded(d.supplierId, d.deliveryDate);
-    }
-    totalSuppliers += due.length;
-    businessesEmailed += 1;
   }
 
   logger.info(
@@ -613,6 +626,65 @@ export async function handleOrderReminders(
     "Order reminder sweep complete",
   );
   return totalSuppliers;
+}
+
+/**
+ * The per-business body of the order-reminder sweep (see
+ * `remindCertificationsForBusiness` for why it is split out). Returns the
+ * number of suppliers reminded (0 = nothing due, or no reachable owner).
+ */
+export async function remindOrdersForBusiness(
+  biz: { id: string; name: string; timezone: string },
+  now: Date = new Date(),
+  deps: HandlerDeps = defaultDeps,
+): Promise<number> {
+  const ownerEmails = await ownerEmailsForBusiness(biz.id);
+  if (ownerEmails.length === 0) {
+    logger.warn(
+      { businessId: biz.id },
+      "No owner recipient for business; skipping reminder",
+    );
+    return 0;
+  }
+
+  const today = businessDateOf(now, biz.timezone);
+  const repo = createTenantRepo(biz.id);
+  const [suppliers, statuses] = await Promise.all([
+    repo.listSuppliersForReminder(),
+    repo.itemsWithCurrentStatus(),
+  ]);
+
+  const items: ItemStatusForReminder[] = statuses
+    .filter((s) => s.status !== null)
+    .map((s) => ({
+      itemId: s.itemId,
+      name: s.name,
+      supplierId: s.supplierId,
+      status: s.status!,
+      quantity: s.quantity,
+    }));
+
+  const due = selectOrderReminders(suppliers, items, today);
+  if (due.length === 0) return 0;
+
+  const email = orderReminderEmail({
+    businessName: biz.name,
+    suppliers: due.map((d) => ({
+      supplierName: d.supplierName,
+      deliveryText: formatDateOnly(d.deliveryDate),
+      needsOrder: d.needsOrder,
+      low: d.low,
+    })),
+  });
+  for (const to of ownerEmails) {
+    await deps.send({ ...email, to });
+  }
+
+  // Advance cursors only after a successful send.
+  for (const d of due) {
+    await repo.markSupplierOrderReminded(d.supplierId, d.deliveryDate);
+  }
+  return due.length;
 }
 
 /**
@@ -635,6 +707,19 @@ export async function handlePhotoRetention(
     { businesses: rows.length, photosPurged: purged },
     "Clock-in photo retention sweep complete",
   );
+}
+
+/**
+ * Daily platform-level data retention (PERF-10): one explicit policy per
+ * table that used to grow without bound (see `src/lib/data-retention.ts`).
+ * Not tenant-scoped — these are infrastructure/notification rows swept by
+ * their own timestamps — and idempotent, so a retry is safe. Returns the
+ * total rows removed.
+ */
+export async function handleDataRetention(
+  now: Date = new Date(),
+): Promise<number> {
+  return totalDeleted(await sweepRetention(now));
 }
 
 /**
@@ -662,25 +747,39 @@ export async function handleStaffShiftReminders(
 
   let created = 0;
   for (const biz of bizRows) {
-    if (!biz.enabled) continue;
-    const tomorrow = addDays(businessDateOf(now, biz.timezone), 1);
-    const repo = createTenantRepo(biz.id);
-    const rows = await repo.listConfirmedShiftsOnDate(tomorrow);
-    for (const reminder of buildShiftReminders(rows, tomorrow)) {
-      const inserted = await repo.createStaffNotification({
-        staffMemberId: reminder.staffMemberId,
-        type: "shift_reminder",
-        title: reminder.title,
-        body: reminder.body,
-        dedupeKey: reminder.dedupeKey,
-      });
-      if (inserted) created++;
-    }
+    created += await remindShiftsForBusiness(biz, now);
   }
   logger.info(
     { businesses: bizRows.length, remindersCreated: created },
     "Staff shift reminder sweep complete",
   );
+  return created;
+}
+
+/**
+ * The per-business body of the staff shift-reminder sweep (see
+ * `remindCertificationsForBusiness` for why it is split out). Returns the
+ * number of notices created (0 when the business has the reminder off).
+ */
+export async function remindShiftsForBusiness(
+  biz: { id: string; timezone: string; enabled: boolean },
+  now: Date = new Date(),
+): Promise<number> {
+  if (!biz.enabled) return 0;
+  const tomorrow = addDays(businessDateOf(now, biz.timezone), 1);
+  const repo = createTenantRepo(biz.id);
+  const rows = await repo.listConfirmedShiftsOnDate(tomorrow);
+  let created = 0;
+  for (const reminder of buildShiftReminders(rows, tomorrow)) {
+    const inserted = await repo.createStaffNotification({
+      staffMemberId: reminder.staffMemberId,
+      type: "shift_reminder",
+      title: reminder.title,
+      body: reminder.body,
+      dedupeKey: reminder.dedupeKey,
+    });
+    if (inserted) created++;
+  }
   return created;
 }
 
@@ -701,55 +800,81 @@ export async function handleStaffLoanExpiry(
 
   let ended = 0;
   for (const biz of bizRows) {
-    const today = businessDateOf(now, biz.timezone);
-    const expired = await db
-      .select()
-      .from(staffLoans)
-      .where(
-        and(
-          eq(staffLoans.toBusinessId, biz.id),
-          eq(staffLoans.active, true),
-          lt(staffLoans.endDate, today),
-        ),
-      );
-    for (const loan of expired) {
-      await db.transaction(async (tx) => {
-        const [other] = await tx
-          .select({ id: staffLoans.id })
-          .from(staffLoans)
-          .where(
-            and(
-              eq(staffLoans.staffMemberId, loan.staffMemberId),
-              eq(staffLoans.toBusinessId, loan.toBusinessId),
-              eq(staffLoans.active, true),
-              ne(staffLoans.id, loan.id),
-            ),
-          );
-        if (!other) {
-          await tx
-            .update(staffLocations)
-            .set({ active: false })
-            .where(
-              and(
-                eq(staffLocations.businessId, loan.toBusinessId),
-                eq(staffLocations.staffMemberId, loan.staffMemberId),
-                isNotNull(staffLocations.loanId),
-              ),
-            );
-        }
-        await tx
-          .update(staffLoans)
-          .set({ active: false })
-          .where(eq(staffLoans.id, loan.id));
-      });
-      ended++;
-    }
+    ended += await expireLoansForBusiness(biz, now);
   }
   logger.info(
     { businesses: bizRows.length, loansEnded: ended },
     "Staff loan expiry sweep complete",
   );
   return ended;
+}
+
+/**
+ * The per-business body of the loan-expiry sweep: loans TO this location
+ * whose end date has passed in its local calendar. Returns loans ended.
+ */
+export async function expireLoansForBusiness(
+  biz: { id: string; timezone: string },
+  now: Date = new Date(),
+): Promise<number> {
+  const today = businessDateOf(now, biz.timezone);
+  const expired = await db
+    .select()
+    .from(staffLoans)
+    .where(
+      and(
+        eq(staffLoans.toBusinessId, biz.id),
+        eq(staffLoans.active, true),
+        lt(staffLoans.endDate, today),
+      ),
+    );
+  let ended = 0;
+  for (const loan of expired) {
+    await db.transaction(async (tx) => {
+      const [other] = await tx
+        .select({ id: staffLoans.id })
+        .from(staffLoans)
+        .where(
+          and(
+            eq(staffLoans.staffMemberId, loan.staffMemberId),
+            eq(staffLoans.toBusinessId, loan.toBusinessId),
+            eq(staffLoans.active, true),
+            ne(staffLoans.id, loan.id),
+          ),
+        );
+      if (!other) {
+        await tx
+          .update(staffLocations)
+          .set({ active: false })
+          .where(
+            and(
+              eq(staffLocations.businessId, loan.toBusinessId),
+              eq(staffLocations.staffMemberId, loan.staffMemberId),
+              isNotNull(staffLocations.loanId),
+            ),
+          );
+      }
+      await tx
+        .update(staffLoans)
+        .set({ active: false })
+        .where(eq(staffLoans.id, loan.id));
+    });
+    ended++;
+  }
+  return ended;
+}
+
+/**
+ * The per-business body of the photo-retention sweep. Returns photos purged.
+ */
+export async function purgePhotosForBusiness(
+  biz: { id: string },
+  now: Date = new Date(),
+  store: BlobStore | null = blobStore(),
+): Promise<number> {
+  // Objects first, then rows (PERF-06): a row whose object could not be
+  // deleted is kept for the next sweep.
+  return purgeExpiredClockPhotos(createTenantRepo(biz.id), store, now);
 }
 
 /**
@@ -780,42 +905,56 @@ export async function handleFormResponseDigests(
 
   let businessesEmailed = 0;
   for (const biz of bizRows) {
-    if (!biz.enabled) continue;
-    const ownerEmails = (
-      await db
-        .select({ email: users.email })
-        .from(users)
-        .where(eq(users.businessId, biz.id))
-    ).map((u) => u.email);
-    if (ownerEmails.length === 0) continue;
-
-    const repo = createTenantRepo(biz.id);
-    const counts = await repo.countResponsesSince(
-      digestWindowStart(biz.lastAt, now),
-      now,
-    );
-    if (counts.length === 0) continue;
-
-    const email = formResponseDigestEmail({
-      businessName: biz.name,
-      items: orderDigestItems(counts).map((c) => ({
-        title: c.title,
-        count: c.count,
-        url: `${env.APP_URL}/app/forms/${c.formId}/responses`,
-      })),
-    });
-    for (const to of ownerEmails) {
-      await deps.send({ ...email, to });
-    }
-
-    // Advance the cursor only after a successful send.
-    await db
-      .update(businesses)
-      .set({ formDigestLastAt: now })
-      .where(eq(businesses.id, biz.id));
-    businessesEmailed += 1;
+    if (await sendFormDigestForBusiness(biz, now, deps)) businessesEmailed += 1;
   }
 
   logger.info({ businessesEmailed }, "Form-response digest sweep complete");
   return businessesEmailed;
+}
+
+/**
+ * The per-business body of the form-digest sweep (see
+ * `remindCertificationsForBusiness` for why it is split out). Returns true
+ * when a digest was sent for this business.
+ */
+export async function sendFormDigestForBusiness(
+  biz: { id: string; name: string; enabled: boolean; lastAt: Date | null },
+  now: Date = new Date(),
+  deps: HandlerDeps = defaultDeps,
+): Promise<boolean> {
+  if (!biz.enabled) return false;
+  const ownerEmails = await ownerEmailsForBusiness(biz.id);
+  if (ownerEmails.length === 0) {
+    logger.warn(
+      { businessId: biz.id },
+      "No owner recipient for business; skipping reminder",
+    );
+    return false;
+  }
+
+  const repo = createTenantRepo(biz.id);
+  const counts = await repo.countResponsesSince(
+    digestWindowStart(biz.lastAt, now),
+    now,
+  );
+  if (counts.length === 0) return false;
+
+  const email = formResponseDigestEmail({
+    businessName: biz.name,
+    items: orderDigestItems(counts).map((c) => ({
+      title: c.title,
+      count: c.count,
+      url: `${env.APP_URL}/app/forms/${c.formId}/responses`,
+    })),
+  });
+  for (const to of ownerEmails) {
+    await deps.send({ ...email, to });
+  }
+
+  // Advance the cursor only after a successful send.
+  await db
+    .update(businesses)
+    .set({ formDigestLastAt: now })
+    .where(eq(businesses.id, biz.id));
+  return true;
 }

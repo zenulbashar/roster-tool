@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { organisations, businesses } from "@/lib/db/schema";
+import {
+  organisations,
+  businesses,
+  staffLocations,
+  staffLoans,
+} from "@/lib/db/schema";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { createOrgRepo } from "@/lib/tenant/org-repository";
 
@@ -94,12 +99,56 @@ describe("M29 org people + cross-location membership (Phase 2)", () => {
 
   it("removes a non-home membership but guards the home location", async () => {
     const orgRepo = createOrgRepo(org);
+    // An active loan TO that location, so removal has something to end.
+    expect(
+      (
+        await orgRepo.createLoan({
+          staffMemberId: personId,
+          toBusinessId: bizB,
+          startDate: "2026-06-01",
+          endDate: "2026-06-30",
+        })
+      ).ok,
+    ).toBe(true);
 
     const removed = await orgRepo.removePersonFromLocation(personId, bizB);
     expect(removed.ok).toBe(true);
     const repoB = createTenantRepo(bizB);
     expect((await repoB.listStaff()).some((s) => s.id === personId)).toBe(
       false,
+    );
+    // COR-07: a DEACTIVATION, not a delete — the row stays, inactive and
+    // untagged, and the loan to that location is ended with it.
+    const [row] = await db
+      .select({ active: staffLocations.active, loanId: staffLocations.loanId })
+      .from(staffLocations)
+      .where(
+        and(
+          eq(staffLocations.staffMemberId, personId),
+          eq(staffLocations.businessId, bizB),
+        ),
+      );
+    expect(row).toEqual({ active: false, loanId: null });
+    const loans = await db
+      .select({ active: staffLoans.active })
+      .from(staffLoans)
+      .where(
+        and(
+          eq(staffLoans.staffMemberId, personId),
+          eq(staffLoans.toBusinessId, bizB),
+        ),
+      );
+    expect(loans.length).toBeGreaterThan(0);
+    expect(loans.every((l) => l.active === false)).toBe(true);
+    expect(
+      (await orgRepo.listPeople()).find((p) => p.id === personId)?.locationIds,
+    ).not.toContain(bizB);
+
+    // Re-adding simply re-activates the same row.
+    expect((await orgRepo.addPersonToLocation(personId, bizB)).ok).toBe(true);
+    expect((await repoB.listStaff()).some((s) => s.id === personId)).toBe(true);
+    expect((await orgRepo.removePersonFromLocation(personId, bizB)).ok).toBe(
+      true,
     );
 
     // Home can't be removed (they'd vanish from their base).

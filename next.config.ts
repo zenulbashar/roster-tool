@@ -1,4 +1,9 @@
 import type { NextConfig } from "next";
+import {
+  SECURITY_HEADERS,
+  CAPABILITY_PAGE_HEADERS,
+  CAPABILITY_PAGE_SOURCES,
+} from "./src/lib/security-headers";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
@@ -9,6 +14,17 @@ const nextConfig: NextConfig = {
     // default server-action body limit is 1 MB. Leave headroom for the
     // multipart envelope.
     serverActions: { bodySizeLimit: "12mb" },
+  },
+  // Security headers (SEC-05) + noindex/no-referrer on the capability pages
+  // (SEC-08). The sets live in src/lib/security-headers.ts and are unit-tested.
+  async headers() {
+    return [
+      { source: "/:path*", headers: SECURITY_HEADERS },
+      ...CAPABILITY_PAGE_SOURCES.map((source) => ({
+        source,
+        headers: CAPABILITY_PAGE_HEADERS,
+      })),
+    ];
   },
 };
 

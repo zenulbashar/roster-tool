@@ -42,8 +42,9 @@ export function PersonalClockForm({
   // submit) so we can resolve coordinates first.
   const clockNow = () => {
     setGeoError(null);
-    if (!pinRef.current || pinRef.current.value.length !== 4) {
-      setGeoError("Enter your 4-digit PIN first.");
+    // PINs are 4–6 digits (SEC-06); the server re-validates the shape.
+    if (!pinRef.current || !/^\d{4,6}$/.test(pinRef.current.value)) {
+      setGeoError("Enter your PIN first.");
       return;
     }
     if (typeof navigator === "undefined" || !navigator.geolocation) {
@@ -70,7 +71,10 @@ export function PersonalClockForm({
 
   if (state.status === "success") {
     return (
-      <div className="mt-2 w-full rounded-[22px] border border-[#166534] bg-[#14532D] p-10 text-center">
+      <div
+        role="status"
+        className="mt-2 w-full rounded-[22px] border border-[#166534] bg-[#14532D] p-10 text-center"
+      >
         <div className="mx-auto mb-[18px] flex h-[72px] w-[72px] items-center justify-center rounded-full bg-[#5FA875]">
           <span className="material-symbols-rounded fill text-[42px] text-[#111827]">
             check
@@ -104,12 +108,12 @@ export function PersonalClockForm({
 
       {state.status === "error" ? (
         <div className="mt-4">
-          <Banner tone="warn">{state.message}</Banner>
+          <Banner tone="error">{state.message}</Banner>
         </div>
       ) : null}
       {geoError ? (
         <div className="mt-4">
-          <Banner tone="warn">{geoError}</Banner>
+          <Banner tone="error">{geoError}</Banner>
         </div>
       ) : null}
       {!locationConfigured ? (
@@ -135,13 +139,13 @@ export function PersonalClockForm({
             type="password"
             inputMode="numeric"
             autoComplete="off"
-            pattern="\d{4}"
-            maxLength={4}
+            pattern="\d{4,6}"
+            maxLength={6}
             required
             autoFocus
             placeholder="••••"
             className="block w-full rounded-[14px] border border-[#2A3344] bg-[#0E1320] px-4 py-4 text-center font-archivo text-3xl tracking-[0.5em] text-white outline-none placeholder:text-[#4B5563] focus:border-[#5FA875]"
-            aria-label="Your 4-digit PIN"
+            aria-label="Your PIN"
           />
         </label>
         <button

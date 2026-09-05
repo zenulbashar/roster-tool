@@ -1,4 +1,4 @@
-import { and, asc, eq, ne, isNotNull } from "drizzle-orm";
+import { and, asc, eq, ne, isNotNull, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db as defaultDb, type Db } from "@/lib/db";
 import {
@@ -12,6 +12,8 @@ import {
   rosterAssignments,
 } from "@/lib/db/schema";
 import { claimEligibility } from "@/lib/shift-offer";
+import { appendAuditEventRow, listAuditEventRows } from "@/lib/audit/store";
+import type { NewAuditEvent } from "@/lib/audit/events";
 
 /**
  * Organisation-scoped data access for the multi-location feature (M29). Mirrors
@@ -80,11 +82,23 @@ export function createOrgRepo(orgId: string, database: Db = defaultDb) {
 
     /** How many locations this org has (for "can't delete the last one" etc.). */
     async countLocations(): Promise<number> {
-      const rows = await database
-        .select({ id: businesses.id })
+      const [row] = await database
+        .select({ count: sql<number>`count(*)::int` })
         .from(businesses)
         .where(eq(businesses.orgId, orgId));
-      return rows.length;
+      return row?.count ?? 0;
+    },
+
+    /* ----- Audit trail (OPS-04): org-level writes ----- */
+
+    /** Append one event to THIS org's chain (business_id null). */
+    appendAuditEvent(input: NewAuditEvent) {
+      return appendAuditEventRow(database, { businessId: null, orgId }, input);
+    },
+
+    /** Newest first, org-level writes only (locations, people, loans). */
+    listAuditEvents(opts?: { limit?: number; offset?: number }) {
+      return listAuditEventRows(database, { businessId: null, orgId }, opts);
     },
 
     /* ----- People (the shared org-wide staff pool) ----- */
@@ -92,8 +106,9 @@ export function createOrgRepo(orgId: string, database: Db = defaultDb) {
     /**
      * Everyone in the org, each with the locations they're an active member of.
      * The person's HOME location is always included (it's an implicit
-     * membership — see the tenant repo's `memberHere`). One query per table,
-     * grouped in memory (org staffing is small).
+     * membership — see the tenant repo's `memberHere`). Two queries, grouped in
+     * ONE pass over the memberships (PERF-13): O(people + memberships), so a
+     * large shared pool costs a Map lookup per person, never a nested scan.
      */
     async listPeople() {
       const people = await database
@@ -115,18 +130,77 @@ export function createOrgRepo(orgId: string, database: Db = defaultDb) {
           active: staffLocations.active,
         })
         .from(staffLocations)
-        .where(eq(staffLocations.orgId, orgId));
-
-      return people.map((p) => {
-        const locationIds = new Set(
-          memberships
-            .filter((m) => m.staffMemberId === p.id && m.active)
-            .map((m) => m.businessId),
+        .where(
+          and(eq(staffLocations.orgId, orgId), eq(staffLocations.active, true)),
         );
+
+      const byPerson = new Map<string, Set<string>>();
+      for (const m of memberships) {
+        let set = byPerson.get(m.staffMemberId);
+        if (!set) {
+          set = new Set();
+          byPerson.set(m.staffMemberId, set);
+        }
+        set.add(m.businessId);
+      }
+      return people.map((p) => {
+        const locationIds = byPerson.get(p.id) ?? new Set<string>();
         // The home location is always an implicit membership.
         locationIds.add(p.homeBusinessId);
         return { ...p, locationIds: [...locationIds] };
       });
+    },
+
+    /**
+     * People who exist TWICE in this org — the same email (any case) on more
+     * than one `staff_member` row (COR-03). Legacy rows whose `org_id` is still
+     * null are resolved through their home business, so pre-backfill data is
+     * reported too. The owner decides how to resolve each pair (keep one,
+     * deactivate the other); nothing is ever merged automatically.
+     */
+    async listDuplicatePeople(): Promise<
+      Array<{
+        email: string;
+        people: Array<{
+          id: string;
+          name: string;
+          homeBusinessId: string;
+          active: boolean;
+        }>;
+      }>
+    > {
+      const rows = await database
+        .select({
+          id: staffMembers.id,
+          name: staffMembers.name,
+          email: staffMembers.email,
+          homeBusinessId: staffMembers.businessId,
+          active: staffMembers.active,
+        })
+        .from(staffMembers)
+        .innerJoin(businesses, eq(businesses.id, staffMembers.businessId))
+        .where(
+          eq(sql`coalesce(${staffMembers.orgId}, ${businesses.orgId})`, orgId),
+        )
+        .orderBy(asc(staffMembers.createdAt));
+      const byEmail = new Map<string, typeof rows>();
+      for (const r of rows) {
+        const key = r.email.trim().toLowerCase();
+        const list = byEmail.get(key) ?? [];
+        list.push(r);
+        byEmail.set(key, list);
+      }
+      return [...byEmail.entries()]
+        .filter(([, list]) => list.length > 1)
+        .map(([email, list]) => ({
+          email,
+          people: list.map(({ id, name, homeBusinessId, active }) => ({
+            id,
+            name,
+            homeBusinessId,
+            active,
+          })),
+        }));
     },
 
     /** A person, only if they belong to THIS org (IDOR-safe; null otherwise). */
@@ -185,6 +259,13 @@ export function createOrgRepo(orgId: string, database: Db = defaultDb) {
      * Remove a person's membership at a location. Refused for the person's HOME
      * location (that's their base — the home disjunct keeps them visible there
      * regardless, so removing the row would be misleading). Org-scoped.
+     *
+     * A DEACTIVATION, not a delete (COR-07): the row flips `active = false`
+     * (and drops any `loan_id`), the same model the loan machinery uses, and
+     * any active loan of this person TO this location is ended in the same
+     * transaction — so the People page never shows "on loan to X" for someone
+     * who is no longer a member there, and a later `addPersonToLocation` or
+     * loan simply re-activates the row.
      */
     async removePersonFromLocation(
       staffMemberId: string,
@@ -203,15 +284,29 @@ export function createOrgRepo(orgId: string, database: Db = defaultDb) {
       if (person.homeBusinessId === businessId) {
         return { ok: false, reason: "home" };
       }
-      await database
-        .delete(staffLocations)
-        .where(
-          and(
-            eq(staffLocations.orgId, orgId),
-            eq(staffLocations.businessId, businessId),
-            eq(staffLocations.staffMemberId, staffMemberId),
-          ),
-        );
+      await database.transaction(async (tx) => {
+        await tx
+          .update(staffLocations)
+          .set({ active: false, loanId: null })
+          .where(
+            and(
+              eq(staffLocations.orgId, orgId),
+              eq(staffLocations.businessId, businessId),
+              eq(staffLocations.staffMemberId, staffMemberId),
+            ),
+          );
+        await tx
+          .update(staffLoans)
+          .set({ active: false })
+          .where(
+            and(
+              eq(staffLoans.orgId, orgId),
+              eq(staffLoans.staffMemberId, staffMemberId),
+              eq(staffLoans.toBusinessId, businessId),
+              eq(staffLoans.active, true),
+            ),
+          );
+      });
       return { ok: true };
     },
 

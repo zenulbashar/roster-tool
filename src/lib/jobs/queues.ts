@@ -12,7 +12,27 @@ export const QUEUES = {
   staffShiftReminder: "staff-shift-reminder",
   staffLoanExpiry: "staff-loan-expiry",
   formResponseDigest: "form-response-digest",
+  dataRetention: "data-retention",
+  // PERF-02 / PERF-03: the hourly dispatcher and the per-business sweep it
+  // fans out to (one job per tenant per sweep kind per local day).
+  sweepDispatch: "sweep-dispatch",
+  businessSweep: "business-sweep",
+  // OPS-02: where any queue's jobs go once they exhaust their retries.
+  deadLetter: "dead-letter",
 } as const;
+
+/**
+ * Queues that are only ever run by hand now (their daily crons were replaced
+ * by the dispatcher): kept registered for one release as the rollback path.
+ */
+export const LEGACY_SWEEP_QUEUES = [
+  QUEUES.photoRetention,
+  QUEUES.certReminder,
+  QUEUES.orderReminder,
+  QUEUES.staffShiftReminder,
+  QUEUES.staffLoanExpiry,
+  QUEUES.formResponseDigest,
+] as const;
 
 /** Sends one staff member their availability magic link. */
 export type AvailabilityRequestJob = {
@@ -100,3 +120,49 @@ export type StaffLoanExpiryJob = Record<string, never>;
  * send). Quiet days send nothing.
  */
 export type FormResponseDigestJob = Record<string, never>;
+
+/**
+ * Daily platform-level retention sweep (PERF-10): applies one explicit
+ * policy per table that otherwise only grows — owner notifications, staff
+ * notices, the admin audit log, form rate-limit buckets, worker heartbeats,
+ * expired Auth.js sessions/verification tokens and consumed SSO token ids.
+ * Cron-scheduled (no payload); bounded batches; idempotent. Clock-in photos
+ * keep their own per-business `photo-retention` job.
+ */
+export type DataRetentionJob = Record<string, never>;
+
+/**
+ * Hourly dispatcher (PERF-02 / PERF-03): walks every business and enqueues
+ * one `BusinessSweepJob` per sweep kind whose local send hour has arrived
+ * today and which hasn't been dispatched for that local date yet. Cron-
+ * scheduled (no payload); exactly-once via `job_dispatch`.
+ */
+export type SweepDispatchJob = Record<string, never>;
+
+/**
+ * One daily sweep for ONE business (the unit the dispatcher fans out to):
+ * `kind` picks the per-business handler; `runDate` is the business-local
+ * date the run belongs to. Singleton per (kind, business, runDate). Each
+ * handler is idempotent through its own cursor, so a retry is safe.
+ */
+export type BusinessSweepJob = {
+  kind:
+    | "certReminder"
+    | "orderReminder"
+    | "formResponseDigest"
+    | "staffShiftReminder"
+    | "photoRetention"
+    | "staffLoanExpiry";
+  businessId: string;
+  runDate: string;
+};
+
+/**
+ * A job that exhausted its retries on ANY queue, COPIED here by pg-boss
+ * (OPS-02). The payload is the original job's data and `output` its last
+ * failure; the copy does NOT name the source queue — the original stays in
+ * its own queue in state `failed`, which is what `npm run jobs:admin --
+ * failed` lists and `retry` re-runs. The handler alerts — it never re-runs
+ * the work.
+ */
+export type DeadLetterJob = Record<string, unknown>;

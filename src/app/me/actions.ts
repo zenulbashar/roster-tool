@@ -14,14 +14,9 @@ import {
   noticesStaffFromCookie,
   verifiedNoticesStaff,
 } from "@/lib/notices-session";
-import {
-  verifyPin,
-  isLockedOut,
-  registerFailedAttempt,
-  clearedLockout,
-  PIN_LOCKOUT_MS,
-} from "@/lib/pin";
-import { pinSchema } from "@/lib/validation";
+import { authenticateStaffPin } from "@/lib/pin-auth";
+import { hashToken } from "@/lib/tokens";
+import { NOTICES_COOKIE } from "@/lib/kiosk-cookie";
 
 export type NoticesPinResult =
   | { status: "idle" }
@@ -46,56 +41,22 @@ export async function noticesPinAction(
     };
   }
 
-  const pinParsed = pinSchema.safeParse(formData.get("pin"));
-  if (!pinParsed.success) {
-    return { status: "error", message: "Enter your 4-digit PIN." };
-  }
-
   const repo = createTenantRepo(resolved.businessId);
-  const staff = await repo.getStaff(resolved.staffMemberId);
-  // Same generic message whether the person is missing, inactive or PIN-less.
-  if (!staff || !staff.active || !staff.pinHash) {
-    return { status: "error", message: "That PIN didn't match. Try again." };
-  }
-
   const now = new Date();
-  const lock = isLockedOut(
-    {
-      failedPinAttempts: staff.failedPinAttempts,
-      pinLockedUntil: staff.pinLockedUntil,
-    },
-    now,
-  );
-  if (lock.locked) {
-    const secs = Math.ceil(lock.retryAfterMs / 1000);
-    return {
-      status: "error",
-      message: `Too many wrong PINs. Please wait ${secs}s and try again.`,
-    };
-  }
-
-  if (!verifyPin(pinParsed.data, staff.pinHash)) {
-    const next = registerFailedAttempt(
-      {
-        failedPinAttempts: staff.failedPinAttempts,
-        pinLockedUntil: staff.pinLockedUntil,
-      },
-      now,
-    );
-    await repo.updateStaffLockout(staff.id, next);
-    if (next.pinLockedUntil) {
-      const secs = Math.ceil(PIN_LOCKOUT_MS / 1000);
-      return {
-        status: "error",
-        message: `Too many wrong PINs. Please wait ${secs}s and try again.`,
-      };
-    }
-    return { status: "error", message: "That PIN didn't match. Try again." };
-  }
-
-  // Correct PIN: wipe the brute-force counter and set the short-lived proof.
-  await repo.updateStaffLockout(staff.id, clearedLockout());
+  // The shared, rate-limited PIN core, keyed on THIS person's link (the
+  // capability token identifies who; the PIN proves it's them).
   const cookieStore = await cookies();
+  const linkToken = cookieStore.get(NOTICES_COOKIE)?.value ?? "";
+  const auth = await authenticateStaffPin(repo, {
+    staffId: resolved.staffMemberId,
+    pin: formData.get("pin"),
+    deviceKey: hashToken(linkToken),
+    now,
+  });
+  if (!auth.ok) return { status: "error", message: auth.message };
+  const staff = auth.staff;
+
+  // Correct PIN: set the short-lived proof.
   cookieStore.set(
     NOTICES_VERIFIED_COOKIE,
     makeNoticesVerification(staff.id, env.AUTH_SECRET, now),

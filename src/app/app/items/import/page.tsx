@@ -102,7 +102,7 @@ export default function ItemsImportPage() {
           </Link>
         </Banner>
       ) : null}
-      {error ? <Banner tone="warn">{error}</Banner> : null}
+      {error ? <Banner tone="error">{error}</Banner> : null}
 
       <Card className="mt-4">
         <h2 className="text-lg font-semibold">Expected format</h2>

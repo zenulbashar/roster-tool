@@ -74,7 +74,7 @@ export function StockCheckForm({
 
       {state.status === "error" ? (
         <div className="mt-4">
-          <Banner tone="warn">{state.message}</Banner>
+          <Banner tone="error">{state.message}</Banner>
         </div>
       ) : null}
 
@@ -145,12 +145,12 @@ export function StockCheckForm({
               type="password"
               inputMode="numeric"
               autoComplete="off"
-              pattern="\d{4}"
-              maxLength={4}
+              pattern="\d{4,6}"
+              maxLength={6}
               required
               placeholder="••••"
               className={kioskCls.pin}
-              aria-label="Your 4-digit PIN"
+              aria-label="Your PIN"
             />
           </label>
           <div className="flex gap-3">

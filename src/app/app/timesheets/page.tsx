@@ -12,6 +12,10 @@ import {
 } from "@/lib/time";
 import { entryDurationMs } from "@/lib/clock";
 import { breakMinutesSchema } from "@/lib/validation";
+import { logger } from "@/lib/logger";
+import { describeTimesheetEvent } from "@/lib/audit/describe";
+import { blobStore } from "@/lib/blob/s3";
+import { deleteClockPhotoObjects } from "@/lib/clock-photo-storage";
 import {
   Avatar,
   Badge,
@@ -26,8 +30,15 @@ import {
   TextInput,
   type BadgeTone,
 } from "@/components/ui";
+import { ConfirmDeleteCard } from "@/components/ConfirmDeleteCard";
 
 const PATH = "/app/timesheets";
+
+/** The week a row's form was rendered for (YYYY-MM-DD), or "" — never an arbitrary string in a redirect. */
+function weekParam(formData: FormData): string {
+  const w = String(formData.get("week") ?? "");
+  return /^\d{4}-\d{2}-\d{2}$/.test(w) ? w : "";
+}
 
 /** Add `n` whole days to a YYYY-MM-DD date (calendar math, tz-independent). */
 function addDays(dateStr: string, n: number): string {
@@ -88,7 +99,14 @@ const STATUS_META: Record<EntryStatus, { tone: BadgeTone; label: string }> = {
 export default async function TimesheetsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ week?: string; error?: string; saved?: string }>;
+  searchParams: Promise<{
+    week?: string;
+    error?: string;
+    saved?: string;
+    deleted?: string;
+    restored?: string;
+    confirmDelete?: string;
+  }>;
 }) {
   const sp = await searchParams;
   const repo = await ownerRepo();
@@ -103,11 +121,32 @@ export default async function TimesheetsPage({
 
   const entries = await repo.listEntriesBetween(startUtc, endUtc);
 
+  // A delete awaiting confirmation (UX-04), and a just-deleted entry to Undo.
+  const pendingDelete = sp.confirmDelete
+    ? (entries.find((e) => e.id === sp.confirmDelete) ?? null)
+    : null;
+  const undoId =
+    sp.deleted && /^[0-9a-f-]{36}$/i.test(sp.deleted) ? sp.deleted : null;
+
   // Xero payroll: a lightweight entry point to the push flow (no live Xero
   // calls here — the heavy period preview lives on /app/xero/push).
   const xeroConnection = await repo.getXeroConnection();
   const xeroActive =
     xeroConnection?.status === "active" && !xeroConnection.needsReconnect;
+
+  // Per-entry history (OPS-04): every owner/admin edit, approval, delete and
+  // restore of these entries from the audit trail, newest first.
+  const history = await repo.listAuditEventsForEntities(
+    "timesheet_entry",
+    entries.map((e) => e.id),
+  );
+  const historyByEntry = new Map<string, typeof history>();
+  for (const ev of history) {
+    if (!ev.entityId) continue;
+    const list = historyByEntry.get(ev.entityId) ?? [];
+    list.push(ev);
+    historyByEntry.set(ev.entityId, list);
+  }
 
   // Photo thumbnails, grouped by entry.
   const photos = await repo.listPhotosForEntries(entries.map((e) => e.id));
@@ -197,8 +236,69 @@ export default async function TimesheetsPage({
   async function deleteEntry(formData: FormData) {
     "use server";
     const repo = await ownerRepo();
-    await repo.deleteEntry(String(formData.get("id")));
+    const id = String(formData.get("id"));
+    const week = weekParam(formData);
+    const back = `${PATH}${week ? `?week=${week}` : ""}`;
+    const sep = week ? "&" : "?";
+    // Two-step (UX-04): the first click bounces to a confirmation that shows
+    // exactly which entry is about to go; only `confirmed=1` deletes.
+    if (formData.get("confirmed") !== "1") {
+      redirect(`${back}${sep}confirmDelete=${encodeURIComponent(id)}`);
+    }
+    // A SOFT delete: the row stays as wage evidence and can be restored. Its
+    // photos go now (the privacy promise) — the stored objects too, best
+    // effort, once the rows are gone (PERF-06).
+    const photoKeys = await repo.listPhotoStorageKeysForEntry(id);
+    const deleted = await repo.deleteEntry(id);
     revalidatePath(PATH);
+    if (!deleted) {
+      redirect(`${back}${sep}error=${encodeURIComponent("Entry not found")}`);
+    }
+    const store = blobStore();
+    if (store && photoKeys.length > 0) {
+      await deleteClockPhotoObjects(store, photoKeys);
+    }
+    logger.info(
+      {
+        businessId: deleted.businessId,
+        entryId: deleted.id,
+        staffMemberId: deleted.staffMemberId,
+      },
+      "timesheet entry soft-deleted by owner",
+    );
+    redirect(`${back}${sep}deleted=${encodeURIComponent(deleted.id)}`);
+  }
+
+  async function restoreEntry(formData: FormData) {
+    "use server";
+    const repo = await ownerRepo();
+    const id = String(formData.get("id"));
+    const week = weekParam(formData);
+    const back = `${PATH}${week ? `?week=${week}` : ""}`;
+    const sep = week ? "&" : "?";
+    let restored: Awaited<ReturnType<typeof repo.restoreEntry>> = null;
+    let clash = false;
+    try {
+      restored = await repo.restoreEntry(id);
+    } catch (err) {
+      // The one-open-entry guard: they've clocked in again since.
+      logger.warn({ err, entryId: id }, "timesheet entry restore refused");
+      clash = true;
+    }
+    revalidatePath(PATH);
+    if (clash) {
+      redirect(
+        `${back}${sep}error=${encodeURIComponent(
+          "Couldn't restore it — they've clocked in again since. Edit the newer entry instead.",
+        )}`,
+      );
+    }
+    if (!restored) {
+      redirect(
+        `${back}${sep}error=${encodeURIComponent("Nothing to restore")}`,
+      );
+    }
+    redirect(`${back}${sep}restored=1`);
   }
 
   return (
@@ -223,8 +323,54 @@ export default async function TimesheetsPage({
         }
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.saved ? <Banner tone="success">Timesheet updated.</Banner> : null}
+      {undoId ? (
+        <Banner tone="success">
+          <span>Entry deleted.</span>
+          <form action={restoreEntry}>
+            <input type="hidden" name="id" value={undoId} />
+            <input type="hidden" name="week" value={weekStart} />
+            <button
+              type="submit"
+              className="font-semibold underline underline-offset-2"
+            >
+              Undo
+            </button>
+          </form>
+        </Banner>
+      ) : null}
+      {sp.restored ? <Banner tone="success">Entry restored.</Banner> : null}
+
+      {pendingDelete ? (
+        <ConfirmDeleteCard
+          title={`Delete ${pendingDelete.staffName}’s entry?`}
+          action={deleteEntry}
+          fields={{ id: pendingDelete.id, week: weekStart }}
+          confirmLabel="Delete entry"
+          cancelHref={`${PATH}?week=${weekStart}`}
+        >
+          <p>
+            {formatDateOnly(businessDateOf(pendingDelete.clockInAt, tz))},{" "}
+            {localTime(pendingDelete.clockInAt, tz)} –{" "}
+            {pendingDelete.clockOutAt
+              ? `${localTime(pendingDelete.clockOutAt, tz)} (${hoursLabel(
+                  entryDurationMs(
+                    {
+                      clockInAt: pendingDelete.clockInAt,
+                      clockOutAt: pendingDelete.clockOutAt,
+                    },
+                    undefined,
+                    pendingDelete.breakMinutes,
+                  ),
+                )})`
+              : "still clocked in"}
+            . It disappears from timesheets, the CSV export, reports and Xero
+            pushes, and any clock-in photos are removed. You’ll get an{" "}
+            <strong>Undo</strong> link straight after.
+          </p>
+        </ConfirmDeleteCard>
+      ) : null}
 
       {/* Xero payroll — push approved hours as DRAFT timesheets. */}
       {xeroConnection ? (
@@ -508,6 +654,11 @@ export default async function TimesheetsPage({
                           </form>
                           <form action={deleteEntry}>
                             <input type="hidden" name="id" value={e.id} />
+                            <input
+                              type="hidden"
+                              name="week"
+                              value={weekStart}
+                            />
                             <button
                               type="submit"
                               className="text-[13px] font-medium text-[var(--color-danger)] hover:underline"
@@ -516,6 +667,46 @@ export default async function TimesheetsPage({
                             </button>
                           </form>
                         </div>
+
+                        {/* OPS-04: who changed this entry, from what, to what. */}
+                        <details className="mt-4">
+                          <summary className="cursor-pointer text-[12.5px] font-semibold text-[#6B7280]">
+                            History ({historyByEntry.get(e.id)?.length ?? 0})
+                          </summary>
+                          {(historyByEntry.get(e.id)?.length ?? 0) === 0 ? (
+                            <p className="mt-2 text-[12.5px] text-[#9CA3AF]">
+                              No changes recorded yet — edits, approvals,
+                              deletes and restores show here with who made them.
+                            </p>
+                          ) : (
+                            <ul className="mt-2 space-y-2 text-[12.5px]">
+                              {historyByEntry.get(e.id)!.map((ev) => {
+                                const d = describeTimesheetEvent(ev, tz);
+                                return (
+                                  <li
+                                    key={ev.id}
+                                    className="rounded-[8px] border border-[var(--color-border-subtle)] bg-white px-3 py-2"
+                                  >
+                                    <span className="font-semibold text-[#111827]">
+                                      {d.headline}
+                                    </span>
+                                    <span className="text-[#6B7280]">
+                                      {" "}
+                                      · {d.who} · {d.when}
+                                    </span>
+                                    {d.changes.length > 0 ? (
+                                      <ul className="mt-1 list-disc pl-5 text-[#374151]">
+                                        {d.changes.map((c) => (
+                                          <li key={c}>{c}</li>
+                                        ))}
+                                      </ul>
+                                    ) : null}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          )}
+                        </details>
                       </div>
                     </details>
                   </div>

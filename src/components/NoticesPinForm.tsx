@@ -52,7 +52,7 @@ export function NoticesPinForm({
 
         {state.status === "error" ? (
           <div className="mt-4">
-            <Banner tone="warn">{state.message}</Banner>
+            <Banner tone="error">{state.message}</Banner>
           </div>
         ) : null}
 
@@ -69,13 +69,13 @@ export function NoticesPinForm({
             type="password"
             inputMode="numeric"
             autoComplete="off"
-            pattern="\d{4}"
-            maxLength={4}
+            pattern="\d{4,6}"
+            maxLength={6}
             required
             autoFocus
             placeholder="••••"
             className="block w-full rounded-[14px] border border-[var(--color-line)] bg-white px-4 py-3.5 text-center font-archivo text-3xl tracking-[0.5em] text-[var(--color-ink)] outline-none placeholder:text-[#CBD5E1] focus:border-[#13301F] focus:ring-[3px] focus:ring-[rgba(19,48,31,0.18)]"
-            aria-label="Your 4-digit PIN"
+            aria-label="Your PIN"
           />
           <button
             type="submit"

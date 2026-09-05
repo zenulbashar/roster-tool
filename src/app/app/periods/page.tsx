@@ -76,7 +76,7 @@ export default async function PeriodsPage({
         }
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
 
       <Card padded={false}>
         {periods.length === 0 ? (

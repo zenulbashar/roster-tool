@@ -1,13 +1,26 @@
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import { createTenantRepo } from "@/lib/tenant/repository";
-import { createOrgRepo } from "@/lib/tenant/org-repository";
+import { createTenantRepo, type TenantRepo } from "@/lib/tenant/repository";
+import { createOrgRepo, type OrgRepo } from "@/lib/tenant/org-repository";
 import {
   resolveOrgForUser,
   resolveActiveLocation,
 } from "@/lib/tenant/org-access";
 import { resolveImpersonation } from "@/lib/admin/impersonation-session";
-import { isPlatformAdmin } from "@/lib/admin/repository";
+import {
+  createAdminRepo,
+  getAdminDisplayName,
+  isPlatformAdmin,
+} from "@/lib/admin/repository";
+import {
+  withAudit,
+  type AuditContext,
+  type AuditSink,
+} from "@/lib/audit/decorate";
+import { humanizeAction, type NewAuditEvent } from "@/lib/audit/events";
+import { isFeatureEnabled } from "@/lib/flags";
+import { getRequestId } from "@/lib/request-context";
 
 /**
  * Server-side guards for the owner area. These derive the tenant from the
@@ -61,17 +74,48 @@ export interface OwnerContext {
    * frame + write-confirm guard. Null for a real owner session.
    */
   impersonation: { adminUserId: string; venueName: string } | null;
+  /**
+   * Who this request's writes are attributed to in the tenant audit trail
+   * (OPS-04), plus the request id and the `audit_events` flag — consumed by
+   * `ownerRepo()` / `ownerContext()`, which wrap every repo they hand out.
+   */
+  audit: AuditContext;
 }
 
-export async function requireOwner(): Promise<OwnerContext> {
-  // M37: an admin impersonating a tenant resolves the org from the signed
-  // impersonation grant (re-validated in resolveImpersonation), NOT from an
-  // org_membership — an admin has none. The active-location cookie still
-  // applies, so the in-app location switcher works while impersonating.
-  const imp = await resolveImpersonation();
+/**
+ * MEMOISED PER REQUEST (PERF-04): `React.cache` dedupes the session lookup,
+ * the impersonation check, the org resolution and the active-location query
+ * across everything rendered for one request — the owner layout (bell +
+ * location switcher), the page, and any server action in that request — so
+ * calling `requireOwner()` / `ownerRepo()` / `orgRepo()` / `ownerContext()`
+ * freely costs one resolution, not one per call site. The cache is scoped to
+ * the request by React, never shared across requests or users; a `redirect()`
+ * thrown here is cached for the request too, so every caller sees the same
+ * outcome. Outside a React request scope (scripts, tests) it simply runs.
+ */
+export const requireOwner = cache(resolveOwner);
+
+async function resolveOwner(): Promise<OwnerContext> {
+  // Resolve the session FIRST — it is the identity every branch below is
+  // bound to. M37: an admin impersonating a tenant resolves the org from the
+  // signed impersonation grant (re-validated in resolveImpersonation, which
+  // requires the grant to be bound to THIS session's user — the cookie alone
+  // is never sufficient), NOT from an org_membership — an admin has none. The
+  // active-location cookie still applies, so the location switcher works while
+  // impersonating.
+  const session = await auth();
+  if (!session?.user) redirect("/sign-in");
+  const userId = session.user.id;
+
+  const imp = await resolveImpersonation(userId);
   if (imp) {
     const businessId = await resolveActiveLocation(imp.orgId, imp.businessId);
     if (!businessId) redirect("/admin/clients");
+    const [auditEnabled, requestId, adminName] = await Promise.all([
+      isFeatureEnabled("audit_events", { orgId: imp.orgId }),
+      getRequestId(),
+      getAdminDisplayName(imp.adminUserId),
+    ]);
     return {
       userId: imp.adminUserId,
       orgId: imp.orgId,
@@ -81,12 +125,19 @@ export async function requireOwner(): Promise<OwnerContext> {
         adminUserId: imp.adminUserId,
         venueName: imp.venueName,
       },
+      audit: {
+        enabled: auditEnabled,
+        requestId,
+        actor: {
+          type: "admin",
+          userId: imp.adminUserId,
+          label: adminName,
+          impersonatorUserId: imp.adminUserId,
+        },
+      },
     };
   }
 
-  const session = await auth();
-  if (!session?.user) redirect("/sign-in");
-  const userId = session.user.id;
   const orgId = await resolveOrgForUser(userId);
   if (!orgId) {
     // A platform admin who isn't impersonating has no org — send them to the
@@ -99,25 +150,84 @@ export async function requireOwner(): Promise<OwnerContext> {
     session.user.businessId ?? null,
   );
   if (!businessId) redirect("/onboarding");
+  const [auditEnabled, requestId] = await Promise.all([
+    isFeatureEnabled("audit_events", { orgId }),
+    getRequestId(),
+  ]);
+  const email = session.user.email ?? null;
   return {
     userId,
     orgId,
     businessId,
-    email: session.user.email ?? null,
+    email,
     impersonation: null,
+    audit: {
+      enabled: auditEnabled,
+      requestId,
+      actor: {
+        type: "owner",
+        userId,
+        label: email ?? userId,
+        impersonatorUserId: null,
+      },
+    },
   };
+}
+
+/* ----- Audited repos (OPS-04 / SEC-02) ----- */
+
+/**
+ * Mirror a write made while impersonating into the admin console's
+ * accountability log — SERVER-derived from the actual repository call, which
+ * supersedes the old client-reported entries (SEC-02/SEC-03). Best-effort;
+ * the decorator reports a failure rather than failing the write.
+ */
+function impersonatedWriteMirror(ctx: OwnerContext) {
+  return async (event: NewAuditEvent): Promise<void> => {
+    if (!ctx.impersonation) return;
+    await createAdminRepo().recordActivity({
+      adminUserId: ctx.impersonation.adminUserId,
+      adminName: ctx.audit.actor.label,
+      action: humanizeAction(event.action),
+      detail: event.entity
+        ? `${event.entity.replaceAll("_", " ")}${event.entityId ? ` ${event.entityId}` : ""}`
+        : null,
+      isWrite: true,
+      orgId: ctx.orgId,
+      businessId: ctx.businessId,
+      venueName: ctx.impersonation.venueName,
+    });
+  };
+}
+
+/** The active-location tenant repo, every write recorded in the trail. */
+function auditedTenantRepo(ctx: OwnerContext): TenantRepo {
+  const raw = createTenantRepo(ctx.businessId);
+  const sink: AuditSink = {
+    append: (event) => raw.appendAuditEvent({ ...event, orgId: ctx.orgId }),
+    onImpersonatedWrite: impersonatedWriteMirror(ctx),
+  };
+  return withAudit(raw, sink, ctx.audit);
+}
+
+/** The org repo, its (org-level) writes recorded in the org's chain. */
+function auditedOrgRepo(ctx: OwnerContext): OrgRepo {
+  const raw = createOrgRepo(ctx.orgId);
+  const sink: AuditSink = {
+    append: (event) => raw.appendAuditEvent(event),
+    onImpersonatedWrite: impersonatedWriteMirror(ctx),
+  };
+  return withAudit(raw, sink, ctx.audit);
 }
 
 /** A tenant repo scoped to the current owner's ACTIVE location. */
 export async function ownerRepo() {
-  const { businessId } = await requireOwner();
-  return createTenantRepo(businessId);
+  return auditedTenantRepo(await requireOwner());
 }
 
 /** A repo scoped to the current owner's organisation (locations, people). */
 export async function orgRepo() {
-  const { orgId } = await requireOwner();
-  return createOrgRepo(orgId);
+  return auditedOrgRepo(await requireOwner());
 }
 
 /**
@@ -129,7 +239,7 @@ export async function ownerContext() {
   const ctx = await requireOwner();
   return {
     ...ctx,
-    repo: createTenantRepo(ctx.businessId),
-    org: createOrgRepo(ctx.orgId),
+    repo: auditedTenantRepo(ctx),
+    org: auditedOrgRepo(ctx),
   };
 }

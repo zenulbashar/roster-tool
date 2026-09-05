@@ -4,12 +4,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 /**
- * The admin console's two-tab nav (Clients / Activity log). Active tab = white
- * text with an indigo underline (inset box-shadow), matching the design's
- * `#A5B4FC` accent. Kept minimal — the admin area is intentionally small.
+ * The admin console's nav (Clients / Feature flags / Activity log). Active tab
+ * = white text with an indigo underline (inset box-shadow), matching the
+ * design's `#A5B4FC` accent. Kept minimal — the admin area is intentionally
+ * small.
  */
 const TABS = [
   { href: "/admin/clients", label: "Clients", match: "/admin/clients" },
+  { href: "/admin/flags", label: "Feature flags", match: "/admin/flags" },
   { href: "/admin/log", label: "Activity log", match: "/admin/log" },
 ] as const;
 

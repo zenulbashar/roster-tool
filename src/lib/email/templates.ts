@@ -1,4 +1,5 @@
 import type { OutgoingEmail } from "./transport";
+import { esc, safeCtaUrl } from "./escape";
 
 /**
  * Plain, high-contrast HTML emails with a matching plain-text part. Inline
@@ -15,9 +16,9 @@ function layout(opts: {
   const button =
     opts.ctaUrl && opts.ctaLabel
       ? `<p style="margin:24px 0;">
-           <a href="${opts.ctaUrl}" style="background:#1d4ed8;color:#ffffff;text-decoration:none;padding:14px 22px;border-radius:8px;font-weight:700;display:inline-block;">${opts.ctaLabel}</a>
+           <a href="${safeCtaUrl(opts.ctaUrl)}" style="background:#1d4ed8;color:#ffffff;text-decoration:none;padding:14px 22px;border-radius:8px;font-weight:700;display:inline-block;">${esc(opts.ctaLabel)}</a>
          </p>
-         <p style="font-size:13px;color:#4b5563;">If the button doesn't work, copy this link into your browser:<br><a href="${opts.ctaUrl}" style="color:#1d4ed8;">${opts.ctaUrl}</a></p>`
+         <p style="font-size:13px;color:#4b5563;">If the button doesn't work, copy this link into your browser:<br><a href="${safeCtaUrl(opts.ctaUrl)}" style="color:#1d4ed8;">${safeCtaUrl(opts.ctaUrl)}</a></p>`
       : "";
   return `<!doctype html>
 <html><body style="margin:0;background:#f9fafb;padding:24px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111827;line-height:1.5;">
@@ -39,7 +40,7 @@ export function availabilityRequestEmail(input: {
 }): OutgoingEmail {
   const { businessName, staffName, periodLabel, link, deadlineText } = input;
   const deadlineLine = deadlineText
-    ? `Please let us know by <strong>${deadlineText}</strong>.`
+    ? `Please let us know by <strong>${esc(deadlineText)}</strong>.`
     : "";
   const deadlineText2 = deadlineText
     ? `Please let us know by ${deadlineText}.`
@@ -48,12 +49,12 @@ export function availabilityRequestEmail(input: {
     to: "", // filled by the caller
     subject: `${businessName}: when can you work for "${periodLabel}"?`,
     html: layout({
-      heading: `Hi ${staffName},`,
-      bodyHtml: `<p>${businessName} is putting together the roster for <strong>${periodLabel}</strong>. Tap the button to tell us which shifts you can work. ${deadlineLine}</p>`,
+      heading: `Hi ${esc(staffName)},`,
+      bodyHtml: `<p>${esc(businessName)} is putting together the roster for <strong>${esc(periodLabel)}</strong>. Tap the button to tell us which shifts you can work. ${deadlineLine}</p>`,
       ctaLabel: "Choose my shifts",
       ctaUrl: link,
       footer:
-        "This link is just for you. Please don't forward it. It works once and expires.",
+        "This link is just for you and stays live for about three weeks — anyone who has it can change your answers, so please don't forward it.",
     }),
     text: [
       `Hi ${staffName},`,
@@ -63,7 +64,7 @@ export function availabilityRequestEmail(input: {
       link,
       deadlineText2,
       "",
-      "This link is just for you. Please don't forward it.",
+      "This link is just for you and stays live for about three weeks — anyone who has it can change your answers, so please don't forward it.",
     ]
       .filter(Boolean)
       .join("\n"),
@@ -84,7 +85,7 @@ export function publishedRosterEmail(input: {
     ? `<ul style="padding-left:18px;margin:12px 0;">${shifts
         .map(
           (s) =>
-            `<li style="margin:4px 0;"><strong>${s.dayText}</strong> — ${s.label}, ${s.timeText}</li>`,
+            `<li style="margin:4px 0;"><strong>${esc(s.dayText)}</strong> — ${esc(s.label)}, ${esc(s.timeText)}</li>`,
         )
         .join("")}</ul>`
     : `<p>You&rsquo;re not rostered on this time. Enjoy your time off!</p>`;
@@ -99,8 +100,8 @@ export function publishedRosterEmail(input: {
     to: "",
     subject: `Your shifts for "${periodLabel}" — ${businessName}`,
     html: layout({
-      heading: `Hi ${staffName}, here are your shifts`,
-      bodyHtml: `<p>${businessName} has published the roster for <strong>${periodLabel}</strong>. Here&rsquo;s when you&rsquo;re working:</p>${listHtml}`,
+      heading: `Hi ${esc(staffName)}, here are your shifts`,
+      bodyHtml: `<p>${esc(businessName)} has published the roster for <strong>${esc(periodLabel)}</strong>. Here&rsquo;s when you&rsquo;re working:</p>${listHtml}`,
       ctaLabel: "See the full roster",
       ctaUrl: publicUrl,
       footer: "Questions about your shifts? Reply to your manager directly.",
@@ -137,8 +138,8 @@ export function leaveDecisionEmail(input: {
     to: "",
     subject,
     html: layout({
-      heading: `Hi ${staffName},`,
-      bodyHtml: `<p>Your ${leaveTypeLabel.toLowerCase()} request for <strong>${dateRangeText}</strong> has been <strong>${outcome}</strong> by ${businessName}.</p><p>${followUp}</p>`,
+      heading: `Hi ${esc(staffName)},`,
+      bodyHtml: `<p>Your ${esc(leaveTypeLabel.toLowerCase())} request for <strong>${esc(dateRangeText)}</strong> has been <strong>${outcome}</strong> by ${esc(businessName)}.</p><p>${followUp}</p>`,
       footer: "Questions about your leave? Reply to your manager directly.",
     }),
     text: [
@@ -166,8 +167,8 @@ export function shiftClaimApprovedEmail(input: {
     to: "",
     subject: `You're confirmed for ${label} on ${dayText} — ${businessName}`,
     html: layout({
-      heading: `Hi ${staffName},`,
-      bodyHtml: `<p>Good news — your manager approved your claim. You're now confirmed for:</p><p style="margin:12px 0;"><strong>${dayText}</strong> — ${label}, ${timeText}</p><p>See you then!</p>`,
+      heading: `Hi ${esc(staffName)},`,
+      bodyHtml: `<p>Good news — your manager approved your claim. You're now confirmed for:</p><p style="margin:12px 0;"><strong>${esc(dayText)}</strong> — ${esc(label)}, ${esc(timeText)}</p><p>See you then!</p>`,
       footer: "Questions about this shift? Reply to your manager directly.",
     }),
     text: [
@@ -195,8 +196,8 @@ export function shiftCoveredEmail(input: {
     to: "",
     subject: `Your ${label} on ${dayText} is now covered — ${businessName}`,
     html: layout({
-      heading: `Hi ${staffName},`,
-      bodyHtml: `<p>The shift you offered up is now covered by <strong>${coveredByName}</strong>:</p><p style="margin:12px 0;"><strong>${dayText}</strong> — ${label}, ${timeText}</p><p>You're no longer rostered on for it.</p>`,
+      heading: `Hi ${esc(staffName)},`,
+      bodyHtml: `<p>The shift you offered up is now covered by <strong>${esc(coveredByName)}</strong>:</p><p style="margin:12px 0;"><strong>${esc(dayText)}</strong> — ${esc(label)}, ${esc(timeText)}</p><p>You're no longer rostered on for it.</p>`,
       footer: "Questions? Reply to your manager directly.",
     }),
     text: [
@@ -228,7 +229,7 @@ export function certificationReminderEmail(input: {
   const listHtml = `<ul style="padding-left:18px;margin:12px 0;">${items
     .map(
       (i) =>
-        `<li style="margin:4px 0;"><strong>${i.staffName}</strong> — ${i.certName} ${i.phrase} (${i.expiryText})</li>`,
+        `<li style="margin:4px 0;"><strong>${esc(i.staffName)}</strong> — ${esc(i.certName)} ${esc(i.phrase)} (${esc(i.expiryText)})</li>`,
     )
     .join("")}</ul>`;
 
@@ -275,23 +276,27 @@ export function orderReminderEmail(input: {
 
   const itemText = (i: { name: string; quantity?: string | null }) =>
     i.quantity ? `${i.name} (${i.quantity} left)` : i.name;
+  // HTML side: `quantity` is STAFF-entered free text from the kiosk stock
+  // check and `name` may come from a CSV import — both untrusted (SEC-16).
+  const itemHtml = (i: { name: string; quantity?: string | null }) =>
+    esc(itemText(i));
 
   const blockHtml = suppliers
     .map((s) => {
       const lines = [
         s.needsOrder.length
           ? `<p style="margin:6px 0;"><strong>Need to order:</strong> ${s.needsOrder
-              .map(itemText)
+              .map(itemHtml)
               .join(", ")}</p>`
           : "",
         s.low.length
           ? `<p style="margin:6px 0;"><strong>Running low:</strong> ${s.low
-              .map(itemText)
+              .map(itemHtml)
               .join(", ")}</p>`
           : "",
       ].join("");
       return `<div style="margin:16px 0;padding:12px 14px;border:1px solid #d1d5db;border-radius:8px;">
-        <p style="margin:0 0 4px;font-weight:700;">Order from ${s.supplierName} before ${s.deliveryText}</p>
+        <p style="margin:0 0 4px;font-weight:700;">Order from ${esc(s.supplierName)} before ${esc(s.deliveryText)}</p>
         ${lines}
       </div>`;
     })
@@ -340,7 +345,7 @@ export function reminderEmail(input: {
 }): OutgoingEmail {
   const { businessName, staffName, periodLabel, link, deadlineText } = input;
   const deadlineLine = deadlineText
-    ? `We need your answer by <strong>${deadlineText}</strong>.`
+    ? `We need your answer by <strong>${esc(deadlineText)}</strong>.`
     : "We're still waiting to hear from you.";
   const deadlineText2 = deadlineText
     ? `We need your answer by ${deadlineText}.`
@@ -349,12 +354,12 @@ export function reminderEmail(input: {
     to: "",
     subject: `Reminder — ${businessName}: when can you work for "${periodLabel}"?`,
     html: layout({
-      heading: `Hi ${staffName},`,
-      bodyHtml: `<p>Just a quick reminder to let ${businessName} know your availability for <strong>${periodLabel}</strong>. ${deadlineLine}</p>`,
+      heading: `Hi ${esc(staffName)},`,
+      bodyHtml: `<p>Just a quick reminder to let ${esc(businessName)} know your availability for <strong>${esc(periodLabel)}</strong>. ${deadlineLine}</p>`,
       ctaLabel: "Choose my shifts",
       ctaUrl: link,
       footer:
-        "This link is just for you. Please don't forward it. It works once and expires.",
+        "This link is just for you and stays live for about three weeks — anyone who has it can change your answers, so please don't forward it.",
     }),
     text: [
       `Hi ${staffName},`,
@@ -364,6 +369,8 @@ export function reminderEmail(input: {
       "",
       `Open this link to choose your shifts:`,
       link,
+      "",
+      "This link is just for you and stays live for about three weeks — anyone who has it can change your answers, so please don't forward it.",
     ]
       .filter(Boolean)
       .join("\n"),
@@ -392,7 +399,7 @@ export function formResponseDigestEmail(input: {
   const listHtml = `<ul style="padding-left:18px;margin:12px 0;">${items
     .map(
       (i) =>
-        `<li style="margin:4px 0;"><a href="${i.url}" style="font-weight:700;">${i.title}</a> — ${i.count} new response${i.count === 1 ? "" : "s"}</li>`,
+        `<li style="margin:4px 0;"><a href="${safeCtaUrl(i.url)}" style="font-weight:700;">${esc(i.title)}</a> — ${i.count} new response${i.count === 1 ? "" : "s"}</li>`,
     )
     .join("")}</ul>`;
 

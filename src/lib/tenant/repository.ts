@@ -17,6 +17,13 @@ import {
 import { db as defaultDb, type Db } from "@/lib/db";
 import { carrySchedule } from "@/lib/assignment-schedule";
 import {
+  appendAuditEventRow,
+  listAuditEventRows,
+  listAuditEventRowsForEntities,
+  verifyAuditChain,
+} from "@/lib/audit/store";
+import type { NewAuditEvent } from "@/lib/audit/events";
+import {
   businesses,
   staffMembers,
   staffLocations,
@@ -93,6 +100,56 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
    */
   const memberHere = sql`(${staffMembers.businessId} = ${businessId} or exists (select 1 from ${staffLocations} where ${staffLocations.staffMemberId} = ${staffMembers.id} and ${staffLocations.businessId} = ${businessId} and ${staffLocations.active} = true))`;
 
+  /**
+   * M29: staff notices FOLLOW THE PERSON. A staff member reads their notices on
+   * /me, whose repo is scoped to their HOME location — but a notice created at
+   * ANOTHER location of the same org (cross-location cover, a loan, the daily
+   * reminder at the lent-to venue) must still reach them. Visible = a notice at
+   * this location OR at any location in the person's own org. Always paired
+   * with a `staff_member_id` equality, so another person's notices — and any
+   * other org's — never match. The staff id is server-resolved from the /me
+   * capability token, never client input.
+   */
+  const noticeVisibleTo = (staffMemberId: string) =>
+    sql`(${staffNotifications.businessId} = ${businessId} or ${staffNotifications.businessId} in (select ${businesses.id} from ${businesses} inner join ${staffMembers} on ${staffMembers.orgId} = ${businesses.orgId} where ${staffMembers.id} = ${staffMemberId} and ${staffMembers.orgId} is not null))`;
+
+  /**
+   * Membership guards for writes keyed on a person (TEST-03). A creator given
+   * another tenant's staff id must REFUSE, never insert a row under this
+   * business that points at them; and the /me notice reads, which may reach
+   * a notice at another location in the person's org, still require the
+   * ACTING location to have the person.
+   */
+  const staffIsMemberHere = (staffMemberId: string) =>
+    sql`exists(select 1 from ${staffMembers} where ${staffMembers.id} = ${staffMemberId} and ${memberHere})`;
+  const isMemberHere = async (staffMemberId: string): Promise<boolean> => {
+    const row = await first(
+      database
+        .select({ id: staffMembers.id })
+        .from(staffMembers)
+        .where(and(eq(staffMembers.id, staffMemberId), memberHere)),
+    );
+    return Boolean(row);
+  };
+  /** Which of these staff ids are members here. */
+  const memberIds = async (ids: string[]): Promise<Set<string>> => {
+    if (ids.length === 0) return new Set();
+    const rows = await database
+      .select({ id: staffMembers.id })
+      .from(staffMembers)
+      .where(and(inArray(staffMembers.id, ids), memberHere));
+    return new Set(rows.map((r) => r.id));
+  };
+  /** Which of these shift ids belong to this business. */
+  const ownedShiftIds = async (ids: string[]): Promise<Set<string>> => {
+    if (ids.length === 0) return new Set();
+    const rows = await database
+      .select({ id: shifts.id })
+      .from(shifts)
+      .where(and(inArray(shifts.id, ids), eq(shifts.businessId, businessId)));
+    return new Set(rows.map((r) => r.id));
+  };
+
   return {
     businessId,
 
@@ -134,6 +191,15 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .from(businesses)
         .where(eq(businesses.id, businessId));
       const orgId = biz?.orgId ?? null;
+      // COR-03: one person = one org-level row. A matching email anywhere in
+      // the org (any case) is the SAME person — refuse, and hand the caller
+      // the existing record so it can offer "add them to this location".
+      const existing = await lookupOrgMember(
+        database,
+        { businessId, orgId, memberHere },
+        input.email,
+      );
+      if (existing) throw new StaffExistsInOrgError(existing);
       return database.transaction(async (tx) => {
         const [row] = await tx
           .insert(staffMembers)
@@ -147,6 +213,23 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         }
         return row!;
       });
+    },
+
+    /**
+     * The org member with this email (case-insensitive), if any — with whether
+     * they are already a member of THIS location (COR-03). Falls back to the
+     * location itself for a business with no org (pre-backfill data).
+     */
+    async findOrgMemberByEmail(email: string) {
+      const [biz] = await database
+        .select({ orgId: businesses.orgId })
+        .from(businesses)
+        .where(eq(businesses.id, businessId));
+      return lookupOrgMember(
+        database,
+        { businessId, orgId: biz?.orgId ?? null, memberHere },
+        email,
+      );
     },
 
     async updateStaff(
@@ -226,6 +309,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           and(
             eq(timesheetEntries.staffMemberId, id),
             eq(timesheetEntries.businessId, businessId),
+            isNull(timesheetEntries.deletedAt),
           ),
         );
       return row?.count ?? 0;
@@ -421,9 +505,23 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       }>,
     ) {
       if (rows.length === 0) return [];
+      // Scoped: a row for another tenant's period is dropped (TEST-03).
+      const periodIds = [...new Set(rows.map((r) => r.rosterPeriodId))];
+      const ownedPeriods = await database
+        .select({ id: rosterPeriods.id })
+        .from(rosterPeriods)
+        .where(
+          and(
+            inArray(rosterPeriods.id, periodIds),
+            eq(rosterPeriods.businessId, businessId),
+          ),
+        );
+      const ok = new Set(ownedPeriods.map((p) => p.id));
+      const kept = rows.filter((r) => ok.has(r.rosterPeriodId));
+      if (kept.length === 0) return [];
       return database
         .insert(shifts)
-        .values(rows.map((r) => ({ ...r, businessId })))
+        .values(kept.map((r) => ({ ...r, businessId })))
         .returning();
     },
 
@@ -470,11 +568,25 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       tokenHash: string;
       expiresAt: Date;
     }) {
+      // Scoped: the period must be this business's and the person a member
+      // here — a foreign pair never gets a request row (TEST-03).
+      const period = await first(
+        database
+          .select({ id: rosterPeriods.id })
+          .from(rosterPeriods)
+          .where(
+            and(
+              eq(rosterPeriods.id, input.rosterPeriodId),
+              eq(rosterPeriods.businessId, businessId),
+            ),
+          ),
+      );
+      if (!period || !(await isMemberHere(input.staffMemberId))) return null;
       const [row] = await database
         .insert(availabilityRequests)
         .values({ ...input, businessId })
         .returning();
-      return row!;
+      return row ?? null;
     },
 
     async markRequestSent(id: string, sentAt: Date = new Date()) {
@@ -650,6 +762,21 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       entries: Array<{ shiftId: string; available: boolean }>,
     ) {
       if (entries.length === 0) return;
+      // Scoped: the request must be THIS business's. The upsert's conflict
+      // target is (request, shift) alone, so an unchecked call with another
+      // tenant's request id would overwrite THEIR answers (TEST-03 caught it).
+      const owned = await first(
+        database
+          .select({ id: availabilityRequests.id })
+          .from(availabilityRequests)
+          .where(
+            and(
+              eq(availabilityRequests.id, requestId),
+              eq(availabilityRequests.businessId, businessId),
+            ),
+          ),
+      );
+      if (!owned) return;
       await database
         .insert(availabilityResponses)
         .values(
@@ -751,6 +878,18 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     },
 
     async assign(shiftId: string, staffMemberId: string) {
+      // Scoped: the shift must be THIS business's. The upsert's conflict
+      // target is (shift, staff) alone, so an unchecked call with another
+      // tenant's shift id would confirm THEIR suggestion (TEST-03 caught it).
+      const shift = await first(
+        database
+          .select({ id: shifts.id })
+          .from(shifts)
+          .where(
+            and(eq(shifts.id, shiftId), eq(shifts.businessId, businessId)),
+          ),
+      );
+      if (!shift) return null;
       const [row] = await database
         .insert(rosterAssignments)
         .values({ shiftId, staffMemberId, businessId, status: "confirmed" })
@@ -923,10 +1062,22 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       rows: Array<{ shiftId: string; staffMemberId: string }>,
     ) {
       if (rows.length === 0) return [];
+      // Scoped: only this business's shifts and this location's members. A
+      // foreign pair is dropped, never inserted under this business.
+      const owned = await ownedShiftIds([
+        ...new Set(rows.map((r) => r.shiftId)),
+      ]);
+      const members = await memberIds([
+        ...new Set(rows.map((r) => r.staffMemberId)),
+      ]);
+      const kept = rows.filter(
+        (r) => owned.has(r.shiftId) && members.has(r.staffMemberId),
+      );
+      if (kept.length === 0) return [];
       return database
         .insert(rosterAssignments)
         .values(
-          rows.map((r) => ({ ...r, businessId, status: "suggested" as const })),
+          kept.map((r) => ({ ...r, businessId, status: "suggested" as const })),
         )
         .onConflictDoNothing({
           target: [rosterAssignments.shiftId, rosterAssignments.staffMemberId],
@@ -1050,6 +1201,42 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         );
     },
 
+    /* ----- Audit trail (OPS-04) ----- */
+
+    /**
+     * Append one event to THIS business's audit chain. Called by the audit
+     * decorator (`src/lib/audit/decorate.ts`) after every write it wraps —
+     * never by hand. The business scope is forced from the repo; `orgId` is
+     * carried for cross-reference only.
+     */
+    appendAuditEvent(input: NewAuditEvent & { orgId?: string | null }) {
+      return appendAuditEventRow(
+        database,
+        { businessId, orgId: input.orgId ?? null },
+        input,
+      );
+    },
+
+    /** Newest first. */
+    listAuditEvents(opts?: { limit?: number; offset?: number }) {
+      return listAuditEventRows(database, { businessId, orgId: null }, opts);
+    },
+
+    /** The history of specific records (e.g. the week's timesheet entries). */
+    listAuditEventsForEntities(entity: string, entityIds: string[]) {
+      return listAuditEventRowsForEntities(
+        database,
+        { businessId, orgId: null },
+        entity,
+        entityIds,
+      );
+    },
+
+    /** Recompute this business's hash chain and report the first break. */
+    getAuditChainStatus() {
+      return verifyAuditChain(database, { businessId, orgId: null });
+    },
+
     /* ----- Business settings ----- */
     getBusiness() {
       return first(
@@ -1069,6 +1256,10 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         certReminderLeadDays: number;
         staffShiftRemindersEnabled: boolean;
         formDigestEnabled: boolean;
+        payRuleThresholdBasis: "net" | "gross";
+        allowCrossLocationCover: boolean;
+        digestHourLocal: number;
+        reminderHourLocal: number;
       }>,
     ) {
       const [row] = await database
@@ -1089,7 +1280,9 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       const flags = await first(
         database
           .select({
-            hasStaff: sql<boolean>`exists(select 1 from ${staffMembers} where ${staffMembers.businessId} = ${businessId})`,
+            // Membership-based (M29): a location staffed only through
+            // `staff_location` still counts as having staff.
+            hasStaff: sql<boolean>`exists(select 1 from ${staffMembers} where ${memberHere})`,
             hasShiftTemplate: sql<boolean>`exists(select 1 from ${shiftTemplates} where ${shiftTemplates.businessId} = ${businessId})`,
             hasRosterPeriod: sql<boolean>`exists(select 1 from ${rosterPeriods} where ${rosterPeriods.businessId} = ${businessId})`,
             hasClockInLink: sql<boolean>`(${businesses.kioskTokenHash} is not null or ${businesses.personalClockTokenHash} is not null)`,
@@ -1112,6 +1305,10 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     },
 
     /* ----- Timesheets (clock in/out) ----- */
+    // Every read here excludes SOFT-DELETED entries (`deleted_at IS NULL`,
+    // UX-04): a deleted entry is kept as evidence but is invisible to the
+    // timesheets view, the CSV export, the labour report, the Xero push and
+    // the clock state, until it is restored.
 
     /** The staff member's currently-open entry (clocked in), if any. */
     getOpenEntry(staffMemberId: string) {
@@ -1124,6 +1321,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
               eq(timesheetEntries.businessId, businessId),
               eq(timesheetEntries.staffMemberId, staffMemberId),
               isNull(timesheetEntries.clockOutAt),
+              isNull(timesheetEntries.deletedAt),
             ),
           ),
       );
@@ -1140,6 +1338,12 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         withinGeofence?: boolean | null;
       } = {},
     ) {
+      // Scoped: the clock surfaces authenticate the person first (PIN, via
+      // the membership-scoped getStaff), so a non-member here is a
+      // programming error or an attack — refuse loudly (TEST-03).
+      if (!(await isMemberHere(staffMemberId))) {
+        throw new Error("clockIn: not a member of this business");
+      }
       const [row] = await database
         .insert(timesheetEntries)
         .values({
@@ -1164,18 +1368,33 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             eq(timesheetEntries.id, entryId),
             eq(timesheetEntries.businessId, businessId),
             isNull(timesheetEntries.clockOutAt),
+            isNull(timesheetEntries.deletedAt),
           ),
         )
         .returning();
       return row ?? null;
     },
 
+    /**
+     * Attach a clock photo to one of this business's entries. The bytes live
+     * in the database (`imageData`), in the object store (`storageKey` +
+     * size + checksum — PERF-06) or, during the dual-write rollout, both;
+     * the caller (`saveClockPhoto`) decides and may pre-assign the id so the
+     * store key and the row agree. A foreign or deleted entry → null.
+     */
     async addClockPhoto(input: {
+      id?: string;
       timesheetEntryId: string;
       kind: "in" | "out";
       mimeType: string;
-      imageData: Buffer;
+      imageData: Buffer | null;
+      storageKey?: string | null;
+      contentLength?: number | null;
+      checksum?: string | null;
     }) {
+      if (!input.imageData && !input.storageKey) {
+        throw new Error("A clock photo needs bytes or a storage key");
+      }
       // Guard: the entry must belong to this business before we attach a photo.
       const entry = await first(
         database
@@ -1185,24 +1404,42 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             and(
               eq(timesheetEntries.id, input.timesheetEntryId),
               eq(timesheetEntries.businessId, businessId),
+              isNull(timesheetEntries.deletedAt),
             ),
           ),
       );
       if (!entry) return null;
       const [row] = await database
         .insert(clockPhotos)
-        .values({ ...input, businessId })
+        .values({
+          ...(input.id ? { id: input.id } : {}),
+          businessId,
+          timesheetEntryId: input.timesheetEntryId,
+          kind: input.kind,
+          mimeType: input.mimeType,
+          imageData: input.imageData,
+          storageKey: input.storageKey ?? null,
+          contentLength: input.contentLength ?? null,
+          checksum: input.checksum ?? null,
+        })
         .returning({ id: clockPhotos.id });
       return row ?? null;
     },
 
-    /** A single clock photo (bytes + mime) scoped to this business. */
+    /**
+     * A single clock photo scoped to this business: its mime type plus
+     * wherever the bytes are (`imageData` and/or `storageKey`). Callers go
+     * through `readClockPhoto`, which prefers the store and falls back.
+     */
     getPhoto(id: string) {
       return first(
         database
           .select({
             mimeType: clockPhotos.mimeType,
             imageData: clockPhotos.imageData,
+            storageKey: clockPhotos.storageKey,
+            contentLength: clockPhotos.contentLength,
+            checksum: clockPhotos.checksum,
           })
           .from(clockPhotos)
           .where(
@@ -1212,23 +1449,22 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     },
 
     /**
-     * Delete this business's clock photos whose parent entry clocked in before
-     * the retention cutoff (using the business's own `photoRetentionDays`).
-     *
-     * Deletes ONLY `clock_photo` rows — the timesheet entries and their hours
-     * are kept. Scoped to this business on both tables, so it can never touch
-     * another tenant. Idempotent: re-running deletes nothing. Returns the count
-     * of photos purged.
+     * This business's clock photos whose parent entry clocked in before the
+     * retention cutoff (the business's own `photoRetentionDays`) — ids and
+     * store keys only, never bytes. The store-aware sweep
+     * (`purgeExpiredClockPhotos`) deletes the objects first, then the rows.
      */
-    async deleteExpiredPhotos(now: Date = new Date()): Promise<number> {
+    async listExpiredPhotos(
+      now: Date = new Date(),
+      limit = 5000,
+    ): Promise<{ id: string; storageKey: string | null }[]> {
       const business = await first(
         database
           .select({ retentionDays: businesses.photoRetentionDays })
           .from(businesses)
           .where(eq(businesses.id, businessId)),
       );
-      if (!business) return 0;
-
+      if (!business) return [];
       const cutoff = photoRetentionCutoff(now, business.retentionDays);
       const expiredEntries = database
         .select({ id: timesheetEntries.id })
@@ -1239,17 +1475,125 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             lt(timesheetEntries.clockInAt, cutoff),
           ),
         );
-
-      const deleted = await database
-        .delete(clockPhotos)
+      return database
+        .select({ id: clockPhotos.id, storageKey: clockPhotos.storageKey })
+        .from(clockPhotos)
         .where(
           and(
             eq(clockPhotos.businessId, businessId),
             inArray(clockPhotos.timesheetEntryId, expiredEntries),
           ),
         )
+        .orderBy(asc(clockPhotos.createdAt))
+        .limit(limit);
+    },
+
+    /** Delete these clock photo rows (this business's only). Returns the count. */
+    async deletePhotosByIds(ids: string[]): Promise<number> {
+      if (ids.length === 0) return 0;
+      const deleted = await database
+        .delete(clockPhotos)
+        .where(
+          and(
+            eq(clockPhotos.businessId, businessId),
+            inArray(clockPhotos.id, ids),
+          ),
+        )
         .returning({ id: clockPhotos.id });
       return deleted.length;
+    },
+
+    /**
+     * Delete this business's clock photos whose parent entry clocked in before
+     * the retention cutoff (using the business's own `photoRetentionDays`).
+     *
+     * Deletes ONLY `clock_photo` rows — the timesheet entries and their hours
+     * are kept. Scoped to this business on both tables, so it can never touch
+     * another tenant. Idempotent: re-running deletes nothing. Returns the count
+     * of photos purged. Database rows only — the job goes through
+     * `purgeExpiredClockPhotos`, which also removes the stored objects.
+     */
+    async deleteExpiredPhotos(now: Date = new Date()): Promise<number> {
+      const expired = await this.listExpiredPhotos(now);
+      return this.deletePhotosByIds(expired.map((p) => p.id));
+    },
+
+    /**
+     * Record that a photo's bytes now live in the object store (the
+     * backfill, PERF-06). Only a photo not yet stored is updated, so two
+     * concurrent backfills can't both claim it. Returns whether it did.
+     */
+    async markPhotoStored(
+      id: string,
+      stored: { storageKey: string; contentLength: number; checksum: string },
+    ): Promise<boolean> {
+      const rows = await database
+        .update(clockPhotos)
+        .set(stored)
+        .where(
+          and(
+            eq(clockPhotos.id, id),
+            eq(clockPhotos.businessId, businessId),
+            isNull(clockPhotos.storageKey),
+          ),
+        )
+        .returning({ id: clockPhotos.id });
+      return rows.length > 0;
+    },
+
+    /**
+     * Drop the database copy of a photo's bytes ONLY when the row still
+     * carries the checksum the caller verified against the stored object —
+     * the last step before the contract migration. Returns whether it did.
+     */
+    async clearPhotoBytes(id: string, checksum: string): Promise<boolean> {
+      const rows = await database
+        .update(clockPhotos)
+        .set({ imageData: null })
+        .where(
+          and(
+            eq(clockPhotos.id, id),
+            eq(clockPhotos.businessId, businessId),
+            isNotNull(clockPhotos.storageKey),
+            eq(clockPhotos.checksum, checksum),
+          ),
+        )
+        .returning({ id: clockPhotos.id });
+      return rows.length > 0;
+    },
+
+    /** Store keys of an entry's photos — collected BEFORE the rows go, so the objects can follow. */
+    async listPhotoStorageKeysForEntry(entryId: string): Promise<string[]> {
+      const rows = await database
+        .select({ storageKey: clockPhotos.storageKey })
+        .from(clockPhotos)
+        .where(
+          and(
+            eq(clockPhotos.businessId, businessId),
+            eq(clockPhotos.timesheetEntryId, entryId),
+            isNotNull(clockPhotos.storageKey),
+          ),
+        );
+      return rows.map((r) => r.storageKey!).filter(Boolean);
+    },
+
+    /** Store keys of every photo on a staff member's entries (deleting the person cascades the rows). */
+    async listPhotoStorageKeysForStaff(staffId: string): Promise<string[]> {
+      const rows = await database
+        .select({ storageKey: clockPhotos.storageKey })
+        .from(clockPhotos)
+        .innerJoin(
+          timesheetEntries,
+          eq(timesheetEntries.id, clockPhotos.timesheetEntryId),
+        )
+        .where(
+          and(
+            eq(clockPhotos.businessId, businessId),
+            eq(timesheetEntries.staffMemberId, staffId),
+            isNotNull(clockPhotos.storageKey),
+          ),
+        );
+      return rows.map((r) => r.storageKey!).filter(Boolean);
     },
 
     /**
@@ -1283,6 +1627,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .where(
           and(
             eq(timesheetEntries.businessId, businessId),
+            isNull(timesheetEntries.deletedAt),
             gte(timesheetEntries.clockInAt, startUtc),
             lt(timesheetEntries.clockInAt, endUtc),
           ),
@@ -1318,6 +1663,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           and(
             eq(timesheetEntries.businessId, businessId),
             eq(timesheetEntries.approved, true),
+            isNull(timesheetEntries.deletedAt),
             gte(timesheetEntries.clockInAt, startUtc),
             lt(timesheetEntries.clockInAt, endUtc),
           ),
@@ -1353,6 +1699,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .where(
           and(
             eq(timesheetEntries.businessId, businessId),
+            isNull(timesheetEntries.deletedAt),
             gte(timesheetEntries.clockInAt, startUtc),
             lt(timesheetEntries.clockInAt, endUtc),
           ),
@@ -1394,6 +1741,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             and(
               eq(timesheetEntries.id, id),
               eq(timesheetEntries.businessId, businessId),
+              isNull(timesheetEntries.deletedAt),
             ),
           ),
       );
@@ -1414,6 +1762,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           and(
             eq(timesheetEntries.id, id),
             eq(timesheetEntries.businessId, businessId),
+            isNull(timesheetEntries.deletedAt),
           ),
         )
         .returning();
@@ -1428,21 +1777,67 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           and(
             eq(timesheetEntries.id, id),
             eq(timesheetEntries.businessId, businessId),
+            isNull(timesheetEntries.deletedAt),
           ),
         )
         .returning();
       return row ?? null;
     },
 
+    /**
+     * SOFT-delete a timesheet entry (UX-04). The row is KEPT with `deleted_at`
+     * set — it is the wage evidence for a shift worked, so it stays auditable
+     * and recoverable — and every read on this repo filters it out. Its clock
+     * photos ARE removed now (the privacy promise stands: a face photo never
+     * outlives the owner's decision to delete the entry; the hours are the
+     * evidence, not the photo). Scoped to this business; a foreign or already-
+     * deleted id is a no-op returning null. Returns the deleted row.
+     */
     async deleteEntry(id: string) {
-      await database
-        .delete(timesheetEntries)
+      return database.transaction(async (tx) => {
+        const [row] = await tx
+          .update(timesheetEntries)
+          .set({ deletedAt: new Date(), updatedAt: new Date() })
+          .where(
+            and(
+              eq(timesheetEntries.id, id),
+              eq(timesheetEntries.businessId, businessId),
+              isNull(timesheetEntries.deletedAt),
+            ),
+          )
+          .returning();
+        if (!row) return null;
+        await tx
+          .delete(clockPhotos)
+          .where(
+            and(
+              eq(clockPhotos.businessId, businessId),
+              eq(clockPhotos.timesheetEntryId, id),
+            ),
+          );
+        return row;
+      });
+    },
+
+    /**
+     * Undo a soft delete. Returns null when the entry isn't this business's or
+     * isn't deleted. Restoring an OPEN entry after the person has clocked in
+     * again would double-book the one-open-entry guard — the partial unique
+     * index rejects it and the error propagates for the caller to explain.
+     */
+    async restoreEntry(id: string) {
+      const [row] = await database
+        .update(timesheetEntries)
+        .set({ deletedAt: null, updatedAt: new Date() })
         .where(
           and(
             eq(timesheetEntries.id, id),
             eq(timesheetEntries.businessId, businessId),
+            isNotNull(timesheetEntries.deletedAt),
           ),
-        );
+        )
+        .returning();
+      return row ?? null;
     },
 
     /**
@@ -1945,6 +2340,19 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       return rows.length;
     },
 
+    /**
+     * PROD-15: may shifts at THIS location be covered by staff from the
+     * owner's other locations? True only when the owner turned it on for this
+     * location AND the org actually has another location. The single choke
+     * point every offer's scope passes through — a caller can ASK for `org`,
+     * but only this decides whether it is honoured.
+     */
+    async getCrossLocationCoverEnabled(): Promise<boolean> {
+      const biz = await this.getBusiness();
+      if (!biz?.allowCrossLocationCover) return false;
+      return (await this.getOrgLocationCount()) > 1;
+    },
+
     async releaseOwnShift(
       staffMemberId: string,
       shiftId: string,
@@ -1969,9 +2377,20 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           reason: "This shift has already been offered up.",
         };
       }
+      // A requested `org` scope is honoured only where the owner allows it
+      // (PROD-15); otherwise the offer stays local, silently and safely.
+      const effectiveScope: OfferScope =
+        scope === "org" && (await this.getCrossLocationCoverEnabled())
+          ? "org"
+          : "location";
       const [row] = await database
         .insert(shiftOffers)
-        .values({ businessId, shiftId, offeredByStaffId: staffMemberId, scope })
+        .values({
+          businessId,
+          shiftId,
+          offeredByStaffId: staffMemberId,
+          scope: effectiveScope,
+        })
         .returning();
       return { ok: true as const, offer: row! };
     },
@@ -2013,9 +2432,19 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           reason: "This shift is already open for claims.",
         };
       }
+      // PROD-15: `org` only where the owner allows cross-location cover.
+      const effectiveScope: OfferScope =
+        scope === "org" && (await this.getCrossLocationCoverEnabled())
+          ? "org"
+          : "location";
       const [row] = await database
         .insert(shiftOffers)
-        .values({ businessId, shiftId, offeredByStaffId: null, scope })
+        .values({
+          businessId,
+          shiftId,
+          offeredByStaffId: null,
+          scope: effectiveScope,
+        })
         .returning();
       return { ok: true as const, offer: row! };
     },
@@ -2102,6 +2531,9 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
      */
     async approveOffer(offerId: string) {
       return database.transaction(async (tx) => {
+        // Row-locked (like moveAssignment): two concurrent approvals — a
+        // double-click, or two managers — serialise here, so the second sees
+        // `approved` and is refused instead of racing the transfer below.
         const [offer] = await tx
           .select()
           .from(shiftOffers)
@@ -2110,7 +2542,8 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
               eq(shiftOffers.id, offerId),
               eq(shiftOffers.businessId, businessId),
             ),
-          );
+          )
+          .for("update");
         if (!offer || offer.status !== "claimed") {
           return {
             ok: false as const,
@@ -2211,7 +2644,15 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             ),
           )
           .returning();
-        return { ok: true as const, offer: updated! };
+        // Unreachable under the row lock above, but never assert: a lost
+        // update must surface as a refusal, not a crash at the call site.
+        if (!updated) {
+          return {
+            ok: false as const,
+            reason: "This claim was just actioned by someone else.",
+          };
+        }
+        return { ok: true as const, offer: updated };
       });
     },
 
@@ -2639,9 +3080,38 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       }>,
     ) {
       if (rows.length === 0) return [];
+      // A supplier id that isn't this business's is coerced to null — never a
+      // link to another tenant's supplier (the same rule as addItem).
+      const wanted = [
+        ...new Set(
+          rows.map((r) => r.supplierId).filter((s): s is string => Boolean(s)),
+        ),
+      ];
+      const owned = new Set(
+        wanted.length === 0
+          ? []
+          : (
+              await database
+                .select({ id: suppliers.id })
+                .from(suppliers)
+                .where(
+                  and(
+                    inArray(suppliers.id, wanted),
+                    eq(suppliers.businessId, businessId),
+                  ),
+                )
+            ).map((r) => r.id),
+      );
       return database
         .insert(items)
-        .values(rows.map((r) => ({ ...r, businessId })))
+        .values(
+          rows.map((r) => ({
+            ...r,
+            supplierId:
+              r.supplierId && owned.has(r.supplierId) ? r.supplierId : null,
+            businessId,
+          })),
+        )
         .returning();
     },
 
@@ -2803,6 +3273,21 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     },
 
     async publish(rosterPeriodId: string, publicSlug: string) {
+      // Scoped: the period must be THIS business's. The upsert's conflict
+      // target is the period id alone, so an unchecked call with another
+      // tenant's period id would bump THEIR published_at (TEST-03 caught it).
+      const period = await first(
+        database
+          .select({ id: rosterPeriods.id })
+          .from(rosterPeriods)
+          .where(
+            and(
+              eq(rosterPeriods.id, rosterPeriodId),
+              eq(rosterPeriods.businessId, businessId),
+            ),
+          ),
+      );
+      if (!period) return null;
       const [row] = await database
         .insert(publishedRosters)
         .values({ rosterPeriodId, publicSlug, businessId })
@@ -2853,6 +3338,16 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       formId: string;
       formTitle: string;
     }) {
+      // Scoped: only this business's forms notify this business (TEST-03).
+      const form = await first(
+        database
+          .select({ id: forms.id })
+          .from(forms)
+          .where(
+            and(eq(forms.id, input.formId), eq(forms.businessId, businessId)),
+          ),
+      );
+      if (!form) return;
       const groupKey = `form_response:${input.formId}`;
       await database
         .insert(notifications)
@@ -2964,6 +3459,8 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       body?: string | null;
       dedupeKey?: string | null;
     }) {
+      // Scoped: only a member here can be notified from here (TEST-03).
+      if (!(await isMemberHere(input.staffMemberId))) return null;
       const [row] = await database
         .insert(staffNotifications)
         .values({
@@ -2979,22 +3476,26 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       return row ?? null;
     },
 
-    /** One staff member's notices, newest first. Scoped to business AND staff. */
+    /**
+     * One staff member's notices, newest first — this location's AND any from
+     * other locations in the person's org (notices follow the person, M29).
+     */
     listStaffNotifications(staffMemberId: string, limit = 50) {
       return database
         .select()
         .from(staffNotifications)
         .where(
           and(
-            eq(staffNotifications.businessId, businessId),
             eq(staffNotifications.staffMemberId, staffMemberId),
+            staffIsMemberHere(staffMemberId),
+            noticeVisibleTo(staffMemberId),
           ),
         )
         .orderBy(desc(staffNotifications.createdAt))
         .limit(limit);
     },
 
-    /** Unread count for one staff member. */
+    /** Unread count for one staff member (org-wide, see listStaffNotifications). */
     async countUnreadStaffNotifications(
       staffMemberId: string,
     ): Promise<number> {
@@ -3003,8 +3504,9 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .from(staffNotifications)
         .where(
           and(
-            eq(staffNotifications.businessId, businessId),
             eq(staffNotifications.staffMemberId, staffMemberId),
+            staffIsMemberHere(staffMemberId),
+            noticeVisibleTo(staffMemberId),
             eq(staffNotifications.isRead, false),
           ),
         );
@@ -3012,8 +3514,9 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     },
 
     /**
-     * Mark one notice read — scoped to business AND the given staff member, so
-     * a foreign id (another person's notice, another tenant's) no-ops.
+     * Mark one notice read — scoped to the given staff member AND a location
+     * they can see notices from, so a foreign id (another person's notice,
+     * another org's) no-ops.
      */
     async markStaffNotificationRead(id: string, staffMemberId: string) {
       const [row] = await database
@@ -3022,23 +3525,25 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
         .where(
           and(
             eq(staffNotifications.id, id),
-            eq(staffNotifications.businessId, businessId),
             eq(staffNotifications.staffMemberId, staffMemberId),
+            staffIsMemberHere(staffMemberId),
+            noticeVisibleTo(staffMemberId),
           ),
         )
         .returning();
       return row ?? null;
     },
 
-    /** Mark all of one staff member's unread notices read. */
+    /** Mark all of one staff member's unread notices read (org-wide). */
     async markAllStaffNotificationsRead(staffMemberId: string) {
       await database
         .update(staffNotifications)
         .set({ isRead: true })
         .where(
           and(
-            eq(staffNotifications.businessId, businessId),
             eq(staffNotifications.staffMemberId, staffMemberId),
+            staffIsMemberHere(staffMemberId),
+            noticeVisibleTo(staffMemberId),
             eq(staffNotifications.isRead, false),
           ),
         );
@@ -4004,11 +4509,13 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       driveWebLink: string;
       mimeType: string;
     }) {
+      // Scoped: a document can only be attached to a member here (TEST-03).
+      if (!(await isMemberHere(input.staffMemberId))) return null;
       const [row] = await database
         .insert(staffDocuments)
         .values({ ...input, businessId })
         .returning();
-      return row!;
+      return row ?? null;
     },
 
     async deleteStaffDocument(id: string) {
@@ -4247,6 +4754,8 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       earningsRateId: string | null;
       payrollCalendarId: string | null;
     }) {
+      // Scoped: only a member here can be mapped from here (TEST-03).
+      if (!(await isMemberHere(input.staffMemberId))) return null;
       const [row] = await database
         .insert(xeroEmployeeMaps)
         .values({ ...input, businessId })
@@ -4261,7 +4770,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
           },
         })
         .returning();
-      return row!;
+      return row ?? null;
     },
 
     /** Remove a staff member's mapping. Business-scoped. */
@@ -4300,6 +4809,7 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             eq(timesheetEntries.businessId, businessId),
             eq(timesheetEntries.approved, true),
             isNotNull(timesheetEntries.clockOutAt),
+            isNull(timesheetEntries.deletedAt),
             gte(timesheetEntries.clockInAt, startUtc),
             lt(timesheetEntries.clockInAt, endUtc),
           ),
@@ -4371,6 +4881,8 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       attempt: number;
       now?: Date;
     }) {
+      // Scoped: a push row can only be recorded for a member here (TEST-03).
+      if (!(await isMemberHere(input.staffMemberId))) return null;
       const now = input.now ?? new Date();
       const [row] = await database
         .insert(xeroTimesheetPushes)
@@ -4431,6 +4943,8 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       attempt: number;
       now?: Date;
     }) {
+      // Scoped: a push row can only be recorded for a member here (TEST-03).
+      if (!(await isMemberHere(input.staffMemberId))) return null;
       const now = input.now ?? new Date();
       const [row] = await database
         .insert(xeroTimesheetPushes)
@@ -4727,6 +5241,67 @@ function fieldsStructurallyEqual(
 export type TenantRepo = ReturnType<typeof createTenantRepo>;
 
 /** Run a select expected to return at most one row. */
+/**
+ * Thrown by `addStaff` when the email already belongs to someone in the
+ * organisation (COR-03). Carries the existing record so the caller can offer
+ * to place THAT person at the location instead of creating a duplicate (two
+ * PINs, two pay rates, split hours).
+ */
+export class StaffExistsInOrgError extends Error {
+  constructor(
+    public readonly existing: {
+      id: string;
+      name: string;
+      homeBusinessId: string;
+      active: boolean;
+      memberHere: boolean;
+    },
+  ) {
+    super("A person with that email is already on this organisation's team");
+    this.name = "StaffExistsInOrgError";
+  }
+}
+
+/**
+ * Find the org member with `email` (trimmed, case-insensitive). Scoped to the
+ * org when the location has one, else to the location itself. `memberHere`
+ * is the calling repo's membership predicate, so the flag answers "would this
+ * person already show on THIS location's staff list?".
+ */
+async function lookupOrgMember(
+  database: Db,
+  scope: {
+    businessId: string;
+    orgId: string | null;
+    memberHere: Parameters<typeof and>[0];
+  },
+  email: string,
+): Promise<StaffExistsInOrgError["existing"] | null> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return null;
+  const inScope = scope.orgId
+    ? eq(staffMembers.orgId, scope.orgId)
+    : eq(staffMembers.businessId, scope.businessId);
+  const [row] = await database
+    .select({
+      id: staffMembers.id,
+      name: staffMembers.name,
+      homeBusinessId: staffMembers.businessId,
+      active: staffMembers.active,
+    })
+    .from(staffMembers)
+    .where(and(inScope, sql`lower(${staffMembers.email}) = ${normalized}`))
+    .orderBy(asc(staffMembers.createdAt))
+    .limit(1);
+  if (!row) return null;
+  const [here] = await database
+    .select({ id: staffMembers.id })
+    .from(staffMembers)
+    .where(and(eq(staffMembers.id, row.id), scope.memberHere))
+    .limit(1);
+  return { ...row, memberHere: Boolean(here) };
+}
+
 async function first<T>(query: PromiseLike<T[]>): Promise<T | null> {
   const rows = await query;
   return rows[0] ?? null;

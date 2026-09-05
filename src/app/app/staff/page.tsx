@@ -2,10 +2,15 @@ import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
-import { ownerRepo, requireOwner } from "@/lib/auth/context";
-import { createTenantRepo } from "@/lib/tenant/repository";
+import { ownerRepo, ownerContext, requireOwner } from "@/lib/auth/context";
+import {
+  createTenantRepo,
+  StaffExistsInOrgError,
+} from "@/lib/tenant/repository";
+import { createOrgRepo } from "@/lib/tenant/org-repository";
+import { isUniqueViolation } from "@/lib/db/errors";
 import { env } from "@/lib/env";
-import { staffSchema, pinSchema, payRateSchema } from "@/lib/validation";
+import { staffSchema, newPinSchema, payRateSchema } from "@/lib/validation";
 import { hashPin } from "@/lib/pin";
 import { generateToken } from "@/lib/tokens";
 import { logger } from "@/lib/logger";
@@ -21,7 +26,10 @@ import {
   uploadDocumentToDrive,
 } from "@/lib/google-drive/service";
 import { DOC_TYPES, validateUpload } from "@/lib/google-drive/validation";
+import { blobStore } from "@/lib/blob/s3";
+import { deleteClockPhotoObjects } from "@/lib/clock-photo-storage";
 import { ClearFlashCookie } from "@/components/ClearFlashCookie";
+import { flashCookieOptions, type FlashCookieName } from "@/lib/flash-cookie";
 import { CopyButton } from "@/components/CopyButton";
 import { AddStaffFields } from "@/components/AddStaffFields";
 import {
@@ -36,6 +44,8 @@ import {
   type BadgeTone,
 } from "@/components/ui";
 
+import { ConfirmDeleteCard } from "@/components/ConfirmDeleteCard";
+
 const PATH = "/app/staff";
 
 /**
@@ -43,7 +53,7 @@ const PATH = "/app/staff";
  * "<staffId>:<token>" so the link renders beside the right person. Same
  * pattern as the kiosk link in Settings; only the hash is ever stored.
  */
-const NOTICES_LINK_COOKIE = "notices_link_once";
+const NOTICES_LINK_COOKIE = "notices_link_once" satisfies FlashCookieName;
 
 const CERT_TYPE_LABEL: Record<string, string> = {
   rsa: "RSA",
@@ -78,15 +88,6 @@ const CERT_META: Record<
   },
 };
 
-function isUniqueViolation(err: unknown): boolean {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    "code" in err &&
-    (err as { code?: string }).code === "23505"
-  );
-}
-
 export default async function StaffPage({
   searchParams,
 }: {
@@ -102,11 +103,25 @@ export default async function StaffPage({
     staffDeleted?: string;
     confirmDelete?: string;
     count?: string;
+    confirmDoc?: string;
+    exists?: string;
   }>;
 }) {
   const sp = await searchParams;
-  const repo = await ownerRepo();
+  const { repo, org } = await ownerContext();
   const staff = await repo.listStaff();
+
+  // COR-03: an add that matched someone already on the team at ANOTHER
+  // location. Offer to place their existing record here instead of creating a
+  // second person (two PINs, two rates, split hours).
+  const existingElsewhere = sp.exists
+    ? await org.getPersonInOrg(sp.exists)
+    : null;
+  const existingHomeName = existingElsewhere
+    ? ((await org.listLocations()).find(
+        (l) => l.id === existingElsewhere.businessId,
+      )?.name ?? "another location")
+    : null;
   const business = await repo.getBusiness();
   const tz = business?.timezone ?? DEFAULT_TIMEZONE;
   const timeZone = business?.timezone ?? undefined;
@@ -173,6 +188,11 @@ export default async function StaffPage({
 
   // A delete awaiting confirmation (the person has recorded hours).
   const pendingDelete = staff.find((s) => s.id === sp.confirmDelete) ?? null;
+  // A document delete awaiting confirmation (UX-04) — it also removes the
+  // file this app created in the owner's Drive.
+  const pendingDocDelete = sp.confirmDoc
+    ? (allDocs.find((d) => d.id === sp.confirmDoc) ?? null)
+    : null;
 
   async function addStaff(formData: FormData) {
     "use server";
@@ -189,6 +209,16 @@ export default async function StaffPage({
     try {
       await repo.addStaff(parsed.data);
     } catch (err) {
+      if (err instanceof StaffExistsInOrgError) {
+        // Same person, already on the team (COR-03). Here already → the
+        // familiar message; elsewhere in the org → offer to add them here.
+        if (err.existing.memberHere) {
+          redirect(
+            `${PATH}?error=${encodeURIComponent("That email is already on your team")}`,
+          );
+        }
+        redirect(`${PATH}?exists=${err.existing.id}`);
+      }
       if (isUniqueViolation(err)) {
         redirect(
           `${PATH}?error=${encodeURIComponent("That email is already on your team")}`,
@@ -198,6 +228,25 @@ export default async function StaffPage({
     }
     revalidatePath(PATH);
     redirect(`${PATH}?added=1`);
+  }
+
+  /**
+   * COR-03: place an EXISTING org member at this location instead of creating
+   * a duplicate. The org repo verifies both the person and this location
+   * belong to the owner's org (N3); the location is the session's active one.
+   */
+  async function addExistingToLocation(formData: FormData) {
+    "use server";
+    const { orgId, businessId } = await requireOwner();
+    const id = String(formData.get("id") ?? "");
+    const res = await createOrgRepo(orgId).addPersonToLocation(id, businessId);
+    revalidatePath(PATH);
+    if (!res.ok) {
+      redirect(
+        `${PATH}?error=${encodeURIComponent("Couldn't add that person to this location")}`,
+      );
+    }
+    redirect(`${PATH}?s=${id}&added=1`);
   }
 
   async function editStaff(formData: FormData) {
@@ -268,7 +317,14 @@ export default async function StaffPage({
       }
     }
 
+    // Their clock photos cascade away with the entries; collect the stored
+    // objects' keys first so the bucket follows (best effort, PERF-06).
+    const photoKeys = await repo.listPhotoStorageKeysForStaff(id);
     await repo.deleteStaff(id);
+    const store = blobStore();
+    if (store && photoKeys.length > 0) {
+      await deleteClockPhotoObjects(store, photoKeys);
+    }
     revalidatePath(PATH);
     redirect(`${PATH}?staffDeleted=1`);
   }
@@ -298,9 +354,12 @@ export default async function StaffPage({
     "use server";
     const repo = await ownerRepo();
     const id = String(formData.get("id"));
-    const parsed = pinSchema.safeParse(formData.get("pin"));
+    // New PINs: 4–6 digits and not trivially guessable (SEC-06). Existing
+    // PINs are never re-validated — only a new one has to clear this bar.
+    const parsed = newPinSchema.safeParse(formData.get("pin"));
     if (!parsed.success) {
-      const msg = parsed.error.issues[0]?.message ?? "Enter a 4-digit PIN";
+      const msg =
+        parsed.error.issues[0]?.message ?? "Enter a PIN of 4–6 digits";
       redirect(`${PATH}?s=${id}&error=${encodeURIComponent(msg)}`);
     }
     // Hash before storing; the PIN itself is never persisted or logged.
@@ -322,13 +381,11 @@ export default async function StaffPage({
       redirect(`${PATH}?error=${encodeURIComponent("Staff member not found")}`);
     // Flash the raw token so the next render shows the link once.
     const cookieStore = await cookies();
-    cookieStore.set(NOTICES_LINK_COOKIE, `${id}:${token}`, {
-      path: PATH,
-      maxAge: 300,
-      httpOnly: false,
-      sameSite: "lax",
-      secure: env.NODE_ENV === "production",
-    });
+    cookieStore.set(
+      NOTICES_LINK_COOKIE,
+      `${id}:${token}`,
+      flashCookieOptions(NOTICES_LINK_COOKIE),
+    );
     revalidatePath(PATH);
     redirect(`${PATH}?s=${id}`);
   }
@@ -423,6 +480,12 @@ export default async function StaffPage({
     const repo = createTenantRepo(businessId);
     const documentId = String(formData.get("documentId"));
     const staffId = String(formData.get("staffId") ?? "");
+    // Two-step (UX-04): confirm first — this also deletes the Drive file.
+    if (formData.get("confirmed") !== "1") {
+      redirect(
+        `${PATH}?s=${encodeURIComponent(staffId)}&confirmDoc=${encodeURIComponent(documentId)}`,
+      );
+    }
     // Scoped delete: a foreign document id resolves to nothing and is a no-op.
     await deleteDocument({
       repo,
@@ -442,7 +505,7 @@ export default async function StaffPage({
         subtitle="Your team, their rates, certifications and documents — all in one place."
       />
 
-      {sp.error ? <Banner tone="warn">{sp.error}</Banner> : null}
+      {sp.error ? <Banner tone="error">{sp.error}</Banner> : null}
       {sp.added ? <Banner tone="success">Staff member added.</Banner> : null}
       {sp.saved ? <Banner tone="success">Details saved.</Banner> : null}
       {sp.staffDeleted ? (
@@ -455,35 +518,82 @@ export default async function StaffPage({
       ) : null}
       {sp.docDeleted ? <Banner tone="success">Document removed.</Banner> : null}
 
+      {/* COR-03: the person already exists in the org at another location. */}
+      {existingElsewhere ? (
+        <Card className="mt-4">
+          <h2 className="font-archivo text-[17px] font-bold text-[var(--color-ink)]">
+            {existingElsewhere.name} is already on your team
+          </h2>
+          <p className="mt-1.5 text-[13.5px] text-[var(--color-text-secondary)]">
+            That email belongs to {existingElsewhere.name}, who works at{" "}
+            <strong>{existingHomeName}</strong>. Rather than creating a second
+            record (a second PIN, a second pay rate and split hours), add their
+            existing record to this location — their PIN, rate and history come
+            with them.
+            {!existingElsewhere.active
+              ? " They're currently inactive; adding them here keeps them inactive until you reactivate them from their record."
+              : ""}
+          </p>
+          <form
+            action={addExistingToLocation}
+            className="mt-4 flex flex-wrap items-center gap-3"
+          >
+            <input type="hidden" name="id" value={existingElsewhere.id} />
+            <Button type="submit">
+              Add {existingElsewhere.name} to this location
+            </Button>
+            <Link
+              href={PATH}
+              className="text-[13px] font-semibold text-[var(--color-text-secondary)] hover:underline"
+            >
+              Cancel
+            </Link>
+          </form>
+        </Card>
+      ) : null}
+
       {/* Count-aware confirmation before a permanent delete. */}
       {pendingDelete ? (
-        <Card className="mt-4 border-[var(--color-danger)]">
-          <h2 className="font-archivo text-[17px] font-bold text-[var(--color-ink)]">
-            Delete {pendingDelete.name}?
-          </h2>
-          <p className="mt-1 text-[13.5px] text-[var(--color-text-secondary)]">
+        <ConfirmDeleteCard
+          title={`Delete ${pendingDelete.name}?`}
+          action={deleteStaff}
+          fields={{ id: pendingDelete.id }}
+          confirmLabel="Delete permanently"
+          cancelHref={`${PATH}?s=${pendingDelete.id}`}
+        >
+          <p>
             {pendingDelete.name} has {sp.count} recorded timesheet
             {sp.count === "1" ? " entry" : " entries"}. Deleting permanently
             removes them and all their records — timesheets, leave,
             certifications and documents. This can’t be undone. To keep their
             history instead, use <strong>Deactivate</strong>.
           </p>
-          <div className="mt-3 flex items-center gap-3">
-            <form action={deleteStaff}>
-              <input type="hidden" name="id" value={pendingDelete.id} />
-              <input type="hidden" name="confirmed" value="1" />
-              <Button type="submit" variant="danger">
-                Delete permanently
-              </Button>
-            </form>
-            <Link
-              href={`${PATH}?s=${pendingDelete.id}`}
-              className="text-[13px] font-semibold text-[var(--color-text-secondary)] hover:underline"
-            >
-              Cancel
-            </Link>
-          </div>
-        </Card>
+        </ConfirmDeleteCard>
+      ) : null}
+
+      {pendingDocDelete ? (
+        <ConfirmDeleteCard
+          title={`Delete “${pendingDocDelete.fileName}”?`}
+          action={deleteDocumentAction}
+          fields={{
+            documentId: pendingDocDelete.id,
+            staffId: pendingDocDelete.staffMemberId,
+          }}
+          confirmLabel="Delete document"
+          cancelHref={`${PATH}?s=${pendingDocDelete.staffMemberId}`}
+        >
+          <p>
+            This removes the document from{" "}
+            {staff.find((s) => s.id === pendingDocDelete.staffMemberId)?.name ??
+              "this person"}
+            ’s record{" "}
+            <strong>
+              and deletes the file this app created in your Google Drive
+            </strong>
+            . Files you put in Drive yourself are never touched. This can’t be
+            undone.
+          </p>
+        </ConfirmDeleteCard>
       ) : null}
 
       {/* Add-someone inline bar. */}
@@ -781,10 +891,7 @@ export default async function StaffPage({
                   <Eyebrow className="mb-2 block">Staff notices</Eyebrow>
                   {freshNoticesLink?.staffId === selected.id ? (
                     <div className="mb-2">
-                      <ClearFlashCookie
-                        name={NOTICES_LINK_COOKIE}
-                        path={PATH}
-                      />
+                      <ClearFlashCookie name={NOTICES_LINK_COOKIE} />
                       <Banner tone="success">
                         Copy this private link for {selected.name} now — for
                         security we won&apos;t show it again.
@@ -830,10 +937,10 @@ export default async function StaffPage({
                         name="pin"
                         inputMode="numeric"
                         autoComplete="off"
-                        pattern="\d{4}"
-                        maxLength={4}
+                        pattern="\d{4,6}"
+                        maxLength={6}
                         required
-                        placeholder="4 digits"
+                        placeholder="4–6 digits"
                         className="w-28"
                         aria-label={`Set clock-in PIN for ${selected.name}`}
                       />

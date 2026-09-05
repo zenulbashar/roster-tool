@@ -54,16 +54,18 @@ npm run worker
 
 ## Useful commands
 
-| Command               | What it does                                      |
-| --------------------- | ------------------------------------------------- |
-| `npm run dev`         | Start the app in development                      |
-| `npm run worker`      | Run the background job worker                     |
-| `npm run db:generate` | Generate a migration from schema changes          |
-| `npm run db:migrate`  | Apply migrations                                  |
-| `npm run db:seed`     | Seed a demo business with staff + a sample period |
-| `npm run typecheck`   | TypeScript check                                  |
-| `npm run lint`        | ESLint                                            |
-| `npm test`            | Run the test suite                                |
+| Command                    | What it does                                                                                          |
+| -------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `npm run dev`              | Start the app in development                                                                          |
+| `npm run worker`           | Run the background job worker                                                                         |
+| `npm run db:generate`      | Generate a migration from schema changes                                                              |
+| `npm run db:migrate`       | Apply migrations                                                                                      |
+| `npm run db:seed`          | Seed a demo business with staff + a sample period                                                     |
+| `npm run typecheck`        | TypeScript check                                                                                      |
+| `npm run lint`             | ESLint                                                                                                |
+| `npm test`                 | Run the test suite                                                                                    |
+| `npm run test:coverage`    | The suite with V8 coverage of `src/lib` (report in `coverage/`)                                       |
+| `npm run coverage:ratchet` | Compare coverage with the committed baseline — may rise, must not fall; `-- --update` locks a gain in |
 
 ## Production deployment
 
@@ -121,6 +123,25 @@ variables → Actions**) for it to work:
 
 The job is for **additive/expand** migrations only; destructive migrations
 (drop/rename/retype) must still be run manually using expand/contract.
+
+Two more one-time settings put a rehearsal and a human between a merge and
+the production migration (full detail: `docs/operations.md` → "Staging and
+the migration gate"):
+
+- **Staging rehearsal** — in Neon create a branch named `staging` from
+  production, then in GitHub → **Settings → Environments** create `staging`
+  and add its **direct** connection string as the secret
+  `STAGING_DATABASE_URL`. The `migrate-staging` job applies every pending
+  migration there first and **fails closed** (blocking the production job)
+  until the secret exists.
+- **Approval gate** — create the `production` environment with at least one
+  **required reviewer**; the `migrate-prod` job waits for that approval.
+  Move `PROD_DATABASE_URL` and `AUTH_SECRET` onto it if you want them scoped
+  to production only (repository secrets keep working).
+
+Vercel deploys the new code as soon as `main` moves, before the migration is
+approved — so for a migration the new code needs immediately, run
+`npm run db:migrate` by hand first (as above), then merge.
 
 ### 2. Generate a sign-in secret
 
@@ -190,6 +211,44 @@ an availability request. You should receive a real email from
 `roster@zaleit.com.au` within a minute (sent by the Railway worker). If emails
 don't arrive, check the Railway worker logs and the Resend dashboard.
 
+### Health & readiness (set up monitoring)
+
+- `GET https://<your-domain>/api/health` — liveness: the web app is up.
+- `GET https://<your-domain>/api/ready` — readiness: the database answers AND
+  the background worker has written its heartbeat in the last 5 minutes. It
+  returns **503** otherwise, with the failing check named.
+
+Point an uptime monitor (Better Uptime, UptimeRobot, Vercel checks…) at
+`/api/ready` and alert on non-200. **This is the alert that catches a dead or
+wedged worker** — every email the product sends goes through it, and without
+this check the first sign of a stopped worker is a customer asking where their
+roster went. The worker image also carries a Docker `HEALTHCHECK` (a local
+heartbeat file), so Railway restarts a wedged process on its own.
+
+Set `OPS_ALERT_EMAIL` on Railway so a background job that exhausts its
+retries emails you (it is logged and reported to the error tracker either
+way), and `SENTRY_DSN` on both platforms for error tracking — both are
+optional and fail closed.
+
+### Backups, restore drills & runbooks
+
+`docs/operations.md` is the operations runbook: the recovery targets we
+publish (**RPO 5 minutes, RTO 4 hours**, on Neon point-in-time restore), the
+SLOs, a timed **restore-drill** procedure with an evidence template (run it
+quarterly), the staging + approval gate for migrations, and step-by-step
+runbooks for a database restore, a bad migration, a worker or email-provider
+outage, OAuth mass-revocation, secret rotation and a suspected key
+compromise. The queue has an operator CLI:
+
+```bash
+npm run jobs:admin -- stats                              # depth per queue
+npm run jobs:admin -- failed                             # jobs that exhausted their retries
+npm run jobs:admin -- retry --queue <queue> --id <id>    # re-run one in place
+npm run jobs:admin -- redispatch --business <id> --force # re-send a location's daily digests
+```
+
+It reads `DATABASE_URL` from `.env` — use the **direct** Neon string.
+
 ### 6. (Optional) Enable Google Drive document storage
 
 This lets owners connect their own Google Drive and upload staff documents
@@ -253,6 +312,36 @@ payroll.timesheets payroll.employees.read payroll.settings.read` — **never
 
 The worker does **not** need the Xero env (pushes are owner-initiated, no cron).
 
+### 8. (Optional) Move clock-in photos to object storage
+
+Clock-in photos are stored as bytes in Postgres until you point the app at an
+S3-compatible bucket (AWS S3, Cloudflare R2, MinIO). Then new photos go to
+the bucket (and, until you flip the rollout flag, to the database as well),
+the daily retention sweep deletes the objects, and a backfill script moves the
+history. Set on **both** Vercel and Railway:
+
+- `BLOB_S3_ENDPOINT` — e.g. `https://s3.ap-southeast-2.amazonaws.com` or
+  `https://<account>.r2.cloudflarestorage.com`
+- `BLOB_S3_REGION` — `ap-southeast-2` for AWS, `auto` for R2
+- `BLOB_S3_BUCKET`, `BLOB_S3_ACCESS_KEY_ID`, `BLOB_S3_SECRET_ACCESS_KEY`
+- `BLOB_S3_FORCE_PATH_STYLE` — optional, default `true`
+
+It **fails closed**: with any of the five missing, nothing changes. Give the
+key **only** `GetObject`/`PutObject`/`DeleteObject`/`HeadObject` on that
+bucket, keep the bucket private (photos are always served through the owner's
+login, never a public URL), and add a lifecycle rule expiring objects older
+than 120 days (nothing legitimately outlives the longest 90-day retention).
+Then:
+
+```bash
+npm run photos:backfill                 # move existing photos, resumable — repeat until "scanned 0"
+# flip the `photo_blob_only` feature flag in /admin/flags (per client, then everyone)
+npm run photos:backfill -- --clear-bytes  # after the rollback window: drop the database copies
+```
+
+The step-by-step rollout, including the final manual column drop, is
+`docs/operations.md` → runbook 6.13.
+
 ## Project layout
 
 ```
@@ -309,6 +398,6 @@ tests/            unit + integration tests
 - [x] M34 — Overnight shifts: an end time at or before the start means the shift finishes the NEXT day ("6 pm – 2 am"), anchored to its start date — no schema change. Extended-axis maths in `assignment-schedule.ts` (`spanMinutes`/`extendedRange`/`extendedBreakStart`; validate/segments/worked-minutes/carry all overnight-aware, breaks can sit after midnight); template + day-override validation rejects only equal times, with a "runs into the next day" hint on the forms; `timesOverlap` wraps; M33 overlap detection compares absolute date+minute ranges (cross-midnight clashes caught); every surface prints ranges via the shared `formatTimeRange` ("(next day)" suffix) — builder board/chips/editor, tap editor, templates, public roster, availability, kiosk/clock swap lists, emails, staff reminders. The board's day bar wraps the after-midnight tail; the schedule editor uses a noon-to-noon axis for overnight schedules. Timesheets/CSV/report/Xero untouched (they read clock timestamps, which always handled overnight).
 - [x] M35 — Daily form-response email digest (the phase M23 deferred): a `form-response-digest` pg-boss cron (21:00 UTC ≈ 7–8 am Sydney) emails each owner ONE consolidated summary of form responses since the last digest — SAME privacy rule as the bell (counts + form titles + links only; never answer content or respondent identity, identical wording for public/attributed/anonymous), and only on days something actually arrived. Idempotent via the `business.form_digest_last_at` cursor: the window is `(lastAt, now]`, the cursor advances only AFTER a successful send (retries re-send the window; re-runs count only newer), and a never-sent business starts from the last 24 h so a rollout never emails historic counts. Settings → Notifications toggle (`form_digest_enabled`, default on); owner-less businesses skipped. Additive migration `0031`; pure maths in `src/lib/form-digest.ts`; emails still ADDITIVE to the in-app bell.
 - [x] M36 — Forest rebrand (design/roster-handoff): retired the lime `#76b900` for **Forest `#13301F` + white** on light surfaces and **Leaf `#5FA875` + ink** on dark chrome (top nav, kiosk, phone clock-in, landing hero), per the new Claude-design handoff. Token-first migration in `globals.css` `@theme` (Forest/Leaf brand tokens, forest tints, Morning shift → green `#2E7D4E`, `rosterShimmer` keyframe, `prefers-reduced-motion` guard); `ui.tsx` primary Button → Forest fill + white text and the OK badge → Forest tint; `shift-colors.ts` Morning + palette "Green" → forest green; a context-aware sweep of every hardcoded lime across all owner/kiosk/staff/public surfaces (light green text → Forest family, dark-surface fills/accents → Leaf, tints → `#ECF3EE`/`#E3EEE7`). Blue (`--color-brand`) and the semantic status colours are unchanged. Verified at desktop/tablet/mobile + kiosk + landing; 714 tests green. Admin (Zale IT indigo) console + impersonation from the handoff are built separately in M37.
-- [x] M37 — Zale IT admin console + impersonation (`design/roster-handoff/05-admin`, plan in `docs/admin-console-plan.md`): the vendor platform-operations back-office at `/admin` (indigo chrome `#1E1B4B`) — clients overview (KPIs + search + status filters + cross-tenant table), client detail (plan/status + per-location Xero/Drive + recent activity), and an admin activity log. A "client" = an organisation (M29); the console is the SINGLE explicit exception to per-business tenant scoping — all cross-tenant reads live in `createAdminRepo`, behind `requireAdmin()`, exposing only counts/integration-presence/last-active + the audit log (never operational rows). Admins are Zale IT staff (a `platform_admin` row bootstrapped from `ADMIN_ALLOWLIST`, fail-closed), not owners. Impersonation ("view as venue") uses a signed 2 h httpOnly cookie re-validated every request; `requireOwner` resolves the org from the grant; the owner layout renders a persistent red banner + 4px inset frame + a write-confirm guard over form writes, and every enter/exit/write is audited. Additive migration `0032` (`platform_admin`, `admin_activity`, `organisation.plan_status` — a vendor lifecycle label, not billing). Billing stays out of scope. 730 tests green + a full browser-verified impersonation loop.
+- [x] M37 — Zale IT admin console + impersonation (`design/roster-handoff/05-admin`, plan in `docs/admin-console-plan.md`): the vendor platform-operations back-office at `/admin` (indigo chrome `#1E1B4B`) — clients overview (KPIs + search + status filters + cross-tenant table), client detail (plan/status + per-location Xero/Drive + recent activity), and an admin activity log. A "client" = an organisation (M29); the console is the SINGLE explicit exception to per-business tenant scoping — all cross-tenant reads live in `createAdminRepo`, behind `requireAdmin()`, exposing only counts/integration-presence/last-active + the audit log (never operational rows). Admins are Zale IT staff (a `platform_admin` row bootstrapped from `ADMIN_ALLOWLIST`, fail-closed), not owners. Impersonation ("view as venue") uses a signed 30 min httpOnly cookie, bound to the admin's live session (never a bearer token) and re-validated every request; `requireOwner` resolves the org from the grant; the owner layout renders a persistent red banner + 4px inset frame + a write-confirm guard over form writes, and every enter/exit/write is audited. Additive migration `0032` (`platform_admin`, `admin_activity`, `organisation.plan_status` — a vendor lifecycle label, not billing). Billing stays out of scope. 730 tests green + a full browser-verified impersonation loop.
 - [x] M38 — Staff roles (position labels): an optional free-text `staff_member.role` (Barista / Chef / Floor / Manager …) that completes the design handoff's tracked "role · email" placeholder. Surfaced on the staff page (add + edit forms, list sub-line, detail header), the roster builder's staff column (the floor mix, alongside any rate label), and the approved-hours CSV (a new "Role" column). **Informational only — never gates rostering or clock-in** (a flag, matching the flag-not-block philosophy). Additive migration `0033`; `role` folded into the shared `staffSchema` (empty → null) and the `addStaff`/`updateStaff` repo methods; flow-tested (persist/edit/clear/list) + CSV column test; browser-verified add-with-role. 735 tests green.
 - [x] M30 — Unpaid breaks on timesheets + mobile roster-periods fix: the owner records an unpaid break (None / 30 min / 1 hour) on a clock-in entry on `/app/timesheets`; it is **subtracted from worked hours** (`break_minutes`, additive migration `0027`) everywhere hours are shown/exported/reported — the Timesheets Hours column, the CSV export (a new **Break (min)** column + NET total), the labour-cost report, and the Xero draft push (netted via the shared `hoursWorked`, split proportionally across pay-item lines so days still reconcile; zero rules ⇒ still identical to `buildTimesheetLines`). Clamped at zero and validated to be shorter than the shift; still an **estimate**, not a payroll calculation. Also fixed a mobile bug where the `/app/periods` Build/View button was clipped off the right edge (the list row now wraps).

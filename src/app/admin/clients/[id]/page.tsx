@@ -29,8 +29,10 @@ export default async function AdminClientDetailPage({
 }) {
   await requireAdmin();
   const { id } = await params;
-  const client = await createAdminRepo().getClient(id);
+  const adminRepo = createAdminRepo();
+  const client = await adminRepo.getClient(id);
   if (!client) notFound();
+  const duplicateStaff = await adminRepo.countDuplicateStaff(id);
 
   const now = new Date();
   const meta = STATUS_META[client.planStatus];
@@ -93,6 +95,16 @@ export default async function AdminClientDetailPage({
             handled outside the app — this panel tracks the account&rsquo;s
             lifecycle only, not billing.
           </p>
+          {duplicateStaff > 0 ? (
+            <p className="mt-3 rounded-[9px] border border-[#FED7AA] bg-[#FEF3E2] px-3 py-2 text-[12.5px] text-[#B45309]">
+              Data quality: {duplicateStaff} person
+              {duplicateStaff === 1 ? "" : "s"} exist
+              {duplicateStaff === 1 ? "s" : ""} twice in this client&rsquo;s
+              team (same email on two records). The owner resolves this on their
+              People page; the org-level uniqueness index can be created once
+              it&rsquo;s clean.
+            </p>
+          ) : null}
           <div className="mt-4 border-t border-[var(--color-border-subtle)] pt-4">
             <p className="mb-2 text-[12px] font-semibold text-[var(--color-text-secondary)]">
               Set account status
