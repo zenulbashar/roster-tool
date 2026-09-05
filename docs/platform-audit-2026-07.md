@@ -1096,6 +1096,38 @@ bizRows)` and `await`s 2–6 queries plus N email sends per business, strictly s
 - **Expected customer impact:** none visible; directly answers the questions that stall deals.
 - **Expected operational impact:** converts an untested assumption into a rehearsed procedure, and
   puts a human between a bad migration and production.
+- **Resolution (milestone 1.7, this branch):** `docs/operations.md` is the runbook procurement asks
+  for. Item 1: the topology, what Neon point-in-time restore provides and what we configure (restore
+  window ≥ 7 days), a **configuration record** to be filled from the live dashboards, a secrets-escrow
+  table, and published targets — **RPO 5 min, RTO 4 h** — with the SLOs from `OPS-01` item 7
+  (availability 99.9 % on `/api/ready`, email p95 < 5 min, sweeps within the send hour, error rate,
+  clock-in latency, quarterly drill). Item 2: a timed **restore-drill procedure** (branch from an
+  instant → sanity queries → migrate → verify the audit chain → exercise a write → rehearse
+  promotion) with an evidence template and a monthly automated verification; the first drill is an
+  operator action against the live Neon project and its date belongs in the configuration record.
+  Item 3: runbooks 6.1–6.12 — database restore (including queue replay after PITR), bad migration,
+  worker outage, queue backlog / failed jobs, re-sending one tenant's digests, Resend outage, OAuth
+  mass-revocation, secret rotation per secret (`AUTH_SECRET` signs magic links / notices proofs /
+  impersonation grants but NOT database sessions; `TOKEN_ENCRYPTION_KEY` rotation is a hard cutover
+  until `SEC-13`'s key ring exists, so it is written as an incident procedure with the exact SQL),
+  suspected compromise, the grant-level `audit_event` protection (two application roles), one
+  tenant's mistake, and a provider outage. Items 4–5: `.github/workflows/ci.yml` gains
+  `migrate-staging` (rehearses pending migrations on a Neon `staging` branch; **fails closed**
+  without `STAGING_DATABASE_URL`) and `migrate-prod` now needs it and runs inside the GitHub
+  `production` Environment (required reviewers = the approval gate); expand/contract for
+  destructive migrations is §5.3 with `clock_photo.image_data` as the worked example. Item 6: §4.4.
+  The queue gained an operator CLI (`npm run jobs:admin -- stats | failed | retry | redispatch`;
+  pure half unit-tested in `tests/jobs-admin.test.ts`), and building it surfaced a latent PERF-07
+  defect: the web app's lazy queue creation referenced the dead-letter queue before creating it, so
+  a fresh database the worker had never booted against refused the first send — fixed in
+  `producer()`. A second, older one surfaced while documenting the retry runbook: every enqueue
+  passes a `singletonKey` "to collapse duplicates", but on pg-boss ≥ 10 a key is inert on the
+  default `standard` queue policy — nothing collapsed, so a double-submitted publish queued (and
+  emailed) twice. Queues are now created with policy `short` (one queued job per key; the keyless
+  dead-letter queue stays `standard`), and the worker recreates a pre-existing `standard` queue with
+  the intended policy at boot ONLY while it is empty (`ensureQueuePolicy`; a busy queue is left with
+  a warning until a later boot finds it idle). Pinned by `tests/queue-options.test.ts` and verified by
+  booting the worker against a database that already held `standard` queues.
 
 ---
 
@@ -1591,7 +1623,11 @@ undecryptable, forcing every tenant to reconnect. **Fix:** key-id in the envelop
 (`v2.<keyId>.<iv>.<tag>.<ct>`), a key ring with `primary` + `accepted[]`, and a re-encrypt job.
 Support two signing secrets during rotation. **Effort:** 1 week. **Priority:** P2 — but note this is
 a _prerequisite for responding to a suspected key compromise_, so it is really incident-readiness
-work.
+work. **Partial (milestone 1.7, this branch):** the rotation procedures now exist as runbooks
+(`docs/operations.md` §6.8–6.9) with the blast radius of each secret spelled out (`AUTH_SECRET`
+does not sign database sessions; `TOKEN_ENCRYPTION_KEY` rotation is a hard cutover with the SQL to
+flip every connection to "reconnect"), so a compromise can be responded to today. The key ring +
+re-encrypt job that makes rotation routine is still open.
 
 **SEC-14 · Container hardening · Medium**
 `Dockerfile`: runs as **root** (no `USER`), single stage, installs **devDependencies in the
@@ -1861,6 +1897,9 @@ and North American users, and a regional outage is a total outage. **Fix:** docu
 deliberately; when expanding, put read replicas and static/edge assets in-region first, keep writes
 homed, and only then consider data residency partitioning (which enterprise EU buyers will ask for).
 **Effort:** 3 weeks when needed. **Priority:** P3 until a non-AU customer signs.
+**Resolution (milestone 1.7, this branch):** the posture is now documented deliberately in
+`docs/operations.md` §1 ("Single region, deliberately") with the expansion order above and a
+provider-outage runbook (§6.12). Multi-region itself remains deferred as recommended.
 
 ### Product, UX and DX
 

@@ -1,4 +1,4 @@
-import { PgBoss, type Job } from "pg-boss";
+import { PgBoss, type Job, type Queue } from "pg-boss";
 import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import { reportError } from "@/lib/error-reporting";
@@ -67,6 +67,11 @@ const RETRY = { retryLimit: 5, retryBackoff: true } as const;
 
 const isWorker = env.ROSTER_ROLE === "worker";
 
+/** What `createQueue` accepts: every queue setting, including `policy`. */
+type CreateQueueOptions = Omit<Queue, "name">;
+/** What `updateQueue` accepts: `policy` and `partition` are fixed at creation. */
+type UpdateQueueOptions = Omit<CreateQueueOptions, "policy" | "partition">;
+
 /**
  * Finished (completed/failed) jobs are kept this long for diagnosis before
  * pg-boss's maintenance deletes them. A per-QUEUE setting in pg-boss 12
@@ -79,14 +84,67 @@ export const JOB_RETENTION_SECONDS = 14 * 24 * 60 * 60;
 const QUEUE_DEFAULTS = { deleteAfterSeconds: JOB_RETENTION_SECONDS } as const;
 
 /**
- * Every queue except the dead-letter queue itself dead-letters into it
- * (OPS-02): a job that exhausts its retries is moved there instead of being
- * abandoned, and `handleDeadLetter` makes it visible.
+ * Per-queue settings. Every queue except the dead-letter queue itself
+ * dead-letters into it (OPS-02): a job that exhausts its retries is copied
+ * there instead of being abandoned, and `handleDeadLetter` makes it visible.
+ *
+ * Policy `short`: at most ONE job per singleton key may sit in `created` at
+ * a time, so a duplicate enqueue — a double-submitted publish, a
+ * re-triggered reminder, the dispatcher re-run by hand — is dropped rather
+ * than queued twice. On pg-boss's default `standard` policy a `singletonKey`
+ * is only metadata (nothing collapses), which is what the `singletonKey`
+ * comments below always assumed it did. The dead-letter queue stays
+ * `standard`: its jobs carry no key, and under `short` every keyless job
+ * would share one slot and alerts would be dropped.
  */
-function queueOptions(name: string) {
+export function queueOptions(name: string): CreateQueueOptions {
   return name === QUEUES.deadLetter
-    ? QUEUE_DEFAULTS
-    : { ...QUEUE_DEFAULTS, deadLetter: QUEUES.deadLetter };
+    ? { ...QUEUE_DEFAULTS }
+    : { ...QUEUE_DEFAULTS, policy: "short", deadLetter: QUEUES.deadLetter };
+}
+
+/** The subset of `queueOptions` that `updateQueue` accepts (no `policy`). */
+export function updatableQueueOptions(name: string): UpdateQueueOptions {
+  const {
+    policy: _fixedAtCreation,
+    partition: _alsoFixed,
+    ...rest
+  } = queueOptions(name);
+  void _fixedAtCreation;
+  void _alsoFixed;
+  return rest;
+}
+
+/**
+ * A queue's policy is fixed at creation (`updateQueue` cannot change it), so
+ * a queue that already exists with another policy is recreated — ONLY while
+ * it is empty (no queued, deferred or active job), because deleting a queue
+ * drops its jobs. A busy queue is left as it is, with a warning, and picked
+ * up at the next boot that finds it idle.
+ */
+async function ensureQueuePolicy(boss: PgBoss, name: string): Promise<void> {
+  const desired = queueOptions(name).policy ?? "standard";
+  const existing = await boss.getQueue(name);
+  if (!existing || (existing.policy ?? "standard") === desired) return;
+  const stats = await boss.getQueueStats(name);
+  if (stats.queuedCount > 0 || stats.activeCount > 0) {
+    logger.warn(
+      {
+        queue: name,
+        policy: existing.policy,
+        desired,
+        queued: stats.queuedCount,
+        active: stats.activeCount,
+      },
+      "Queue policy differs but the queue is busy; keeping it until a boot finds it empty",
+    );
+    return;
+  }
+  await boss.deleteQueue(name);
+  logger.info(
+    { queue: name, from: existing.policy, to: desired },
+    "Queue recreated with the intended policy",
+  );
 }
 
 /** Cron for the hourly daily-sweep dispatcher (PERF-02 / PERF-03). */
@@ -112,8 +170,13 @@ export async function getBoss(): Promise<PgBoss> {
     // The dead-letter queue first: every other queue references it.
     await boss.createQueue(QUEUES.deadLetter, queueOptions(QUEUES.deadLetter));
     for (const name of Object.values(QUEUES)) {
+      await ensureQueuePolicy(boss, name);
       await boss.createQueue(name, queueOptions(name));
-      await boss.updateQueue(name, queueOptions(name));
+      // `createQueue` is insert-if-absent; the update brings a queue that
+      // already existed up to the current retention/dead-letter settings.
+      // (`policy` is fixed at creation and rejected here — ensureQueuePolicy
+      // above handles it.)
+      await boss.updateQueue(name, updatableQueueOptions(name));
     }
     globalForBoss.__bossQueues = new Set(Object.values(QUEUES));
   }
@@ -130,6 +193,15 @@ async function producer(queue: string): Promise<PgBoss> {
   const boss = await getBoss();
   const known = (globalForBoss.__bossQueues ??= new Set<string>());
   if (!known.has(queue)) {
+    // Every queue references the dead-letter queue, so on a database the
+    // worker has never booted against it must exist before the first send.
+    if (queue !== QUEUES.deadLetter && !known.has(QUEUES.deadLetter)) {
+      await boss.createQueue(
+        QUEUES.deadLetter,
+        queueOptions(QUEUES.deadLetter),
+      );
+      known.add(QUEUES.deadLetter);
+    }
     await boss.createQueue(queue, queueOptions(queue));
     known.add(queue);
   }

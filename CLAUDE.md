@@ -1133,13 +1133,33 @@ runDate}`, singleton per tenant per day) for each claim. `runBusinessSweep`
   files' global sweeps over the shared test DB); the global `handle…` loops
   remain for tests and manual runs.
 - **Every queue dead-letters into `dead-letter` (OPS-02).** A job that
-  exhausts its retries is moved there by pg-boss instead of vanishing;
+  exhausts its retries is COPIED there by pg-boss instead of vanishing;
   `handleDeadLetter` (`src/lib/jobs/dead-letter.ts`) logs it, reports it to
   the error tracker and emails `OPS_ALERT_EMAIL` when set (fail closed: unset
   = log + report). The payload is sanitised like audit args (a magic-link
-  token never leaves the process); the handler never re-runs the work.
-  `/api/ready` also answers 503 when the oldest DUE job has waited over an
-  hour (`queueBacklogMs`) — a worker that is alive but not draining.
+  token never leaves the process); the handler never re-runs the work. The
+  ORIGINAL job stays in its own queue in state `failed` — that is what the
+  operator CLI lists and re-runs: `npm run jobs:admin -- failed | retry
+--queue <q> --id <id> | redispatch --business <id> [--force] | stats`
+  (`scripts/jobs-admin.ts`; the pure parsing/summary half is
+  `src/lib/jobs/admin.ts`, unit-tested). `retry` is pg-boss's in-place retry
+  (same id, same singleton key, +1 attempt); `redispatch` re-runs the hourly
+  dispatcher for ONE business via its `scope` option, clearing that day's
+  `job_dispatch` claims with `--force`. `/api/ready` also answers 503 when
+  the oldest DUE job has waited over an hour (`queueBacklogMs`) — a worker
+  that is alive but not draining. The web producer creates the dead-letter
+  queue before any queue that references it, so a fresh database the worker
+  has never booted against still accepts a first send.
+- **Singleton keys only dedupe under queue policy `short`.** On pg-boss's
+  default `standard` policy a `singletonKey` is inert (nothing collapses —
+  a double-submitted publish used to email twice). `queueOptions()` creates
+  every keyed queue with `policy: "short"` (one `created` job per key; a
+  duplicate `send` returns null and is dropped) and leaves the keyless
+  `dead-letter` queue `standard` (under `short` all keyless jobs would share
+  one slot). A policy is fixed at creation and `updateQueue` rejects it, so
+  `ensureQueuePolicy` recreates a pre-existing queue with the wrong policy at
+  worker boot ONLY while it is empty, else warns and retries next boot. A
+  queue that sends keyless jobs must therefore never be given `short`.
 - **Tables that only grow have a retention policy (PERF-10).** The daily
   `data-retention` job (04:00 UTC) runs `sweepRetention` in
   `src/lib/data-retention.ts` — one CODE policy per table (reviewed in a
@@ -1330,6 +1350,24 @@ Neon Postgres + Resend. Per-platform env templates: `.env.vercel.example` and
 "Production deployment". Key gotchas: the worker needs `APP_URL` and
 `AUTH_SECRET` set (env validation is global); Vercel uses Neon's pooled
 connection, the worker uses the direct connection (pg-boss needs session mode).
+
+**Operations runbook: `docs/operations.md` (OPS-03).** The published
+recovery targets (RPO 5 min / RTO 4 h on Neon point-in-time restore), the
+SLOs, the quarterly timed restore drill + evidence template, and the runbooks
+(database restore, bad migration, worker/Resend outage, OAuth mass-
+revocation, secret rotation — `AUTH_SECRET` does NOT sign owner sessions but
+does sign magic links / notices proofs / impersonation grants;
+`TOKEN_ENCRYPTION_KEY` rotation is a hard cutover until SEC-13's key ring
+exists — suspected compromise, audit-trail grant hardening, one tenant's
+mistake). Keep it current: a runbook edit lands in the same PR as the
+behaviour it describes. **Migrations reach production through two gates**
+(`.github/workflows/ci.yml`): `migrate-staging` rehearses every pending
+migration on the Neon `staging` branch (FAIL CLOSED without
+`STAGING_DATABASE_URL`), then `migrate-prod` waits for a required reviewer
+of the GitHub `production` Environment. Additive migrations only; the
+expand/contract procedure for destructive ones is §5.3 of the runbook. Vercel
+deploys ahead of the approved migration — apply by hand first when the new
+code needs the schema immediately.
 
 ## Working method
 

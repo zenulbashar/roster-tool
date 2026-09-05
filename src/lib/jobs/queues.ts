@@ -158,9 +158,11 @@ export type BusinessSweepJob = {
 };
 
 /**
- * A job that exhausted its retries on ANY queue, moved here by pg-boss
- * (OPS-02). The payload is the original job's data; pg-boss records the
- * source queue on the job row. The handler alerts — it never re-runs the
- * work.
+ * A job that exhausted its retries on ANY queue, COPIED here by pg-boss
+ * (OPS-02). The payload is the original job's data and `output` its last
+ * failure; the copy does NOT name the source queue — the original stays in
+ * its own queue in state `failed`, which is what `npm run jobs:admin --
+ * failed` lists and `retry` re-runs. The handler alerts — it never re-runs
+ * the work.
  */
 export type DeadLetterJob = Record<string, unknown>;

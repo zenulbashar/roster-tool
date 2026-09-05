@@ -124,6 +124,25 @@ variables → Actions**) for it to work:
 The job is for **additive/expand** migrations only; destructive migrations
 (drop/rename/retype) must still be run manually using expand/contract.
 
+Two more one-time settings put a rehearsal and a human between a merge and
+the production migration (full detail: `docs/operations.md` → "Staging and
+the migration gate"):
+
+- **Staging rehearsal** — in Neon create a branch named `staging` from
+  production, then in GitHub → **Settings → Environments** create `staging`
+  and add its **direct** connection string as the secret
+  `STAGING_DATABASE_URL`. The `migrate-staging` job applies every pending
+  migration there first and **fails closed** (blocking the production job)
+  until the secret exists.
+- **Approval gate** — create the `production` environment with at least one
+  **required reviewer**; the `migrate-prod` job waits for that approval.
+  Move `PROD_DATABASE_URL` and `AUTH_SECRET` onto it if you want them scoped
+  to production only (repository secrets keep working).
+
+Vercel deploys the new code as soon as `main` moves, before the migration is
+approved — so for a migration the new code needs immediately, run
+`npm run db:migrate` by hand first (as above), then merge.
+
 ### 2. Generate a sign-in secret
 
 Run this once and keep the output — you'll paste the **same** value into both
@@ -205,6 +224,30 @@ wedged worker** — every email the product sends goes through it, and without
 this check the first sign of a stopped worker is a customer asking where their
 roster went. The worker image also carries a Docker `HEALTHCHECK` (a local
 heartbeat file), so Railway restarts a wedged process on its own.
+
+Set `OPS_ALERT_EMAIL` on Railway so a background job that exhausts its
+retries emails you (it is logged and reported to the error tracker either
+way), and `SENTRY_DSN` on both platforms for error tracking — both are
+optional and fail closed.
+
+### Backups, restore drills & runbooks
+
+`docs/operations.md` is the operations runbook: the recovery targets we
+publish (**RPO 5 minutes, RTO 4 hours**, on Neon point-in-time restore), the
+SLOs, a timed **restore-drill** procedure with an evidence template (run it
+quarterly), the staging + approval gate for migrations, and step-by-step
+runbooks for a database restore, a bad migration, a worker or email-provider
+outage, OAuth mass-revocation, secret rotation and a suspected key
+compromise. The queue has an operator CLI:
+
+```bash
+npm run jobs:admin -- stats                              # depth per queue
+npm run jobs:admin -- failed                             # jobs that exhausted their retries
+npm run jobs:admin -- retry --queue <queue> --id <id>    # re-run one in place
+npm run jobs:admin -- redispatch --business <id> --force # re-send a location's daily digests
+```
+
+It reads `DATABASE_URL` from `.env` — use the **direct** Neon string.
 
 ### 6. (Optional) Enable Google Drive document storage
 
