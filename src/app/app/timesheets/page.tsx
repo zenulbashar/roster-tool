@@ -14,6 +14,8 @@ import { entryDurationMs } from "@/lib/clock";
 import { breakMinutesSchema } from "@/lib/validation";
 import { logger } from "@/lib/logger";
 import { describeTimesheetEvent } from "@/lib/audit/describe";
+import { blobStore } from "@/lib/blob/s3";
+import { deleteClockPhotoObjects } from "@/lib/clock-photo-storage";
 import {
   Avatar,
   Badge,
@@ -243,11 +245,18 @@ export default async function TimesheetsPage({
     if (formData.get("confirmed") !== "1") {
       redirect(`${back}${sep}confirmDelete=${encodeURIComponent(id)}`);
     }
-    // A SOFT delete: the row stays as wage evidence and can be restored.
+    // A SOFT delete: the row stays as wage evidence and can be restored. Its
+    // photos go now (the privacy promise) — the stored objects too, best
+    // effort, once the rows are gone (PERF-06).
+    const photoKeys = await repo.listPhotoStorageKeysForEntry(id);
     const deleted = await repo.deleteEntry(id);
     revalidatePath(PATH);
     if (!deleted) {
       redirect(`${back}${sep}error=${encodeURIComponent("Entry not found")}`);
+    }
+    const store = blobStore();
+    if (store && photoKeys.length > 0) {
+      await deleteClockPhotoObjects(store, photoKeys);
     }
     logger.info(
       {

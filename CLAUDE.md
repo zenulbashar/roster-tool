@@ -64,8 +64,9 @@ any **actual ordering, purchasing, supplier-system integration, pricing,
 invoicing or payments** (the inventory feature is tracking + reminders only — it
 never places orders), **reorder thresholds / par levels** (stock status is
 staff/owner-set, never auto-computed from a threshold — a possible future
-option), and **object storage** (inventory CSV is pasted text / parsed in
-memory, no file store),
+option), and a **file store for inventory** (the CSV is pasted text / parsed
+in memory — the only object storage in the app is the S3-compatible bucket
+clock-in photos moved to under PERF-06, never a general upload surface),
 free-text reply parsing, billing, native apps,
 continuous/background location tracking, and — for the Google Drive document
 feature (Phase 1, built) — **OneDrive, Dropbox, and per-employee
@@ -254,9 +255,12 @@ bilateral auto-swaps, and multi-owner org governance beyond a single `owner` rol
   flags. Retire a flag once its consumer settles (flip the default, remove the
   reads, delete the key). Live flags: `owner_signups` (default on — the
   onboarding kill switch: off shows "sign-ups are paused", the action refuses;
-  existing owners unaffected) and `audit_events` (default on — the kill switch
+  existing owners unaffected), `audit_events` (default on — the kill switch
   for the tenant audit trail below; off pauses recording, nothing else
-  changes).
+  changes) and `photo_blob_only` (default off — with `BLOB_S3_*` configured,
+  ON writes new clock-in photos to the object store ONLY instead of store +
+  database; the PERF-06 rollout switch, retired once the contract migration
+  has run).
 - **Tenant audit trail (OPS-04 / SEC-02 / SEC-03)**: every repository WRITE
   made through an owner context — the owner's own edits, and a Zale IT admin's
   edits while impersonating — becomes one append-only `audit_event` row,
@@ -424,14 +428,42 @@ time.ts`) — "6 pm – 2 am (next day)" — never a hand-rolled `start – end`
   tenants. Per-action auth is the staff member's PIN. The owner rotates the link
   (regenerates the hash) to instantly revoke old links.
 - **Clock-in photos** (`require_clock_in_photo`, off by default): when on, the
-  kiosk captures a webcam still at clock in/out, stored as `bytea` in
-  `clock_photo`. Privacy: a consent line shows on the kiosk; **no facial
-  recognition**; photos live in our Postgres DB and are served only to the owner;
-  deleting a timesheet entry deletes its photos. Photos are also **auto-purged
-  per business** by a daily retention job (`photo_retention_days`, default 7;
-  owners pick 7/30/90 in Settings) — only the photos are deleted, the timesheet
-  entry/hours are always kept. Camera-denied/unavailable falls back to PIN-only;
-  a missing photo never blocks clocking.
+  kiosk captures a webcam still at clock in/out, recorded in `clock_photo`.
+  Privacy: a consent line shows on the kiosk; **no facial recognition**;
+  photos are served only to the owner (`/app/timesheets/photo/[id]`, always
+  through the owner session — never a public or signed URL); deleting a
+  timesheet entry deletes its photos. Photos are also **auto-purged per
+  business** by a daily retention job (`photo_retention_days`, default 7;
+  owners pick 7/30/90 in Settings) — only the photos are deleted, the
+  timesheet entry/hours are always kept. Camera-denied/unavailable falls back
+  to PIN-only; a missing photo never blocks clocking.
+  - **Where the bytes live (PERF-06, expand/contract in progress).** The row
+    is the FACT (entry, in/out, mime, size, sha256 `checksum`); the bytes
+    belong in an **S3-compatible object store** under `storage_key`
+    (`clock-photos/<business>/<entry>/<photo>.<ext>`), exactly how
+    `staff_document` treats Drive. `BlobStore` (`src/lib/blob/store.ts`) is
+    the seam — `S3BlobStore` (`src/lib/blob/s3.ts`, raw `fetch` + a SigV4
+    signer pinned to AWS's published vectors, no SDK) in production and
+    `InMemoryBlobStore` in tests; configured by `BLOB_S3_*`, **FAIL CLOSED**:
+    unconfigured = `blobStore()` is null and photos stay in `image_data`
+    exactly as before. The write mode is `resolvePhotoWriteMode` (pure):
+    `database` (no store), `dual` (store configured — bytes to BOTH, so a
+    rollback keeps working), `store` (the `photo_blob_only` flag — store
+    only). All photo I/O goes through `src/lib/clock-photo-storage.ts`
+    (`saveClockPhoto` / `readClockPhoto` / `purgeExpiredClockPhotos` /
+    `deleteClockPhotoObjects`), never the repo directly, and holds the
+    invariants: a store outage on write keeps the bytes in the database and
+    reports (clocking NEVER fails for a photo); a read prefers the store and
+    falls back to the database copy; retention deletes the OBJECTS FIRST and
+    keeps any row whose object could not be deleted for the next sweep; the
+    owner's entry delete and staff delete collect the keys before the rows go
+    and remove the objects best-effort afterwards. History moves with the
+    resumable `npm run photos:backfill` (`src/lib/blob/backfill.ts`: keyset
+    paginated, scoped per business optionally, idempotent; `--clear-bytes`
+    drops the database copy only after a HEAD verifies the object's size);
+    the CONTRACT step (dropping `image_data`) is a manual migration per
+    `docs/operations.md` §6.13. A bucket lifecycle rule expiring objects
+    older than the longest retention plus margin is the orphan backstop.
 - **Personal-phone GPS clock-in** (`/clock/<token>`): a SEPARATE flow from the
   shared kiosk, for staff clocking in on their own phones. Reached via a
   distinct capability token (`personal_clock_token_hash`) — NOT the kiosk token
@@ -1559,15 +1591,24 @@ deleted_at IS NULL` makes double clock-in impossible. **`deleted_at`
   refines NET worked time only; still not a payroll calculation. Clock logic is
   pure in `src/lib/clock.ts` (`entryDurationMs` takes the break); geofence maths
   in `src/lib/geo.ts`.
-- `clock_photo` — optional clock in/out still, stored inline as `bytea`, cascaded
-  with its entry. Served only to the owner via `/app/timesheets/photo/[id]`. A
-  daily per-business sweep (dispatched at 03:00 LOCAL by the hourly dispatcher —
-  PERF-02; formerly a 03:00 UTC cron) sweeps every
-  business and deletes photos whose entry's `clock_in_at` is older than that
-  business's `photo_retention_days`. It deletes **only** `clock_photo` rows (never
-  `timesheet_entry`), is tenant-scoped per business, and is idempotent. Cutoff
-  logic is pure in `src/lib/retention.ts`; deletion is `deleteExpiredPhotos` on
-  the tenant repo.
+- `clock_photo` — optional clock in/out still, cascaded with its entry.
+  `image_data` (`bytea`, **nullable since migration 0044**) holds the bytes
+  while a photo lives in the database; `storage_key` (nullable) +
+  `content_length` + `checksum` (sha256 hex) point at the object-store copy
+  (PERF-06). CHECK `clock_photo_bytes_or_key_check`: at least one of the two.
+  Partial index `clock_photo_unstored_idx (created_at, id) WHERE storage_key
+IS NULL` drives the backfill. Served only to the owner via
+  `/app/timesheets/photo/[id]` (store first, database fallback). A daily
+  per-business sweep (dispatched at 03:00 LOCAL by the hourly dispatcher —
+  PERF-02) deletes photos whose entry's `clock_in_at` is older than that
+  business's `photo_retention_days`: `purgeExpiredClockPhotos` removes the
+  stored objects FIRST, then the rows (`listExpiredPhotos` +
+  `deletePhotosByIds`; a row whose object delete failed waits for the next
+  sweep). It deletes **only** `clock_photo` rows (never `timesheet_entry`),
+  is tenant-scoped per business, and is idempotent. Cutoff logic is pure in
+  `src/lib/retention.ts`. `markPhotoStored` / `clearPhotoBytes` are the
+  backfill's scoped writes; `listPhotoStorageKeysForEntry/ForStaff` let the
+  owner's deletes take the objects with them.
 - `availability_response` — `request_id` is **nullable**. A response with no
   request is an owner **manual pre-fill** (`source = 'manual'`); it carries
   `staff_member_id` directly (staff replies derive theirs via the request).

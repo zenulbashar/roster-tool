@@ -711,6 +711,50 @@ entries are soft-deleted and restorable from the Timesheets page (Undo).
 Anything else is re-entered by the owner from the snapshot; if a point-in-time
 copy is needed to read a row that had no snapshot, create a branch (§4.2 step 2) and query it — never restore production for one tenant.
 
+### 6.13 Moving clock-in photos to object storage (PERF-06 rollout)
+
+The expand step shipped in code (`clock_photo.storage_key` + size + checksum,
+`image_data` nullable, migration `0044`). The rest is an operator sequence —
+each step is safe to pause on and to repeat:
+
+1. **Bucket + key.** Create a private bucket (S3 / R2 / MinIO); a key with
+   `GetObject`, `PutObject`, `DeleteObject`, `HeadObject` on that bucket
+   ONLY; a lifecycle rule expiring objects older than **120 days** (the
+   longest photo retention is 90 days, so any older object is an orphan —
+   this rule is the backstop for a delete that failed permanently).
+2. **Configure** `BLOB_S3_*` on Vercel AND Railway (`.env.*.example`), deploy
+   / restart. New photos now go to the store **and** the database (`dual`);
+   reads prefer the store. Verify: clock in on a kiosk with photos on, open
+   the photo from Timesheets, confirm the object in the bucket and
+   `storage_key` set on the row. Rollback at this point = unset the variables.
+3. **Backfill history:** `npm run photos:backfill` (direct `DATABASE_URL`;
+   add `--business <id>` to do one tenant, `--limit N` to bound a run). It
+   is resumable and idempotent — re-run until it reports `scanned 0`. A
+   non-zero `failed` count means a store error; the rows stay eligible.
+4. **Flip the flag** `photo_blob_only` on `/admin/flags` — one client first,
+   then everyone. New photos now skip the database. Rollback = flag off (a
+   photo written store-only stays readable through the store).
+5. **After the rollback window** (a full retention cycle, ≤ 90 days, is the
+   conservative choice; a week is enough once step 4 has held):
+   `npm run photos:backfill -- --clear-bytes`. Each row's object is
+   `HEAD`-verified against the recorded size before its database copy is
+   dropped; a mismatch is kept and logged. Repeat until `cleared 0`.
+6. **Contract** (manual, §5.3): once `select count(*) from clock_photo where
+image_data is not null` is 0 on `staging` and production —
+   ```sql
+   alter table clock_photo drop constraint clock_photo_bytes_or_key_check;
+   alter table clock_photo drop column image_data;
+   ```
+   then remove the `imageData` column from the schema, the `database`/`dual`
+   write modes and the flag in the same PR, and `VACUUM (FULL)` or let
+   autovacuum reclaim the space.
+
+Invariants that hold throughout: a store outage never blocks clocking (the
+bytes go to the database that once, and the tracker gets a `clock-photo`
+event); photos are always served through the owner's session, never a bucket
+URL; retention deletes the object BEFORE the row and keeps a row whose object
+would not go.
+
 ### 6.12 Provider or region outage
 
 Neon, Vercel or Railway down in Sydney: confirm on the provider's status

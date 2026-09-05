@@ -9,6 +9,12 @@ import { KIOSK_COOKIE } from "@/lib/kiosk-cookie";
 import { authenticateStaffPinFromForm } from "@/lib/pin-auth";
 import { hashToken } from "@/lib/tokens";
 import { parseClockPhoto } from "@/lib/validation";
+import { blobStore } from "@/lib/blob/s3";
+import {
+  resolvePhotoWriteMode,
+  saveClockPhoto,
+} from "@/lib/clock-photo-storage";
+import { isFeatureEnabled } from "@/lib/flags";
 import { businessDateOf, formatTimeOnly } from "@/lib/time";
 import { formatElapsed, entryDurationMs } from "@/lib/clock";
 import {
@@ -103,15 +109,30 @@ export async function clockAction(
   }
 
   // Best-effort photo: only when the setting is on and one was captured.
+  // Where the bytes go (database / store+database / store) is PERF-06's
+  // rollout: the store when configured, store-only behind the flag.
   if (business.requireClockInPhoto) {
     const photo = parseClockPhoto(formData.get("photo"));
     if (photo) {
-      await repo.addClockPhoto({
-        timesheetEntryId: entryId,
-        kind,
-        mimeType: photo.mimeType,
-        imageData: photo.data,
+      const store = blobStore();
+      const mode = resolvePhotoWriteMode({
+        storeConfigured: store !== null,
+        storeOnly: await isFeatureEnabled("photo_blob_only", {
+          orgId: business.orgId,
+        }),
       });
+      await saveClockPhoto(
+        repo,
+        store,
+        {
+          timesheetEntryId: entryId,
+          kind,
+          mimeType: photo.mimeType,
+          data: photo.data,
+        },
+        mode,
+        business.businessId,
+      );
     }
   }
 

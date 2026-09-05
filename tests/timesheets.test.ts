@@ -165,7 +165,8 @@ describe("timesheets", () => {
 
     const read = await repoA.getPhoto(photo!.id);
     expect(read?.mimeType).toBe("image/jpeg");
-    expect(Buffer.compare(read!.imageData, bytes)).toBe(0);
+    expect(Buffer.compare(read!.imageData!, bytes)).toBe(0);
+    expect(read!.storageKey).toBeNull();
 
     // B can't read A's photo, nor attach to A's entry.
     expect(await repoB.getPhoto(photo!.id)).toBeNull();

@@ -988,6 +988,27 @@ bizRows)` and `await`s 2–6 queries plus N email sends per business, strictly s
 - **Expected customer impact:** faster timesheet pages with photos; no functional change.
 - **Expected operational impact:** database size decoupled from image volume; backup and restore
   times return to being a function of business data; unblocks a realistic RPO.
+- **Resolution (milestone 1.10, this branch):** the expand step and the tooling for the rest.
+  `BlobStore` (`src/lib/blob/store.ts`: put/get/head/delete, a strict key grammar, an in-memory
+  fake) with `S3BlobStore` (`src/lib/blob/s3.ts`) over raw `fetch` — no SDK — and a pure SigV4
+  signer (`src/lib/blob/sigv4.ts`) pinned to AWS's published GET/PUT Object vectors
+  (`tests/sigv4.test.ts`); works against S3, R2, MinIO or Zale Storage. Configured by `BLOB_S3_*`,
+  fail closed. `clock_photo` gains `storage_key` + `content_length` + `checksum`, `image_data`
+  becomes nullable with a CHECK that one of the two is set (migration `0044`). All photo I/O now
+  goes through `src/lib/clock-photo-storage.ts`: a pure `resolvePhotoWriteMode` picks `database`
+  / `dual` / `store` from configuration + the `photo_blob_only` flag (OPS-05 rollout, per client
+  then global); a store outage on write keeps the bytes in the database and reports (clocking never
+  fails for a photo); reads prefer the store and fall back; the retention sweep deletes objects
+  BEFORE rows and keeps a row whose object would not go; the owner's entry/staff deletes take the
+  objects with them. The resumable, scoped, idempotent backfill (`npm run photos:backfill`,
+  `src/lib/blob/backfill.ts`) uploads history and — with `--clear-bytes` — drops database copies
+  only after a `HEAD` verifies each object. Serving stays proxied through the owner session
+  (deliberately not signed bucket URLs: no CSP `img-src` widening, no bucket exposure, and the
+  audit's memory concern is bounded by the 500 KB photo cap). The contract step (dropping the
+  column) is the manual runbook `docs/operations.md` §6.13, with a 120-day bucket lifecycle rule
+  as the orphan backstop. Flow-tested against Postgres + the fake store
+  (`tests/clock-photo-flow.test.ts`); the store client against a recording fake `fetch`
+  (`tests/blob-store.test.ts`).
 
 ### ARCH-02 — Exactly one role exists in the entire system
 

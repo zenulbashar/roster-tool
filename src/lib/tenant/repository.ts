@@ -1375,12 +1375,26 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       return row ?? null;
     },
 
+    /**
+     * Attach a clock photo to one of this business's entries. The bytes live
+     * in the database (`imageData`), in the object store (`storageKey` +
+     * size + checksum — PERF-06) or, during the dual-write rollout, both;
+     * the caller (`saveClockPhoto`) decides and may pre-assign the id so the
+     * store key and the row agree. A foreign or deleted entry → null.
+     */
     async addClockPhoto(input: {
+      id?: string;
       timesheetEntryId: string;
       kind: "in" | "out";
       mimeType: string;
-      imageData: Buffer;
+      imageData: Buffer | null;
+      storageKey?: string | null;
+      contentLength?: number | null;
+      checksum?: string | null;
     }) {
+      if (!input.imageData && !input.storageKey) {
+        throw new Error("A clock photo needs bytes or a storage key");
+      }
       // Guard: the entry must belong to this business before we attach a photo.
       const entry = await first(
         database
@@ -1397,18 +1411,35 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
       if (!entry) return null;
       const [row] = await database
         .insert(clockPhotos)
-        .values({ ...input, businessId })
+        .values({
+          ...(input.id ? { id: input.id } : {}),
+          businessId,
+          timesheetEntryId: input.timesheetEntryId,
+          kind: input.kind,
+          mimeType: input.mimeType,
+          imageData: input.imageData,
+          storageKey: input.storageKey ?? null,
+          contentLength: input.contentLength ?? null,
+          checksum: input.checksum ?? null,
+        })
         .returning({ id: clockPhotos.id });
       return row ?? null;
     },
 
-    /** A single clock photo (bytes + mime) scoped to this business. */
+    /**
+     * A single clock photo scoped to this business: its mime type plus
+     * wherever the bytes are (`imageData` and/or `storageKey`). Callers go
+     * through `readClockPhoto`, which prefers the store and falls back.
+     */
     getPhoto(id: string) {
       return first(
         database
           .select({
             mimeType: clockPhotos.mimeType,
             imageData: clockPhotos.imageData,
+            storageKey: clockPhotos.storageKey,
+            contentLength: clockPhotos.contentLength,
+            checksum: clockPhotos.checksum,
           })
           .from(clockPhotos)
           .where(
@@ -1418,23 +1449,22 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
     },
 
     /**
-     * Delete this business's clock photos whose parent entry clocked in before
-     * the retention cutoff (using the business's own `photoRetentionDays`).
-     *
-     * Deletes ONLY `clock_photo` rows — the timesheet entries and their hours
-     * are kept. Scoped to this business on both tables, so it can never touch
-     * another tenant. Idempotent: re-running deletes nothing. Returns the count
-     * of photos purged.
+     * This business's clock photos whose parent entry clocked in before the
+     * retention cutoff (the business's own `photoRetentionDays`) — ids and
+     * store keys only, never bytes. The store-aware sweep
+     * (`purgeExpiredClockPhotos`) deletes the objects first, then the rows.
      */
-    async deleteExpiredPhotos(now: Date = new Date()): Promise<number> {
+    async listExpiredPhotos(
+      now: Date = new Date(),
+      limit = 5000,
+    ): Promise<{ id: string; storageKey: string | null }[]> {
       const business = await first(
         database
           .select({ retentionDays: businesses.photoRetentionDays })
           .from(businesses)
           .where(eq(businesses.id, businessId)),
       );
-      if (!business) return 0;
-
+      if (!business) return [];
       const cutoff = photoRetentionCutoff(now, business.retentionDays);
       const expiredEntries = database
         .select({ id: timesheetEntries.id })
@@ -1445,17 +1475,125 @@ export function createTenantRepo(businessId: string, database: Db = defaultDb) {
             lt(timesheetEntries.clockInAt, cutoff),
           ),
         );
-
-      const deleted = await database
-        .delete(clockPhotos)
+      return database
+        .select({ id: clockPhotos.id, storageKey: clockPhotos.storageKey })
+        .from(clockPhotos)
         .where(
           and(
             eq(clockPhotos.businessId, businessId),
             inArray(clockPhotos.timesheetEntryId, expiredEntries),
           ),
         )
+        .orderBy(asc(clockPhotos.createdAt))
+        .limit(limit);
+    },
+
+    /** Delete these clock photo rows (this business's only). Returns the count. */
+    async deletePhotosByIds(ids: string[]): Promise<number> {
+      if (ids.length === 0) return 0;
+      const deleted = await database
+        .delete(clockPhotos)
+        .where(
+          and(
+            eq(clockPhotos.businessId, businessId),
+            inArray(clockPhotos.id, ids),
+          ),
+        )
         .returning({ id: clockPhotos.id });
       return deleted.length;
+    },
+
+    /**
+     * Delete this business's clock photos whose parent entry clocked in before
+     * the retention cutoff (using the business's own `photoRetentionDays`).
+     *
+     * Deletes ONLY `clock_photo` rows — the timesheet entries and their hours
+     * are kept. Scoped to this business on both tables, so it can never touch
+     * another tenant. Idempotent: re-running deletes nothing. Returns the count
+     * of photos purged. Database rows only — the job goes through
+     * `purgeExpiredClockPhotos`, which also removes the stored objects.
+     */
+    async deleteExpiredPhotos(now: Date = new Date()): Promise<number> {
+      const expired = await this.listExpiredPhotos(now);
+      return this.deletePhotosByIds(expired.map((p) => p.id));
+    },
+
+    /**
+     * Record that a photo's bytes now live in the object store (the
+     * backfill, PERF-06). Only a photo not yet stored is updated, so two
+     * concurrent backfills can't both claim it. Returns whether it did.
+     */
+    async markPhotoStored(
+      id: string,
+      stored: { storageKey: string; contentLength: number; checksum: string },
+    ): Promise<boolean> {
+      const rows = await database
+        .update(clockPhotos)
+        .set(stored)
+        .where(
+          and(
+            eq(clockPhotos.id, id),
+            eq(clockPhotos.businessId, businessId),
+            isNull(clockPhotos.storageKey),
+          ),
+        )
+        .returning({ id: clockPhotos.id });
+      return rows.length > 0;
+    },
+
+    /**
+     * Drop the database copy of a photo's bytes ONLY when the row still
+     * carries the checksum the caller verified against the stored object —
+     * the last step before the contract migration. Returns whether it did.
+     */
+    async clearPhotoBytes(id: string, checksum: string): Promise<boolean> {
+      const rows = await database
+        .update(clockPhotos)
+        .set({ imageData: null })
+        .where(
+          and(
+            eq(clockPhotos.id, id),
+            eq(clockPhotos.businessId, businessId),
+            isNotNull(clockPhotos.storageKey),
+            eq(clockPhotos.checksum, checksum),
+          ),
+        )
+        .returning({ id: clockPhotos.id });
+      return rows.length > 0;
+    },
+
+    /** Store keys of an entry's photos — collected BEFORE the rows go, so the objects can follow. */
+    async listPhotoStorageKeysForEntry(entryId: string): Promise<string[]> {
+      const rows = await database
+        .select({ storageKey: clockPhotos.storageKey })
+        .from(clockPhotos)
+        .where(
+          and(
+            eq(clockPhotos.businessId, businessId),
+            eq(clockPhotos.timesheetEntryId, entryId),
+            isNotNull(clockPhotos.storageKey),
+          ),
+        );
+      return rows.map((r) => r.storageKey!).filter(Boolean);
+    },
+
+    /** Store keys of every photo on a staff member's entries (deleting the person cascades the rows). */
+    async listPhotoStorageKeysForStaff(staffId: string): Promise<string[]> {
+      const rows = await database
+        .select({ storageKey: clockPhotos.storageKey })
+        .from(clockPhotos)
+        .innerJoin(
+          timesheetEntries,
+          eq(timesheetEntries.id, clockPhotos.timesheetEntryId),
+        )
+        .where(
+          and(
+            eq(clockPhotos.businessId, businessId),
+            eq(timesheetEntries.staffMemberId, staffId),
+            isNotNull(clockPhotos.storageKey),
+          ),
+        );
+      return rows.map((r) => r.storageKey!).filter(Boolean);
     },
 
     /**

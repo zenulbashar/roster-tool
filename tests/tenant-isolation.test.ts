@@ -159,6 +159,7 @@ const f = {
   offerId: "",
   entryId: "",
   openEntryId: "",
+  photoId: "",
   leaveId: "",
   certId: "",
   supplierId: "",
@@ -377,6 +378,26 @@ const CALLS: Call[] = [
         mimeType: "image/jpeg",
         imageData: Buffer.from("x"),
       }),
+  },
+  {
+    name: "deletePhotosByIds",
+    expect: "refuses",
+    run: (r) => r.deletePhotosByIds([f.photoId]),
+  },
+  {
+    name: "markPhotoStored",
+    expect: "refuses",
+    run: (r) =>
+      r.markPhotoStored(f.photoId, {
+        storageKey: "clock-photos/x/y/z.jpg",
+        contentLength: 5,
+        checksum: "0".repeat(64),
+      }),
+  },
+  {
+    name: "clearPhotoBytes",
+    expect: "refuses",
+    run: (r) => r.clearPhotoBytes(f.photoId, "0".repeat(64)),
   },
   {
     name: "updateEntry",
@@ -869,12 +890,13 @@ describe("tenant isolation", () => {
       at: new Date("2026-06-08T00:00:00Z"),
     });
     await repoB.clockOut(entry.id, new Date("2026-06-08T08:00:00Z"));
-    await repoB.addClockPhoto({
+    const photo = await repoB.addClockPhoto({
       timesheetEntryId: entry.id,
       kind: "in",
       mimeType: "image/jpeg",
       imageData: Buffer.from("iso-b"),
     });
+    f.photoId = photo!.id;
     f.entryId = entry.id;
     const open = await repoB.clockIn(staff2.id, {
       at: new Date("2026-06-09T00:00:00Z"),

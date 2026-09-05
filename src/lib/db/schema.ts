@@ -1129,7 +1129,17 @@ export const clockPhotos = pgTable(
       .references(() => timesheetEntries.id, { onDelete: "cascade" }),
     kind: clockPhotoKind("kind").notNull(),
     mimeType: text("mime_type").notNull(),
-    imageData: bytea("image_data").notNull(),
+    /**
+     * The bytes, while a photo still lives in the database (PERF-06 expand
+     * phase). NULL once the photo is only in the object store. Dropping this
+     * column is the CONTRACT step, run by hand (docs/operations.md §5.3).
+     */
+    imageData: bytea("image_data"),
+    /** Object-store key (`clock-photos/<business>/<entry>/<id>.<ext>`); null = database only. */
+    storageKey: text("storage_key"),
+    contentLength: integer("content_length"),
+    /** sha256 hex of the bytes, set when stored; lets the backfill verify before clearing. */
+    checksum: text("checksum"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -1139,6 +1149,16 @@ export const clockPhotos = pgTable(
     // table of image bytes.
     index("clock_photo_entry_idx").on(t.timesheetEntryId),
     index("clock_photo_business_idx").on(t.businessId),
+    // The resumable backfill walks unstored photos in creation order; the
+    // partial index shrinks as it progresses and costs nothing afterwards.
+    index("clock_photo_unstored_idx")
+      .on(t.createdAt, t.id)
+      .where(sql`${t.storageKey} is null`),
+    // A photo lives somewhere: in the database, in the store, or both.
+    check(
+      "clock_photo_bytes_or_key_check",
+      sql`${t.imageData} is not null or ${t.storageKey} is not null`,
+    ),
   ],
 );
 

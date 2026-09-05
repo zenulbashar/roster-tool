@@ -312,6 +312,36 @@ payroll.timesheets payroll.employees.read payroll.settings.read` — **never
 
 The worker does **not** need the Xero env (pushes are owner-initiated, no cron).
 
+### 8. (Optional) Move clock-in photos to object storage
+
+Clock-in photos are stored as bytes in Postgres until you point the app at an
+S3-compatible bucket (AWS S3, Cloudflare R2, MinIO). Then new photos go to
+the bucket (and, until you flip the rollout flag, to the database as well),
+the daily retention sweep deletes the objects, and a backfill script moves the
+history. Set on **both** Vercel and Railway:
+
+- `BLOB_S3_ENDPOINT` — e.g. `https://s3.ap-southeast-2.amazonaws.com` or
+  `https://<account>.r2.cloudflarestorage.com`
+- `BLOB_S3_REGION` — `ap-southeast-2` for AWS, `auto` for R2
+- `BLOB_S3_BUCKET`, `BLOB_S3_ACCESS_KEY_ID`, `BLOB_S3_SECRET_ACCESS_KEY`
+- `BLOB_S3_FORCE_PATH_STYLE` — optional, default `true`
+
+It **fails closed**: with any of the five missing, nothing changes. Give the
+key **only** `GetObject`/`PutObject`/`DeleteObject`/`HeadObject` on that
+bucket, keep the bucket private (photos are always served through the owner's
+login, never a public URL), and add a lifecycle rule expiring objects older
+than 120 days (nothing legitimately outlives the longest 90-day retention).
+Then:
+
+```bash
+npm run photos:backfill                 # move existing photos, resumable — repeat until "scanned 0"
+# flip the `photo_blob_only` feature flag in /admin/flags (per client, then everyone)
+npm run photos:backfill -- --clear-bytes  # after the rollback window: drop the database copies
+```
+
+The step-by-step rollout, including the final manual column drop, is
+`docs/operations.md` → runbook 6.13.
+
 ## Project layout
 
 ```

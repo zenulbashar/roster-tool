@@ -53,6 +53,20 @@ export const FLAGS = {
       "Record every owner/admin write in the tenant audit trail (audit_event). Off pauses recording; nothing else changes.",
     defaultEnabled: true,
   },
+  /**
+   * PERF-06 rollout: with object storage configured (`BLOB_S3_*`), new
+   * clock-in photos are written to BOTH the store and the database
+   * (`dual`) so a rollback keeps working. ON switches new photos to the
+   * store ONLY (no bytes in Postgres) — flip it per client to trial, then
+   * for everyone once the backfill has run and the rollback window closed.
+   * With no store configured the flag has no effect (photos stay in the
+   * database).
+   */
+  photo_blob_only: {
+    description:
+      "Write new clock-in photos to object storage only (no copy in the database). Needs BLOB_S3_* configured; off keeps writing both.",
+    defaultEnabled: false,
+  },
 } as const satisfies Record<string, FlagDefinition>;
 
 export type FlagKey = keyof typeof FLAGS;

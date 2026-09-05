@@ -28,6 +28,9 @@ import {
 } from "@/lib/email";
 import { createTenantRepo } from "@/lib/tenant/repository";
 import { publishedRosters } from "@/lib/db/schema";
+import { blobStore } from "@/lib/blob/s3";
+import type { BlobStore } from "@/lib/blob/store";
+import { purgeExpiredClockPhotos } from "@/lib/clock-photo-storage";
 import { env } from "@/lib/env";
 import {
   formatDateTime,
@@ -867,8 +870,11 @@ export async function expireLoansForBusiness(
 export async function purgePhotosForBusiness(
   biz: { id: string },
   now: Date = new Date(),
+  store: BlobStore | null = blobStore(),
 ): Promise<number> {
-  return createTenantRepo(biz.id).deleteExpiredPhotos(now);
+  // Objects first, then rows (PERF-06): a row whose object could not be
+  // deleted is kept for the next sweep.
+  return purgeExpiredClockPhotos(createTenantRepo(biz.id), store, now);
 }
 
 /**

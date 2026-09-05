@@ -115,6 +115,20 @@ const baseEnvSchema = z.object({
   // failing). OPTIONAL and FAIL CLOSED: unset means the dead-letter handler
   // logs + reports to the error tracker only. Comma-separated addresses.
   OPS_ALERT_EMAIL: z.string().optional(),
+
+  // Object storage for clock-in photos (PERF-06): any S3-compatible bucket
+  // (AWS S3, Cloudflare R2, MinIO, Zale Storage). All five must be set for
+  // the store to exist — OPTIONAL and FAIL CLOSED: with any missing, photos
+  // keep being stored as bytes in Postgres exactly as before. Both the web
+  // app (writes + serves) and the worker (retention deletes) need them.
+  // BLOB_S3_REGION is `ap-southeast-2` for AWS, `auto` for R2.
+  // BLOB_S3_FORCE_PATH_STYLE (default true) = https://endpoint/bucket/key.
+  BLOB_S3_ENDPOINT: z.string().url().optional(),
+  BLOB_S3_REGION: z.string().optional(),
+  BLOB_S3_BUCKET: z.string().optional(),
+  BLOB_S3_ACCESS_KEY_ID: z.string().optional(),
+  BLOB_S3_SECRET_ACCESS_KEY: z.string().optional(),
+  BLOB_S3_FORCE_PATH_STYLE: z.string().optional(),
 });
 
 const envSchema = baseEnvSchema.superRefine((val, ctx) => {

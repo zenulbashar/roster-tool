@@ -26,6 +26,8 @@ import {
   uploadDocumentToDrive,
 } from "@/lib/google-drive/service";
 import { DOC_TYPES, validateUpload } from "@/lib/google-drive/validation";
+import { blobStore } from "@/lib/blob/s3";
+import { deleteClockPhotoObjects } from "@/lib/clock-photo-storage";
 import { ClearFlashCookie } from "@/components/ClearFlashCookie";
 import { flashCookieOptions, type FlashCookieName } from "@/lib/flash-cookie";
 import { CopyButton } from "@/components/CopyButton";
@@ -315,7 +317,14 @@ export default async function StaffPage({
       }
     }
 
+    // Their clock photos cascade away with the entries; collect the stored
+    // objects' keys first so the bucket follows (best effort, PERF-06).
+    const photoKeys = await repo.listPhotoStorageKeysForStaff(id);
     await repo.deleteStaff(id);
+    const store = blobStore();
+    if (store && photoKeys.length > 0) {
+      await deleteClockPhotoObjects(store, photoKeys);
+    }
     revalidatePath(PATH);
     redirect(`${PATH}?staffDeleted=1`);
   }

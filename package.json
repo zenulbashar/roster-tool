@@ -24,7 +24,8 @@
     "test:coverage": "vitest run --coverage",
     "coverage:ratchet": "node scripts/coverage-ratchet.mjs",
     "staff:ensure-unique": "tsx --env-file-if-exists=.env scripts/ensure-staff-uniqueness.ts",
-    "jobs:admin": "tsx --env-file-if-exists=.env scripts/jobs-admin.ts"
+    "jobs:admin": "tsx --env-file-if-exists=.env scripts/jobs-admin.ts",
+    "photos:backfill": "tsx --env-file-if-exists=.env scripts/backfill-clock-photos.ts"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.3",
